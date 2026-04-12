@@ -14,13 +14,15 @@ The design follows four constraints:
 ## What It Does
 
 - Invokes SOFARPC services through `directUrl` or a registry.
-- Uses generic invocation so callers do not need business DTO classes on the classpath.
-- Accepts JSON arguments and converts complex objects into `GenericObject`.
+- Uses native SOFARPC invocation without requiring business DTO classes on the caller classpath.
+- Supports three payload modes: `raw` for scalar / `Map` / `List` payloads, `generic` for explicit `GenericObject`-compatible bodies, and `schema` when metadata provides method signatures.
+- Supports stub-aware invocation through `--stub-path`, so local business classes can be used for complex DTO serialization and `$invoke`.
 - Splits the CLI into a stable launcher and versioned SOFARPC runtimes.
 - Supports explicit `--sofa-rpc-version`, automatic version inference, runtime auto-download, and local runtime caching.
 - Auto-discovers `rpcctl-manifest.yaml` from the current project or `~/.config/sofa-rpcctl/`.
 - Supports reusable global contexts via `rpcctl context`.
 - Generates manifests from existing `config/rpcctl.yaml` and `config/metadata.yaml`.
+- Emits structured diagnostics such as `payloadMode`, `paramTypeSource`, `invokeStyle`, and provider reachability hints.
 - Produces release assets and a bootstrap installer so the CLI can be installed without copying the source tree.
 
 ## Commands
@@ -31,6 +33,8 @@ The design follows four constraints:
 - `describe`: show one service from metadata or a manifest.
 - `context`: manage named user profiles in `~/.config/sofa-rpcctl/contexts.yaml`.
 - `manifest generate|init`: generate `rpcctl-manifest.yaml` from existing config/metadata or create a skeleton.
+- `manifest generate` can also import method signatures directly from local interface jars or compiled classes.
+- `rpcctl-manifest-maven-plugin`: Maven goal `generate` can emit `rpcctl-manifest.yaml` using the same schema import pipeline.
 
 ## Quick Start
 
@@ -97,6 +101,67 @@ The launcher discovers metadata in this order:
 
 That last step is what makes manifest-backed usage work from any directory after a one-time setup.
 
+## Payload Modes
+
+`rpcctl` does not try to magically infer arbitrary DTO graphs from JSON. It supports three explicit operating shapes:
+
+- `raw`: best for scalar parameters and signatures that already use `Map`, `List`, `Set`, arrays, or primitives. This is the closest mode to `curl`.
+- `generic`: best for explicit `GenericObject`-compatible payloads where you know the declared DTO type and, if needed, provide nested `@type` / `@value` hints.
+- `schema`: best for business DTOs when `rpcctl-manifest.yaml` or other metadata can provide the declared method signature.
+
+The JSON result now reports which path was used through `payloadMode`, `paramTypeSource`, and `invokeStyle`.
+
+Example raw payload:
+
+```bash
+rpcctl call \
+  com.example.PayloadService/submit \
+  '[{"requestId":"payload-01","meta":{"channel":"smoke"},"lines":[{"sku":"sku-apple","quantity":2}]}]' \
+  --registry zookeeper://127.0.0.1:2181 \
+  --types java.util.Map \
+  --unique-id payload-service
+```
+
+Example generic payload with explicit type hints:
+
+```bash
+rpcctl invoke \
+  --direct-url bolt://127.0.0.1:12200 \
+  --service com.example.OrderService \
+  --method submit \
+  --types com.example.OrderRequest \
+  --args '[{"@type":"com.example.OrderRequest","customer":{"@type":"com.example.Customer","name":"alice"}}]'
+```
+
+Example stub-aware DTO invocation:
+
+```bash
+rpcctl call \
+  com.example.OrderService/submit \
+  '[{"requestId":"order-01","customer":{"name":"alice","address":{"city":"Shanghai"}},"lines":[{"sku":"sku-apple","quantity":2,"price":12.3}]}]' \
+  --direct-url bolt://127.0.0.1:12241 \
+  --manifest ./rpcctl-manifest.yaml \
+  --stub-path ./target/classes \
+  --confirm
+```
+
+Important limits:
+
+- The official SOFARPC generic path is only defined for `bolt + hessian2`.
+- Without schema or business stubs, nested DTO graphs are not guaranteed to deserialize correctly.
+- For ad-hoc smoke checks, prefer `raw` `Map` / `List` payloads or a REST binding if the service exposes one.
+
+## Registry Notes
+
+Registry mode is only as good as the provider address that gets published. If the provider exports `localhost`, an internal container IP, or another unreachable host, the registry lookup may succeed while the actual RPC connection still fails.
+
+For local and containerized tests, prefer setting `ServerConfig#setVirtualHost(...)` and, when needed, `ServerConfig#setVirtualPort(...)` on the provider side so the registry publishes a reachable address. `rpcctl` now distinguishes between:
+
+- provider not found in the registry
+- provider found but unreachable
+- method signature mismatches
+- deserialization failures caused by DTO / payload incompatibility
+
 ## Contexts
 
 Contexts are reusable user profiles stored at:
@@ -112,6 +177,7 @@ Create or update a context:
 ```bash
 rpcctl context set test \
   --manifest ~/.config/sofa-rpcctl/rpcctl-manifest.yaml \
+  --stub-path ~/workspace/demo/target/classes \
   --runtime-base-url https://github.com/hex1n/sofa-rpcctl/releases/download/v0.1.0 \
   --current
 ```
@@ -160,6 +226,27 @@ Write somewhere else and overwrite if needed:
 rpcctl manifest generate \
   --output /tmp/rpcctl-manifest.yaml \
   --force
+```
+
+Import service metadata directly from compiled business classes:
+
+```bash
+rpcctl manifest generate \
+  --output rpcctl-manifest.yaml \
+  --force \
+  --stub-path ./target/classes \
+  --service-class com.example.OrderService \
+  --service-unique-id com.example.OrderService=order-service
+```
+
+Generate with Maven (same importer pipeline as CLI `manifest generate`):
+
+```bash
+mvn com.hex1n:rpcctl-manifest-maven-plugin:0.1.0:generate \
+  -Doutput=/tmp/rpcctl-manifest.yaml \
+  -DserviceClass=com.example.OrderService \
+  -DstubPath=target/classes \
+  -DserviceUniqueId=com.example.OrderService=order-service
 ```
 
 Bootstrap a manifest with root overrides:
@@ -238,6 +325,23 @@ https://github.com/hex1n/sofa-rpcctl/releases/download/v<version>
 
 You can also point it at a local directory or `file://` URL for offline usage.
 
+## Compatibility Strategy
+
+`rpcctl` is designed around explicit runtime isolation:
+
+- Discover version from `--sofa-rpc-version`, current manifest/config, then workspace (`pom.xml` / `gradle.*`), then local/remote runtime cache.
+- Do not assume one runtime works for all provider stacks. Keep one runtime per target SOFARPC version.
+- For complex payloads, run with the documented SOFARPC compatibility envelope (`bolt` + `hessian2`) as a default.
+
+Official SOFARPC references:
+
+- Consumer fields: `protocol`, `serialization`, `generic`, `directUrl`, `registry` at the configuration layer.
+- Server publish fields: `virtualHost`, `virtualPort` for registry-visible address control.
+
+References:
+
+- https://www.sofastack.tech/en/projects/sofa-rpc/configuration-common/
+
 ## Configuration
 
 Project-level metadata is best expressed through `rpcctl-manifest.yaml`.
@@ -291,6 +395,7 @@ tar -xzf dist/sofa-rpcctl-0.1.0.tar.gz
 Install from a local archive or URL:
 
 ```bash
+tar -xzf sofa-rpcctl-0.1.0.tar.gz
 ./sofa-rpcctl-0.1.0/install-from-archive.sh /path/to/sofa-rpcctl-0.1.0.tar.gz
 ```
 
@@ -403,18 +508,50 @@ curl -fsSL \
 
 The repository also includes a GitHub Actions workflow that builds and publishes these release assets on `v*` tags.
 
+## E2E Smoke
+
+The repository now includes a repeatable smoke script:
+
+```bash
+./scripts/e2e-smoke.sh
+```
+
+It requires:
+
+- `java` and `javac`
+- a Docker-compatible runtime such as Docker Desktop or OrbStack
+
+The script:
+
+1. builds the requested SOFARPC runtime
+2. compiles local fixture providers under `e2e/fixtures/src`
+3. verifies a direct `UserService#getUser(Long)` call
+4. verifies a stub-aware DTO call generated from imported manifest schema
+5. starts a local ZooKeeper and verifies a registry-backed complex `Map` payload call
+
+Optional environment overrides:
+
+- `RPCCTL_E2E_DIRECT_PORT`
+- `RPCCTL_E2E_REGISTRY_PORT`
+- `RPCCTL_E2E_ZK_PORT`
+- `RPCCTL_E2E_ZK_CONTAINER`
+
 ## Current Scope
 
 Implemented:
 
 - `invoke`, `call`, `list`, `describe`, `context`, `manifest`
 - `direct` and `registry` targets
+- `raw`, `generic`, and metadata-driven `schema` payload classification
+- stub-aware DTO invocation through `--stub-path`
 - manifest and global context auto-discovery
+- manifest schema import from local jars / compiled classes
 - runtime version isolation
 - runtime auto-download and cache
 - release asset generation and bootstrap installer
 - write-risk confirmation based on metadata
 - normalized JSON error output with hints
+- repo-native direct and registry smoke fixtures via `./scripts/e2e-smoke.sh`
 
 Not implemented:
 

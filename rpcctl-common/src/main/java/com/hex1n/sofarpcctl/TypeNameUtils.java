@@ -10,6 +10,7 @@ public final class TypeNameUtils {
 
     private static final Map<String, String> PRIMITIVE_DESCRIPTORS;
     private static final Map<String, Class<?>> PRIMITIVE_TYPES;
+    private static final Map<String, String> SIGNATURE_ALIASES;
 
     static {
         Map<String, String> primitiveDescriptors = new HashMap<String, String>();
@@ -33,6 +34,17 @@ public final class TypeNameUtils {
         primitiveTypes.put("float", float.class);
         primitiveTypes.put("double", double.class);
         PRIMITIVE_TYPES = Collections.unmodifiableMap(primitiveTypes);
+
+        Map<String, String> signatureAliases = new HashMap<String, String>();
+        signatureAliases.put("java.util.ArrayList", "java.util.List");
+        signatureAliases.put("java.util.LinkedList", "java.util.List");
+        signatureAliases.put("java.util.HashSet", "java.util.Set");
+        signatureAliases.put("java.util.LinkedHashSet", "java.util.Set");
+        signatureAliases.put("java.util.TreeSet", "java.util.Set");
+        signatureAliases.put("java.util.HashMap", "java.util.Map");
+        signatureAliases.put("java.util.LinkedHashMap", "java.util.Map");
+        signatureAliases.put("java.util.TreeMap", "java.util.Map");
+        SIGNATURE_ALIASES = Collections.unmodifiableMap(signatureAliases);
     }
 
     private TypeNameUtils() {
@@ -90,6 +102,29 @@ public final class TypeNameUtils {
         return builder.toString();
     }
 
+    public static String normalizeForSignature(String rawType) {
+        String normalized = normalizeForRpc(rawType);
+        if (normalized == null) {
+            return null;
+        }
+        if (normalized.startsWith("[")) {
+            return normalized;
+        }
+        String alias = SIGNATURE_ALIASES.get(normalized);
+        return alias == null ? normalized : alias;
+    }
+
+    public static List<String> normalizeParamTypes(List<String> rawTypes) {
+        if (rawTypes == null || rawTypes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> normalized = new ArrayList<String>(rawTypes.size());
+        for (String rawType : rawTypes) {
+            normalized.add(normalizeForSignature(rawType));
+        }
+        return normalized;
+    }
+
     public static String componentType(String rawType) {
         String normalized = normalizeForRpc(rawType);
         if (normalized == null || !normalized.startsWith("[")) {
@@ -111,7 +146,7 @@ public final class TypeNameUtils {
     }
 
     public static boolean isCollectionType(String rawType) {
-        String normalized = normalizeForRpc(rawType);
+        String normalized = normalizeForSignature(rawType);
         return "java.util.Collection".equals(normalized)
             || "java.util.List".equals(normalized)
             || "java.util.ArrayList".equals(normalized)
@@ -123,17 +158,24 @@ public final class TypeNameUtils {
     }
 
     public static boolean isMapType(String rawType) {
-        String normalized = normalizeForRpc(rawType);
+        String normalized = normalizeForSignature(rawType);
         return "java.util.Map".equals(normalized)
             || "java.util.HashMap".equals(normalized)
             || "java.util.LinkedHashMap".equals(normalized)
             || "java.util.TreeMap".equals(normalized);
     }
 
+    public static boolean isRawFriendlyType(String rawType) {
+        return isSimpleScalar(rawType)
+            || isMapType(rawType)
+            || isCollectionType(rawType)
+            || isArrayType(rawType);
+    }
+
     public static boolean isSimpleScalar(String rawType) {
         String normalized = normalizeForRpc(rawType);
-        return normalized == null
-            || PRIMITIVE_TYPES.containsKey(normalized)
+        return normalized != null
+            && (PRIMITIVE_TYPES.containsKey(normalized)
             || "java.lang.Boolean".equals(normalized)
             || "java.lang.Byte".equals(normalized)
             || "java.lang.Character".equals(normalized)
@@ -146,7 +188,7 @@ public final class TypeNameUtils {
             || "java.math.BigDecimal".equals(normalized)
             || "java.math.BigInteger".equals(normalized)
             || "java.util.Date".equals(normalized)
-            || "java.util.UUID".equals(normalized);
+            || "java.util.UUID".equals(normalized));
     }
 
     public static boolean isLocallyResolvable(String rawType) {

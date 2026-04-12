@@ -1,6 +1,8 @@
 package com.hex1n.sofarpcctl;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 public class RpcCtlConfig {
@@ -11,6 +13,7 @@ public class RpcCtlConfig {
     private String serialization = "hessian2";
     private Integer timeoutMs = Integer.valueOf(3000);
     private String sofaRpcVersion;
+    private List<String> stubPaths = new ArrayList<String>();
     private Map<String, EnvironmentConfig> envs = new LinkedHashMap<String, EnvironmentConfig>();
 
     public String getMetadataPath() {
@@ -59,6 +62,14 @@ public class RpcCtlConfig {
 
     public void setSofaRpcVersion(String sofaRpcVersion) {
         this.sofaRpcVersion = sofaRpcVersion;
+    }
+
+    public List<String> getStubPaths() {
+        return stubPaths;
+    }
+
+    public void setStubPaths(List<String> stubPaths) {
+        this.stubPaths = stubPaths;
     }
 
     public Map<String, EnvironmentConfig> getEnvs() {

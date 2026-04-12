@@ -2,7 +2,9 @@ package com.hex1n.sofarpcctl;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 public class ContextCatalog {
@@ -90,6 +92,9 @@ public class ContextCatalog {
         merged.setSerialization(entry.getSerialization());
         merged.setTimeoutMs(entry.getTimeoutMs());
         merged.setSofaRpcVersion(entry.getSofaRpcVersion());
+        merged.setStubPaths(entry.getStubPaths() == null
+            ? new ArrayList<String>()
+            : new ArrayList<String>(entry.getStubPaths()));
         merged.setRuntimeBaseUrl(firstNonBlank(entry.getRuntimeBaseUrl(), runtimeBaseUrl));
         merged.setRuntimeHome(firstNonBlank(entry.getRuntimeHome(), runtimeHome));
         merged.setRuntimeCacheDir(firstNonBlank(entry.getRuntimeCacheDir(), runtimeCacheDir));
@@ -140,6 +145,7 @@ public class ContextCatalog {
         private String serialization;
         private Integer timeoutMs;
         private String sofaRpcVersion;
+        private List<String> stubPaths = new ArrayList<String>();
         private String runtimeBaseUrl;
         private String runtimeHome;
         private String runtimeCacheDir;
@@ -225,6 +231,14 @@ public class ContextCatalog {
             this.sofaRpcVersion = sofaRpcVersion;
         }
 
+        public List<String> getStubPaths() {
+            return stubPaths;
+        }
+
+        public void setStubPaths(List<String> stubPaths) {
+            this.stubPaths = stubPaths;
+        }
+
         public String getRuntimeBaseUrl() {
             return runtimeBaseUrl;
         }
@@ -269,6 +283,7 @@ public class ContextCatalog {
                 && isBlank(serialization)
                 && timeoutMs == null
                 && isBlank(sofaRpcVersion)
+                && (stubPaths == null || stubPaths.isEmpty())
                 && isBlank(runtimeBaseUrl)
                 && isBlank(runtimeHome)
                 && isBlank(runtimeCacheDir)

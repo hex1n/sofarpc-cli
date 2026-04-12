@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+
+      - name: Build all modules
+        run: mvn -B -DskipTests package
+
+      - name: Run repository smoke checks
+        run: bash scripts/e2e-smoke.sh

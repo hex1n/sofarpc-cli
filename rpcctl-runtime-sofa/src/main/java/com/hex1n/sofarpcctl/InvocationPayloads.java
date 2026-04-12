@@ -24,7 +24,7 @@ public final class InvocationPayloads {
     private InvocationPayloads() {
     }
 
-    public static ResolvedPayloads resolve(List<String> rawTypes, String argsJson) {
+    public static ResolvedPayloads resolve(List<String> rawTypes, String argsJson, boolean preferLocalBeans) {
         ArrayNode jsonArgs = parseArgs(argsJson);
         if (rawTypes.isEmpty() && jsonArgs.size() > 0) {
             throw new CliException(
@@ -45,7 +45,7 @@ public final class InvocationPayloads {
         for (int index = 0; index < rawTypes.size(); index++) {
             String rawType = rawTypes.get(index);
             String rpcType = TypeNameUtils.normalizeForRpc(rawType);
-            Object argument = convert(jsonArgs.get(index), rawType);
+            Object argument = convert(jsonArgs.get(index), rawType, preferLocalBeans);
             rpcTypes.add(rpcType);
             arguments[index] = argument;
             if (!TypeNameUtils.isLocallyResolvable(rawType) || containsGenericObject(argument)) {
@@ -85,35 +85,52 @@ public final class InvocationPayloads {
         }
     }
 
-    private static Object convert(JsonNode node, String declaredType) {
+    private static Object convert(JsonNode node, String declaredType, boolean preferLocalBeans) {
         if (node == null || node.isNull()) {
             return null;
         }
 
         String effectiveType = declaredType;
+        JsonNode effectiveNode = node;
         if (node.isObject() && node.has("@type")) {
             effectiveType = node.get("@type").asText();
+            if (node.has("@value")) {
+                effectiveNode = node.get("@value");
+            }
+        }
+
+        if (effectiveType == null || effectiveType.trim().isEmpty()) {
+            if (effectiveNode.isObject()) {
+                return convertMap(effectiveNode, preferLocalBeans);
+            }
+            if (effectiveNode.isArray()) {
+                return convertCollection(effectiveNode, preferLocalBeans);
+            }
+            return ConfigLoader.json().convertValue(effectiveNode, Object.class);
         }
 
         if (TypeNameUtils.isArrayType(effectiveType)) {
-            return convertArray(node, effectiveType);
+            return convertArray(effectiveNode, effectiveType, preferLocalBeans);
         }
         if (TypeNameUtils.isCollectionType(effectiveType)) {
-            return convertCollection(node);
+            return convertCollection(effectiveNode, preferLocalBeans);
         }
         if (TypeNameUtils.isMapType(effectiveType)) {
-            return convertMap(node);
+            return convertMap(effectiveNode, preferLocalBeans);
         }
         if (TypeNameUtils.isSimpleScalar(effectiveType)) {
-            return convertScalar(node, effectiveType);
+            return convertScalar(effectiveNode, effectiveType);
         }
-        if (node.isObject()) {
-            return convertGenericObject((ObjectNode) node, effectiveType);
+        if (preferLocalBeans && TypeNameUtils.isLocallyResolvable(effectiveType) && effectiveNode.isObject()) {
+            return convertBean(effectiveNode, effectiveType);
         }
-        if (node.isArray()) {
-            return convertCollection(node);
+        if (effectiveNode.isObject()) {
+            return convertGenericObject((ObjectNode) effectiveNode, effectiveType, preferLocalBeans);
         }
-        return ConfigLoader.json().convertValue(node, Object.class);
+        if (effectiveNode.isArray()) {
+            return convertCollection(effectiveNode, preferLocalBeans);
+        }
+        return ConfigLoader.json().convertValue(effectiveNode, Object.class);
     }
 
     private static Object convertScalar(JsonNode node, String declaredType) {
@@ -173,7 +190,7 @@ public final class InvocationPayloads {
         return ConfigLoader.json().convertValue(node, Object.class);
     }
 
-    private static Object convertArray(JsonNode node, String declaredType) {
+    private static Object convertArray(JsonNode node, String declaredType, boolean preferLocalBeans) {
         if (!node.isArray()) {
             throw new CliException(
                 ExitCodes.PARAMETER_ERROR,
@@ -184,7 +201,7 @@ public final class InvocationPayloads {
         String componentType = TypeNameUtils.componentType(declaredType);
         List<Object> values = new ArrayList<Object>(arrayNode.size());
         for (int index = 0; index < arrayNode.size(); index++) {
-            values.add(convert(arrayNode.get(index), componentType));
+            values.add(convert(arrayNode.get(index), componentType, preferLocalBeans));
         }
 
         try {
@@ -199,7 +216,7 @@ public final class InvocationPayloads {
         }
     }
 
-    private static Object convertCollection(JsonNode node) {
+    private static Object convertCollection(JsonNode node, boolean preferLocalBeans) {
         if (!node.isArray()) {
             throw new CliException(
                 ExitCodes.PARAMETER_ERROR,
@@ -208,12 +225,12 @@ public final class InvocationPayloads {
         }
         List<Object> values = new ArrayList<Object>(node.size());
         for (int index = 0; index < node.size(); index++) {
-            values.add(convert(node.get(index), null));
+            values.add(convert(node.get(index), null, preferLocalBeans));
         }
         return values;
     }
 
-    private static Object convertMap(JsonNode node) {
+    private static Object convertMap(JsonNode node, boolean preferLocalBeans) {
         if (!node.isObject()) {
             throw new CliException(
                 ExitCodes.PARAMETER_ERROR,
@@ -225,12 +242,25 @@ public final class InvocationPayloads {
         while (fieldNames.hasNext()) {
             String fieldName = fieldNames.next();
             JsonNode fieldValue = node.get(fieldName);
-            values.put(fieldName, convert(fieldValue, null));
+            values.put(fieldName, convert(fieldValue, null, preferLocalBeans));
         }
         return values;
     }
 
-    private static GenericObject convertGenericObject(ObjectNode node, String declaredType) {
+    private static Object convertBean(JsonNode node, String declaredType) {
+        try {
+            Class<?> beanClass = TypeNameUtils.classFor(declaredType);
+            return ConfigLoader.json().treeToValue(node, beanClass);
+        } catch (Exception exception) {
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
+                "Failed to materialize DTO for type " + declaredType,
+                exception
+            );
+        }
+    }
+
+    private static GenericObject convertGenericObject(ObjectNode node, String declaredType, boolean preferLocalBeans) {
         if (declaredType == null || declaredType.trim().isEmpty()) {
             throw new CliException(
                 ExitCodes.PARAMETER_ERROR,
@@ -245,7 +275,7 @@ public final class InvocationPayloads {
                 continue;
             }
             JsonNode fieldValue = node.get(fieldName);
-            genericObject.putField(fieldName, convert(fieldValue, null));
+            genericObject.putField(fieldName, convert(fieldValue, null, preferLocalBeans));
         }
         return genericObject;
     }

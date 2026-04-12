@@ -11,6 +11,7 @@ public class RuntimeInvocationRequest {
     private String uniqueId;
     private String methodName;
     private List<String> paramTypes = new ArrayList<String>();
+    private List<String> stubPaths = new ArrayList<String>();
     private String argsJson = "[]";
 
     public String getEnvironmentName() {
@@ -59,6 +60,14 @@ public class RuntimeInvocationRequest {
 
     public void setParamTypes(List<String> paramTypes) {
         this.paramTypes = paramTypes;
+    }
+
+    public List<String> getStubPaths() {
+        return stubPaths;
+    }
+
+    public void setStubPaths(List<String> stubPaths) {
+        this.stubPaths = stubPaths;
     }
 
     public String getArgsJson() {

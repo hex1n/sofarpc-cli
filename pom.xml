@@ -13,6 +13,7 @@
 
     <modules>
         <module>rpcctl-common</module>
+        <module>rpcctl-manifest-maven-plugin</module>
         <module>rpcctl-launcher</module>
         <module>rpcctl-runtime-sofa</module>
     </modules>

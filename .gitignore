@@ -2,3 +2,4 @@
 .m2/
 target/
 dist/
+e2e/fixtures/target/

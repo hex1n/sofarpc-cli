@@ -8,10 +8,12 @@ public final class SofaRpcInvoker {
 
     public RuntimeInvocationResult invoke(RuntimeInvocationRequest request) {
         long startTime = System.currentTimeMillis();
+        InvocationPayloads.ResolvedPayloads payloads = null;
         try {
-            InvocationPayloads.ResolvedPayloads payloads = InvocationPayloads.resolve(
+            payloads = InvocationPayloads.resolve(
                 request.getParamTypes(),
-                request.getArgsJson()
+                request.getArgsJson(),
+                request.getStubPaths() != null && !request.getStubPaths().isEmpty()
             );
             GenericService genericService = buildConsumer(
                 request.getEnvironmentConfig(),
@@ -32,7 +34,7 @@ public final class SofaRpcInvoker {
                     payloads.getArguments()
                 );
             }
-            return RuntimeInvocationResult.success(
+            RuntimeInvocationResult result = RuntimeInvocationResult.success(
                 request.getEnvironmentName(),
                 request.getEnvironmentConfig().getMode(),
                 request.getServiceName(),
@@ -43,19 +45,24 @@ public final class SofaRpcInvoker {
                 System.currentTimeMillis() - startTime,
                 InvocationPayloads.normalizeResult(rawResult)
             );
+            result.setInvokeStyle(payloads.isGenericCallRequired() ? "$genericInvoke" : "$invoke");
+            return result;
         } catch (Throwable throwable) {
-            return RuntimeInvocationResult.failure(
+            boolean genericCall = payloads != null && payloads.isGenericCallRequired();
+            RuntimeInvocationResult result = RuntimeInvocationResult.failure(
                 request.getEnvironmentName(),
                 request.getEnvironmentConfig().getMode(),
                 request.getServiceName(),
                 request.getUniqueId(),
                 request.getMethodName(),
-                request.getParamTypes(),
-                false,
+                payloads == null ? request.getParamTypes() : payloads.getParamTypes(),
+                genericCall,
                 System.currentTimeMillis() - startTime,
                 classifyError(throwable),
-                rootCauseMessage(throwable)
+                summarizeThrowable(throwable)
             );
+            result.setInvokeStyle(genericCall ? "$genericInvoke" : "$invoke");
+            return result;
         }
     }
 
@@ -68,6 +75,7 @@ public final class SofaRpcInvoker {
             .setInterfaceId(serviceName)
             .setProtocol(environmentConfig.getProtocol())
             .setGeneric(true)
+            .setRegister(false)
             .setTimeout(environmentConfig.getTimeoutMs().intValue());
 
         if (environmentConfig.getSerialization() != null && !environmentConfig.getSerialization().trim().isEmpty()) {
@@ -85,10 +93,12 @@ public final class SofaRpcInvoker {
                     "direct mode requires directUrl in the selected environment."
                 );
             }
+            consumerConfig.setSubscribe(false);
             consumerConfig.setDirectUrl(environmentConfig.getDirectUrl());
             return consumerConfig;
         }
         if ("registry".equals(mode)) {
+            consumerConfig.setSubscribe(true);
             consumerConfig.setRegistry(buildRegistry(environmentConfig));
             return consumerConfig;
         }
@@ -124,24 +134,50 @@ public final class SofaRpcInvoker {
     }
 
     private String classifyError(Throwable throwable) {
-        String message = rootCauseMessage(throwable).toLowerCase();
+        String message = summarizeThrowable(throwable).toLowerCase();
         if (message.contains("timeout")) {
             return "RPC_TIMEOUT";
         }
-        if (message.contains("not found") || message.contains("no such method")) {
-            return "RPC_NOT_FOUND";
+        if (message.contains("deserializationexception")
+            || message.contains("deserialize request exception")
+            || message.contains("hessianprotocolexception")) {
+            return "RPC_DESERIALIZATION_ERROR";
+        }
+        if (message.contains("serializationexception")) {
+            return "RPC_SERIALIZATION_ERROR";
+        }
+        if (message.contains("未找到需要调用的方法")
+            || message.contains("no such method")
+            || message.contains("method not found")) {
+            return "RPC_METHOD_NOT_FOUND";
+        }
+        if (message.contains("没有获得服务") || message.contains("no available provider")) {
+            return "RPC_ROUTE_ERROR";
         }
         if (message.contains("refused") || message.contains("connect")) {
-            return "RPC_CONNECT_ERROR";
+            return "RPC_PROVIDER_UNREACHABLE";
         }
         return "RPC_ERROR";
     }
 
-    private String rootCauseMessage(Throwable throwable) {
+    private String summarizeThrowable(Throwable throwable) {
+        StringBuilder summary = new StringBuilder();
         Throwable cursor = throwable;
-        while (cursor.getCause() != null && cursor.getCause() != cursor) {
+        int depth = 0;
+        while (cursor != null && depth < 3) {
+            if (summary.length() > 0) {
+                summary.append(" <- ");
+            }
+            summary.append(cursor.getClass().getSimpleName());
+            if (cursor.getMessage() != null && !cursor.getMessage().trim().isEmpty()) {
+                summary.append(": ").append(cursor.getMessage().trim());
+            }
+            if (cursor.getCause() == cursor) {
+                break;
+            }
             cursor = cursor.getCause();
+            depth++;
         }
-        return cursor.getClass().getSimpleName() + ": " + cursor.getMessage();
+        return summary.toString();
     }
 }

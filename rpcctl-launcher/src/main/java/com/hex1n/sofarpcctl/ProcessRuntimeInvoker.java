@@ -4,12 +4,19 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class ProcessRuntimeInvoker {
 
     private final RuntimeLocator runtimeLocator = new RuntimeLocator();
+    private static final Pattern PROVIDER_ADDRESS_PATTERN = Pattern.compile(
+        "(?:Try connect to|Create connection to)\\s+([^\\s!]+)"
+    );
 
     public RuntimeInvocationResult invoke(
         String sofaRpcVersion,
@@ -24,13 +31,7 @@ public final class ProcessRuntimeInvoker {
 
         Process process;
         try {
-            process = new ProcessBuilder(
-                resolveJavaBinary(),
-                "-jar",
-                runtimeJar.getAbsolutePath(),
-                "invoke",
-                encodedRequest
-            ).start();
+            process = new ProcessBuilder(buildJavaCommand(runtimeJar, request, encodedRequest)).start();
         } catch (Exception exception) {
             throw new CliException(
                 ExitCodes.RPC_ERROR,
@@ -52,6 +53,10 @@ public final class ProcessRuntimeInvoker {
                 extractJsonPayload(output.getStdout()),
                 RuntimeInvocationResult.class
             );
+            String resolvedTarget = extractProviderAddress(output.getStderr());
+            if (resolvedTarget != null && !resolvedTarget.trim().isEmpty()) {
+                result.setResolvedTarget(resolvedTarget);
+            }
             enrichFailure(result, output.getStderr());
             return result;
         } catch (Exception exception) {
@@ -78,6 +83,33 @@ public final class ProcessRuntimeInvoker {
 
     private String resolveJavaBinary() {
         return new File(System.getProperty("java.home"), "bin/java").getAbsolutePath();
+    }
+
+    private List<String> buildJavaCommand(File runtimeJar, RuntimeInvocationRequest request, String encodedRequest) {
+        List<String> command = new ArrayList<String>();
+        command.add(resolveJavaBinary());
+        if (request.getStubPaths() != null && !request.getStubPaths().isEmpty()) {
+            command.add("-cp");
+            command.add(buildClassPath(runtimeJar, request.getStubPaths()));
+            command.add("com.hex1n.sofarpcctl.RuntimeMain");
+        } else {
+            command.add("-jar");
+            command.add(runtimeJar.getAbsolutePath());
+        }
+        command.add("invoke");
+        command.add(encodedRequest);
+        return command;
+    }
+
+    private String buildClassPath(File runtimeJar, List<String> stubPaths) {
+        StringBuilder classPath = new StringBuilder(runtimeJar.getAbsolutePath());
+        for (String stubPath : stubPaths) {
+            if (stubPath == null || stubPath.trim().isEmpty()) {
+                continue;
+            }
+            classPath.append(File.pathSeparator).append(stubPath.trim());
+        }
+        return classPath.toString();
     }
 
     private RuntimeProcessOutput waitFor(Process process, RuntimeInvocationRequest request) {
@@ -137,11 +169,50 @@ public final class ProcessRuntimeInvoker {
         }
         String compact = compact(stderr);
         result.setDetails(compact);
-        if (compact.contains("Unable to open socket")) {
+        String combined = ((result.getMessage() == null ? "" : result.getMessage()) + " " + compact).toLowerCase();
+        String providerAddress = extractProviderAddress(stderr);
+        if (providerAddress != null && (result.getResolvedTarget() == null || result.getResolvedTarget().trim().isEmpty())) {
+            result.setResolvedTarget(providerAddress);
+        }
+        if ((result.getErrorCode() == null || "RPC_ERROR".equals(result.getErrorCode()))
+            && combined.contains("deserialization")) {
+            result.setErrorCode("RPC_DESERIALIZATION_ERROR");
+        } else if ((result.getErrorCode() == null || "RPC_ROUTE_ERROR".equals(result.getErrorCode()))
+            && combined.contains("没有获得服务")) {
+            if (combined.contains("add provider of") || providerAddress != null) {
+                result.setErrorCode("RPC_PROVIDER_UNREACHABLE");
+            } else {
+                result.setErrorCode("RPC_PROVIDER_NOT_FOUND");
+            }
+        } else if ((result.getErrorCode() == null || "RPC_ERROR".equals(result.getErrorCode()))
+            && (combined.contains("create connection") || combined.contains("connection refused"))) {
+            result.setErrorCode("RPC_PROVIDER_UNREACHABLE");
+        } else if ((result.getErrorCode() == null || "RPC_ERROR".equals(result.getErrorCode()))
+            && (combined.contains("未找到需要调用的方法") || combined.contains("no such method"))) {
+            result.setErrorCode("RPC_METHOD_NOT_FOUND");
+        }
+
+        if ("RPC_PROVIDER_UNREACHABLE".equals(result.getErrorCode())) {
+            if (providerAddress != null) {
+                result.setHint("Registry returned provider " + providerAddress
+                    + " but it was unreachable. Check provider virtualHost/virtualPort and network reachability.");
+            } else {
+                result.setHint("A provider address was discovered but could not be reached. Check provider virtualHost/virtualPort and network reachability.");
+            }
+            if (result.getResolvedTarget() == null || result.getResolvedTarget().trim().isEmpty()) {
+                result.setResolvedTarget("registry://" + result.getUniqueId() + "/providers");
+            }
+            result.setTransportHint("Check provider registration address and whether target instance is accessible from this client.");
+        } else if ("RPC_PROVIDER_NOT_FOUND".equals(result.getErrorCode())) {
+            result.setHint("No provider was discovered. Check registry address, service name, uniqueId, version, and whether the service is exported.");
+            result.setTransportHint("The registry query returned zero providers.");
+        } else if (compact.contains("Unable to open socket")) {
             result.setHint("Check the registry/provider address and whether your machine can reach it.");
-        } else if (compact.toLowerCase().contains("timeout")) {
+            result.setTransportHint("Socket-level connect error when opening provider channel.");
+        } else if (combined.contains("timeout")) {
             result.setHint("Check network reachability, uniqueId, and timeout settings.");
-        } else if (compact.toLowerCase().contains("classnotfound")) {
+            result.setTransportHint("The invocation timed out before completing a successful transport-level response.");
+        } else if (combined.contains("classnotfound")) {
             result.setHint("The selected runtime version may not match the provider stack.");
         }
     }
@@ -155,7 +226,15 @@ public final class ProcessRuntimeInvoker {
 
     private String compact(String raw) {
         String normalized = raw.replace('\n', ' ').replace('\r', ' ').trim();
-        return normalized.length() > 300 ? normalized.substring(0, 300) + "..." : normalized;
+        return normalized.length() > 500 ? normalized.substring(0, 500) + "..." : normalized;
+    }
+
+    private String extractProviderAddress(String stderr) {
+        Matcher matcher = PROVIDER_ADDRESS_PATTERN.matcher(stderr);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
     }
 
     static final class StreamCollector extends Thread {

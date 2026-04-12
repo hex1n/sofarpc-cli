@@ -9,6 +9,7 @@ import picocli.CommandLine.ParameterException;
 import java.io.File;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -251,8 +252,31 @@ public final class RpcCtlApplication {
                 contextEntry == null ? null : contextEntry.getSofaRpcVersion(),
                 config.getSofaRpcVersion()
             ));
+            merged.setStubPaths(copyList(
+                contextEntry != null && contextEntry.getStubPaths() != null && !contextEntry.getStubPaths().isEmpty()
+                    ? contextEntry.getStubPaths()
+                    : config.getStubPaths()
+            ));
             merged.setEnvs(config.getEnvs());
             return merged;
+        }
+
+        protected List<String> copyList(List<String> values) {
+            return values == null ? new ArrayList<String>() : new ArrayList<String>(values);
+        }
+
+        protected List<String> resolvePathList(List<String> configuredPaths, String baseFilePath) {
+            if (configuredPaths == null || configuredPaths.isEmpty()) {
+                return Collections.emptyList();
+            }
+            List<String> resolved = new ArrayList<String>(configuredPaths.size());
+            for (String configuredPath : configuredPaths) {
+                if (configuredPath == null || configuredPath.trim().isEmpty()) {
+                    continue;
+                }
+                resolved.add(ConfigLoader.resolveOptionalPath(configuredPath, baseFilePath));
+            }
+            return resolved;
         }
 
         protected String firstNonBlank(String... values) {
@@ -316,6 +340,10 @@ public final class RpcCtlApplication {
         @Option(names = "--confirm", description = "Required for metadata methods marked as write or dangerous.")
         protected boolean confirm;
 
+        @Option(names = "--stub-path",
+            description = "Business interface jar or classes directory. Repeat to add multiple entries.")
+        protected List<String> stubPaths = new ArrayList<String>();
+
         @Override
         public Integer call() {
             LoadedContext loadedContext = loadContextForInvoke();
@@ -323,7 +351,8 @@ public final class RpcCtlApplication {
             MetadataCatalog.ServiceMetadata serviceMetadata = loadedContext.getMetadata().getService(serviceName);
             MetadataCatalog.MethodMetadata methodMetadata = serviceMetadata == null ? null : serviceMetadata.getMethod(methodName);
 
-            List<String> paramTypes = resolveParamTypes(methodMetadata);
+            ResolvedParamTypes resolvedParamTypes = resolveParamTypes(methodMetadata);
+            List<String> paramTypes = resolvedParamTypes.getTypes();
             String resolvedUniqueId = resolveUniqueId(environmentConfig, serviceMetadata);
             enforceRiskConfirmation(methodMetadata);
 
@@ -335,6 +364,7 @@ public final class RpcCtlApplication {
             request.setUniqueId(resolvedUniqueId);
             request.setMethodName(methodName);
             request.setParamTypes(paramTypes);
+            request.setStubPaths(resolveStubPaths(loadedContext));
             request.setArgsJson(argsJson);
 
             RuntimeInvocationResult result;
@@ -358,10 +388,14 @@ public final class RpcCtlApplication {
                     classifyLauncherError(exception),
                     exception.getMessage()
                 );
+                annotateInvocationResult(result, resolvedParamTypes);
                 applyFailureHints(result, exception);
+                applyInvocationFailureHints(result, resolvedParamTypes, request.getStubPaths());
                 printJson(result);
                 return exception.getExitCode();
             }
+            annotateInvocationResult(result, resolvedParamTypes);
+            applyInvocationFailureHints(result, resolvedParamTypes, request.getStubPaths());
             printJson(result);
             return result.isSuccess() ? ExitCodes.SUCCESS : ExitCodes.RPC_ERROR;
         }
@@ -515,15 +549,27 @@ public final class RpcCtlApplication {
             return null;
         }
 
-        private List<String> resolveParamTypes(MetadataCatalog.MethodMetadata methodMetadata) {
+        private ResolvedParamTypes resolveParamTypes(MetadataCatalog.MethodMetadata methodMetadata) {
             List<String> explicitTypes = TypeNameUtils.parseTypes(rawTypes);
-            if (!explicitTypes.isEmpty()) {
-                return explicitTypes;
+            List<String> normalizedExplicitTypes = TypeNameUtils.normalizeParamTypes(explicitTypes);
+            List<String> metadataTypes = methodMetadata == null || methodMetadata.getParamTypes() == null
+                ? new ArrayList<String>()
+                : new ArrayList<String>(methodMetadata.getParamTypes());
+            List<String> normalizedMetadataTypes = TypeNameUtils.normalizeParamTypes(metadataTypes);
+
+            if (!normalizedExplicitTypes.isEmpty()
+                && !normalizedMetadataTypes.isEmpty()
+                && normalizedExplicitTypes.size() == normalizedMetadataTypes.size()
+                && normalizedExplicitTypes.equals(normalizedMetadataTypes)) {
+                return new ResolvedParamTypes(normalizedMetadataTypes, "metadata");
             }
-            if (methodMetadata != null && methodMetadata.getParamTypes() != null) {
-                return new ArrayList<String>(methodMetadata.getParamTypes());
+            if (!normalizedExplicitTypes.isEmpty()) {
+                return new ResolvedParamTypes(normalizedExplicitTypes, "cli");
             }
-            return new ArrayList<String>();
+            if (!normalizedMetadataTypes.isEmpty()) {
+                return new ResolvedParamTypes(normalizedMetadataTypes, "metadata");
+            }
+            return new ResolvedParamTypes(new ArrayList<String>(), "none");
         }
 
         private String resolveUniqueId(
@@ -617,6 +663,129 @@ public final class RpcCtlApplication {
             }
         }
 
+        private void annotateInvocationResult(
+            RuntimeInvocationResult result,
+            ResolvedParamTypes resolvedParamTypes
+        ) {
+            if (result == null) {
+                return;
+            }
+            result.setParamTypeSource(resolvedParamTypes.getSource());
+            if (result.getInvokeStyle() == null || result.getInvokeStyle().trim().isEmpty()) {
+                result.setInvokeStyle(result.isGenericCall() ? "$genericInvoke" : "$invoke");
+            }
+            result.setPayloadMode(resolvePayloadMode(resolvedParamTypes));
+        }
+
+        private void applyInvocationFailureHints(
+            RuntimeInvocationResult result,
+            ResolvedParamTypes resolvedParamTypes,
+            List<String> resolvedStubPaths
+        ) {
+            if (result == null || result.isSuccess()) {
+                return;
+            }
+            String errorCode = result.getErrorCode() == null ? "" : result.getErrorCode();
+            if ("RPC_METHOD_NOT_FOUND".equals(errorCode)
+                && "cli".equals(resolvedParamTypes.getSource())
+                && containsConcreteCollectionTypes(TypeNameUtils.parseTypes(rawTypes))) {
+                result.setHint("Use interface-declared parameter types such as java.util.Map / java.util.List instead of concrete implementations.");
+                return;
+            }
+            if ("RPC_DESERIALIZATION_ERROR".equals(errorCode)
+                && ("schema".equals(result.getPayloadMode()) || "generic".equals(result.getPayloadMode()))) {
+                if (resolvedStubPaths != null && !resolvedStubPaths.isEmpty()) {
+                    result.setHint("Stub-aware DTO deserialization still failed. Check the stub classpath, DTO field names, and the selected SOFARPC version.");
+                } else {
+                    result.setHint("Complex DTO payloads should use schema/stub mode or GenericObject-compatible payloads. Add --stub-path for local business classes, or prefer raw Map/List mode when no DTO schema is available.");
+                }
+                return;
+            }
+            if ("none".equals(resolvedParamTypes.getSource())
+                && result.getMessage() != null
+                && result.getMessage().toLowerCase().contains("parameter count")) {
+                result.setHint("Provide --types explicitly, or add metadata/manifest so rpcctl can resolve the method signature.");
+            }
+        }
+
+        private boolean containsConcreteCollectionTypes(List<String> rawParamTypes) {
+            for (String rawParamType : rawParamTypes) {
+                String normalized = TypeNameUtils.normalizeForRpc(rawParamType);
+                if ("java.util.ArrayList".equals(normalized)
+                    || "java.util.LinkedList".equals(normalized)
+                    || "java.util.HashSet".equals(normalized)
+                    || "java.util.LinkedHashSet".equals(normalized)
+                    || "java.util.HashMap".equals(normalized)
+                    || "java.util.LinkedHashMap".equals(normalized)
+                    || "java.util.TreeMap".equals(normalized)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private String resolvePayloadMode(ResolvedParamTypes resolvedParamTypes) {
+            if ("metadata".equals(resolvedParamTypes.getSource())) {
+                return "schema";
+            }
+            List<String> types = resolvedParamTypes.getTypes();
+            if (types.isEmpty()) {
+                return "raw";
+            }
+            for (String type : types) {
+                if (!TypeNameUtils.isRawFriendlyType(type)) {
+                    return "generic";
+                }
+            }
+            return "raw";
+        }
+
+        private List<String> resolveStubPaths(LoadedContext loadedContext) {
+            List<String> explicitStubPaths = resolvePathList(stubPaths, PathsHolder.workingDirectorySentinel());
+            if (!explicitStubPaths.isEmpty()) {
+                return explicitStubPaths;
+            }
+
+            String envStubPath = System.getenv("RPCCTL_STUB_PATH");
+            if (envStubPath != null && !envStubPath.trim().isEmpty()) {
+                List<String> envPaths = new ArrayList<String>();
+                String[] chunks = envStubPath.split(java.io.File.pathSeparator);
+                for (String chunk : chunks) {
+                    if (chunk != null && !chunk.trim().isEmpty()) {
+                        envPaths.add(chunk.trim());
+                    }
+                }
+                return resolvePathList(envPaths, PathsHolder.workingDirectorySentinel());
+            }
+
+            List<String> configuredStubPaths = loadedContext.getConfig().getStubPaths();
+            if (configuredStubPaths == null || configuredStubPaths.isEmpty()) {
+                return Collections.emptyList();
+            }
+            String basePath = loadedContext.getManifestPath() != null
+                ? loadedContext.getManifestPath()
+                : (loadedContext.getConfigPath() != null ? loadedContext.getConfigPath() : PathsHolder.workingDirectorySentinel());
+            return resolvePathList(configuredStubPaths, basePath);
+        }
+
+        static final class ResolvedParamTypes {
+            private final List<String> types;
+            private final String source;
+
+            ResolvedParamTypes(List<String> types, String source) {
+                this.types = types;
+                this.source = source;
+            }
+
+            List<String> getTypes() {
+                return types;
+            }
+
+            String getSource() {
+                return source;
+            }
+        }
+
         private String defaultRuntimeBaseUrl() {
             return "https://github.com/hex1n/sofa-rpcctl/releases/download/v" + VERSION;
         }
@@ -641,6 +810,10 @@ public final class RpcCtlApplication {
 
         @Option(names = "--registry-protocol", description = "Registry protocol when --registry has no URI scheme.")
         private String registryProtocol;
+
+        @Option(names = "--stub-path",
+            description = "Business interface jar or classes directory. Repeat to add multiple entries.")
+        private List<String> stubPaths = new ArrayList<String>();
 
         @Option(names = "--protocol", description = "SOFARPC protocol override.")
         private String protocol;
@@ -689,6 +862,7 @@ public final class RpcCtlApplication {
             invokeCommand.argsJson = positionalArgsJson;
             invokeCommand.uniqueId = uniqueId;
             invokeCommand.confirm = confirm;
+            invokeCommand.stubPaths = new ArrayList<String>(stubPaths);
             return invokeCommand.call();
         }
 
@@ -833,6 +1007,7 @@ public final class RpcCtlApplication {
                 row.put("env", entry.getValue().getEnv());
                 row.put("directUrl", entry.getValue().getDirectUrl());
                 row.put("registryAddress", entry.getValue().getRegistryAddress());
+                row.put("stubPaths", entry.getValue().getStubPaths());
                 row.put("runtimeBaseUrl", entry.getValue().getRuntimeBaseUrl());
                 contexts.add(row);
             }
@@ -923,6 +1098,9 @@ public final class RpcCtlApplication {
         @Option(names = "--sofa-rpc-version", description = "Default SOFARPC version.")
         private String sofaRpcVersion;
 
+        @Option(names = "--stub-path", description = "Default stub jar/classes path. Repeat to add multiple entries.")
+        private List<String> stubPaths = new ArrayList<String>();
+
         @Option(names = "--runtime-base-url", description = "Runtime download base URL.")
         private String runtimeBaseUrl;
 
@@ -979,6 +1157,9 @@ public final class RpcCtlApplication {
             }
             if (sofaRpcVersion != null) {
                 entry.setSofaRpcVersion(sofaRpcVersion);
+            }
+            if (stubPaths != null && !stubPaths.isEmpty()) {
+                entry.setStubPaths(new ArrayList<String>(stubPaths));
             }
             if (runtimeBaseUrl != null) {
                 entry.setRuntimeBaseUrl(runtimeBaseUrl);
@@ -1047,6 +1228,18 @@ public final class RpcCtlApplication {
         @Option(names = "--metadata", description = "Source metadata YAML. Defaults to ./config/metadata.yaml when present.")
         private String metadataPath;
 
+        @Option(names = "--stub-path",
+            description = "Business interface jar or classes directory used for schema import. Repeat to add multiple entries.")
+        private List<String> stubPaths = new ArrayList<String>();
+
+        @Option(names = "--service-class",
+            description = "Fully qualified service interface or stub class to import into the manifest. Repeat to add multiple services.")
+        private List<String> serviceClasses = new ArrayList<String>();
+
+        @Option(names = "--service-unique-id",
+            description = "Optional uniqueId binding in the form <service>=<uniqueId>. When only one --service-class is present, a bare uniqueId is also accepted.")
+        private List<String> serviceUniqueIds = new ArrayList<String>();
+
         @Option(names = "--output", description = "Output manifest path.", defaultValue = "rpcctl-manifest.yaml")
         private String outputPath;
 
@@ -1087,6 +1280,7 @@ public final class RpcCtlApplication {
                 manifest.setSerialization(config.getSerialization());
                 manifest.setTimeoutMs(config.getTimeoutMs());
                 manifest.setSofaRpcVersion(config.getSofaRpcVersion());
+                manifest.setStubPaths(config.getStubPaths());
                 Map<String, RpcCtlManifest.EnvironmentBinding> envs =
                     new LinkedHashMap<String, RpcCtlManifest.EnvironmentBinding>();
                 for (Map.Entry<String, RpcCtlConfig.EnvironmentConfig> entry : config.getEnvs().entrySet()) {
@@ -1108,6 +1302,22 @@ public final class RpcCtlApplication {
             String resolvedMetadataPath = resolveSourcePath(metadataPath, "config/metadata.yaml");
             if (resolvedMetadataPath != null && new File(resolvedMetadataPath).isFile()) {
                 manifest.setServices(ConfigLoader.loadMetadata(resolvedMetadataPath, true).getServices());
+            }
+
+            StubMetadataImporter.ImportResult importResult = new StubMetadataImporter.ImportResult();
+            if (!serviceClasses.isEmpty()) {
+                importResult = new StubMetadataImporter().importServices(
+                    resolvePathList(stubPaths, PathsHolder.workingDirectorySentinel()),
+                    serviceClasses,
+                    parseUniqueIdBindings()
+                );
+                if (manifest.getServices() == null) {
+                    manifest.setServices(new LinkedHashMap<String, MetadataCatalog.ServiceMetadata>());
+                }
+                manifest.getServices().putAll(importResult.getServices());
+            }
+            if (!stubPaths.isEmpty()) {
+                manifest.setStubPaths(new ArrayList<String>(stubPaths));
             }
 
             if (defaultEnv != null) {
@@ -1133,6 +1343,9 @@ public final class RpcCtlApplication {
             payload.put("defaultEnv", manifest.getDefaultEnv());
             payload.put("serviceCount", manifest.getServices() == null ? 0 : manifest.getServices().size());
             payload.put("envCount", manifest.getEnvs() == null ? 0 : manifest.getEnvs().size());
+            payload.put("stubPathCount", manifest.getStubPaths() == null ? 0 : manifest.getStubPaths().size());
+            payload.put("importedServiceCount", importResult.getServices().size());
+            payload.put("skippedOverloads", importResult.getSkippedOverloads());
             System.out.println(ConfigLoader.toPrettyJson(payload));
             return ExitCodes.SUCCESS;
         }
@@ -1143,6 +1356,54 @@ public final class RpcCtlApplication {
             }
             File defaultFile = new File(defaultRelativePath);
             return defaultFile.isFile() ? defaultFile.getAbsolutePath() : null;
+        }
+
+        private List<String> resolvePathList(List<String> configuredPaths, String baseFilePath) {
+            if (configuredPaths == null || configuredPaths.isEmpty()) {
+                return Collections.emptyList();
+            }
+            List<String> resolved = new ArrayList<String>(configuredPaths.size());
+            for (String configuredPath : configuredPaths) {
+                if (configuredPath == null || configuredPath.trim().isEmpty()) {
+                    continue;
+                }
+                resolved.add(ConfigLoader.resolveOptionalPath(configuredPath, baseFilePath));
+            }
+            return resolved;
+        }
+
+        private Map<String, String> parseUniqueIdBindings() {
+            Map<String, String> bindings = new LinkedHashMap<String, String>();
+            if (serviceUniqueIds == null || serviceUniqueIds.isEmpty()) {
+                return bindings;
+            }
+            for (String rawBinding : serviceUniqueIds) {
+                if (rawBinding == null || rawBinding.trim().isEmpty()) {
+                    continue;
+                }
+                String binding = rawBinding.trim();
+                int separatorIndex = binding.indexOf('=');
+                if (separatorIndex < 0) {
+                    if (serviceClasses.size() != 1) {
+                        throw new CliException(
+                            ExitCodes.PARAMETER_ERROR,
+                            "Bare --service-unique-id requires exactly one --service-class."
+                        );
+                    }
+                    bindings.put(serviceClasses.get(0), binding);
+                    continue;
+                }
+                String serviceClass = binding.substring(0, separatorIndex).trim();
+                String uniqueId = binding.substring(separatorIndex + 1).trim();
+                if (serviceClass.isEmpty() || uniqueId.isEmpty()) {
+                    throw new CliException(
+                        ExitCodes.PARAMETER_ERROR,
+                        "Invalid --service-unique-id binding: " + rawBinding
+                    );
+                }
+                bindings.put(serviceClass, uniqueId);
+            }
+            return bindings;
         }
     }
 }

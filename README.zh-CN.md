@@ -14,13 +14,15 @@
 ## 它能做什么
 
 - 通过 `directUrl` 或注册中心调用 SOFARPC 服务。
-- 使用泛化调用，不需要把业务 DTO 放进调用端 classpath。
-- 接收 JSON 参数，并把复杂对象转换成 `GenericObject`。
+- 直接使用原生 SOFARPC 调用，不需要把业务 DTO 放进调用端 classpath。
+- 支持三种 payload 形态：`raw` 适合标量 / `Map` / `List`，`generic` 适合显式 `GenericObject` 兼容报文，`schema` 适合由 metadata 提供方法签名的场景。
+- 支持通过 `--stub-path` 进入 stub-aware 调用，让本地业务类参与复杂 DTO 序列化并走 `$invoke`。
 - 把 CLI 拆成稳定的 launcher 和按版本隔离的 SOFARPC runtime。
 - 支持显式 `--sofa-rpc-version`、自动版本推断、runtime 自动下载和本地缓存。
 - 支持从当前项目或 `~/.config/sofa-rpcctl/` 自动发现 `rpcctl-manifest.yaml`。
 - 支持通过 `rpcctl context` 维护可复用的全局 context/profile。
 - 支持从已有 `config/rpcctl.yaml` 和 `config/metadata.yaml` 生成 manifest。
+- 输出结构化诊断字段，比如 `payloadMode`、`paramTypeSource`、`invokeStyle` 和 provider 可达性 hint。
 - 支持生成发布资产和 bootstrap installer，不需要复制源码目录就能安装。
 
 ## 命令
@@ -31,6 +33,7 @@
 - `describe`：查看单个服务的 metadata。
 - `context`：管理 `~/.config/sofa-rpcctl/contexts.yaml` 里的全局 context/profile。
 - `manifest generate|init`：从现有配置生成 `rpcctl-manifest.yaml`，或者初始化一个骨架。
+- `manifest generate` 也可以直接从本地接口 jar 或编译产物导入方法签名。
 
 ## 快速开始
 
@@ -97,6 +100,67 @@ manifest 查找顺序：
 
 第 4 条就是“任意目录下也能用智能模式”的关键。只要做一次用户级安装，后续不在项目目录里也能走 manifest 驱动调用。
 
+## Payload 模式
+
+`rpcctl` 不会假装自己能从任意 JSON 自动推断任意 DTO 对象图。现在支持的是三种明确形态：
+
+- `raw`：最适合标量参数，以及方法签名本来就是 `Map`、`List`、`Set`、数组、基础类型的场景。这是最接近 `curl` 的模式。
+- `generic`：最适合你已经知道 DTO 声明类型，并且愿意显式提供 `@type` / `@value` 这类提示的场景。
+- `schema`：最适合业务 DTO，由 `rpcctl-manifest.yaml` 或其他 metadata 提供方法签名。
+
+调用结果里会通过 `payloadMode`、`paramTypeSource`、`invokeStyle` 告诉你这次实际走的是哪条路径。
+
+`raw` 例子：
+
+```bash
+rpcctl call \
+  com.example.PayloadService/submit \
+  '[{"requestId":"payload-01","meta":{"channel":"smoke"},"lines":[{"sku":"sku-apple","quantity":2}]}]' \
+  --registry zookeeper://127.0.0.1:2181 \
+  --types java.util.Map \
+  --unique-id payload-service
+```
+
+带显式类型提示的 `generic` 例子：
+
+```bash
+rpcctl invoke \
+  --direct-url bolt://127.0.0.1:12200 \
+  --service com.example.OrderService \
+  --method submit \
+  --types com.example.OrderRequest \
+  --args '[{"@type":"com.example.OrderRequest","customer":{"@type":"com.example.Customer","name":"alice"}}]'
+```
+
+stub-aware DTO 例子：
+
+```bash
+rpcctl call \
+  com.example.OrderService/submit \
+  '[{"requestId":"order-01","customer":{"name":"alice","address":{"city":"Shanghai"}},"lines":[{"sku":"sku-apple","quantity":2,"price":12.3}]}]' \
+  --direct-url bolt://127.0.0.1:12241 \
+  --manifest ./rpcctl-manifest.yaml \
+  --stub-path ./target/classes \
+  --confirm
+```
+
+需要明确的边界：
+
+- 官方 generic 路径只定义在 `bolt + hessian2` 上。
+- 没有 schema 或业务 stub 时，嵌套 DTO 对象图不保证稳定反序列化。
+- 如果只是临时 smoke check，优先用 `raw` 的 `Map` / `List` 报文，或者直接用服务暴露的 REST binding。
+
+## Registry 注意事项
+
+注册中心模式是否成功，不只取决于“能不能从 zk 找到 provider”，还取决于 provider 发布出来的地址是否真的可达。如果 provider 发布的是 `localhost`、容器内 IP，或者另一张本机不可达的地址，那么服务发现虽然成功，真正建链时还是会失败。
+
+所以在本地或容器化测试里，provider 侧最好显式设置 `ServerConfig#setVirtualHost(...)`，必要时再配 `ServerConfig#setVirtualPort(...)`，让注册中心里发布的是调用端真正能连到的地址。现在 `rpcctl` 会尽量区分：
+
+- 注册中心里根本没找到 provider
+- 找到了 provider，但 provider 地址不可达
+- 方法签名不匹配
+- DTO / payload 不兼容导致的反序列化失败
+
 ## Context
 
 context 是保存在下面这个文件里的全局 profile：
@@ -112,6 +176,7 @@ context 是保存在下面这个文件里的全局 profile：
 ```bash
 rpcctl context set test \
   --manifest ~/.config/sofa-rpcctl/rpcctl-manifest.yaml \
+  --stub-path ~/workspace/demo/target/classes \
   --runtime-base-url https://github.com/hex1n/sofa-rpcctl/releases/download/v0.1.0 \
   --current
 ```
@@ -160,6 +225,17 @@ rpcctl manifest generate
 rpcctl manifest generate \
   --output /tmp/rpcctl-manifest.yaml \
   --force
+```
+
+直接从本地编译产物导入 service schema：
+
+```bash
+rpcctl manifest generate \
+  --output rpcctl-manifest.yaml \
+  --force \
+  --stub-path ./target/classes \
+  --service-class com.example.OrderService \
+  --service-unique-id com.example.OrderService=order-service
 ```
 
 初始化一个带根级默认值的 manifest：
@@ -238,6 +314,23 @@ https://github.com/hex1n/sofa-rpcctl/releases/download/v<version>
 
 如果你是离线环境，也可以把它指到本地目录或 `file://` URL。
 
+## 兼容性策略
+
+`rpcctl` 的关键策略是显式运行时隔离：
+
+- 版本解析顺序为：显式 `--sofa-rpc-version`、context、manifest/config、当前项目探测、运行时缓存/本地资源、自动下载。
+- 不假设一个 runtime 可以兼容所有 SOFARPC 版本；不同服务栈建议使用独立 `rpcctl-runtime-sofa-<version>.jar`。
+- 复杂 DTO 时优先默认到官方文档中的兼容组合（`bolt` + `hessian2`）并保证签名类型可见。
+
+SOFAStack 的配置文档里对应关键字段：
+
+- Consumer 配置中的 `protocol`、`serialization`、`generic`、`directUrl`、`registry`。
+- ServerConfig 的 `virtualHost`/`virtualPort` 用于注册中心地址修正。
+
+官方入口：
+
+- https://www.sofastack.tech/en/projects/sofa-rpc/configuration-common/
+
 ## 配置
 
 推荐用 `rpcctl-manifest.yaml` 表达项目级元数据。
@@ -291,6 +384,7 @@ tar -xzf dist/sofa-rpcctl-0.1.0.tar.gz
 从本地归档或 URL 安装：
 
 ```bash
+tar -xzf sofa-rpcctl-0.1.0.tar.gz
 ./sofa-rpcctl-0.1.0/install-from-archive.sh /path/to/sofa-rpcctl-0.1.0.tar.gz
 ```
 
@@ -403,18 +497,51 @@ curl -fsSL \
 
 仓库里也附带了 GitHub Actions workflow，给 `v*` tag 自动构建并发布这些资产。
 
+## E2E Smoke
+
+仓库里现在附带了一套可重复执行的 smoke 脚本：
+
+```bash
+./scripts/e2e-smoke.sh
+```
+
+依赖：
+
+- `java`
+- `javac`
+- 一个兼容 Docker 的运行环境，比如 Docker Desktop 或 OrbStack
+
+脚本会做这几件事：
+
+1. 构建指定版本的 SOFARPC runtime
+2. 编译 `e2e/fixtures/src` 里的本地 provider 样例
+3. 验证一条 direct 模式的 `UserService#getUser(Long)` 调用
+4. 验证一条基于导入 manifest schema 的 stub-aware DTO 调用
+5. 启动本地 ZooKeeper，再验证一条 registry 模式的复杂 `Map` payload 调用
+
+可选环境变量：
+
+- `RPCCTL_E2E_DIRECT_PORT`
+- `RPCCTL_E2E_REGISTRY_PORT`
+- `RPCCTL_E2E_ZK_PORT`
+- `RPCCTL_E2E_ZK_CONTAINER`
+
 ## 当前范围
 
 已实现：
 
 - `invoke`、`call`、`list`、`describe`、`context`、`manifest`
 - `direct` 和 `registry` 两种目标模式
+- `raw`、`generic` 和 metadata 驱动的 `schema` payload 分类
+- 通过 `--stub-path` 进行 stub-aware DTO 调用
 - manifest 和全局 context 自动发现
+- 从本地 jar / 编译产物导入 manifest schema
 - runtime 版本隔离
 - runtime 自动下载与缓存
 - release asset 生成和 bootstrap installer
 - 基于 metadata 的写操作确认
 - 带 hint 的结构化 JSON 错误输出
+- 仓库内可重复执行的 direct / registry smoke 样例 `./scripts/e2e-smoke.sh`
 
 未实现：
 

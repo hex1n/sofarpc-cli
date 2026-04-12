@@ -11,7 +11,12 @@ public class RuntimeInvocationResult {
     private String uniqueId;
     private String method;
     private List<String> paramTypes;
+    private String paramTypeSource;
     private boolean genericCall;
+    private String invokeStyle;
+    private String payloadMode;
+    private String resolvedTarget;
+    private String transportHint;
     private long elapsedMs;
     private Object result;
     private String errorCode;
@@ -133,6 +138,46 @@ public class RuntimeInvocationResult {
 
     public void setGenericCall(boolean genericCall) {
         this.genericCall = genericCall;
+    }
+
+    public String getParamTypeSource() {
+        return paramTypeSource;
+    }
+
+    public void setParamTypeSource(String paramTypeSource) {
+        this.paramTypeSource = paramTypeSource;
+    }
+
+    public String getInvokeStyle() {
+        return invokeStyle;
+    }
+
+    public void setInvokeStyle(String invokeStyle) {
+        this.invokeStyle = invokeStyle;
+    }
+
+    public String getPayloadMode() {
+        return payloadMode;
+    }
+
+    public void setPayloadMode(String payloadMode) {
+        this.payloadMode = payloadMode;
+    }
+
+    public String getResolvedTarget() {
+        return resolvedTarget;
+    }
+
+    public void setResolvedTarget(String resolvedTarget) {
+        this.resolvedTarget = resolvedTarget;
+    }
+
+    public String getTransportHint() {
+        return transportHint;
+    }
+
+    public void setTransportHint(String transportHint) {
+        this.transportHint = transportHint;
     }
 
     public long getElapsedMs() {

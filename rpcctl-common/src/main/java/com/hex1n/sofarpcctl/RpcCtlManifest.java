@@ -1,6 +1,8 @@
 package com.hex1n.sofarpcctl;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 public class RpcCtlManifest {
@@ -10,6 +12,7 @@ public class RpcCtlManifest {
     private String protocol = "bolt";
     private String serialization = "hessian2";
     private Integer timeoutMs = Integer.valueOf(3000);
+    private List<String> stubPaths = new ArrayList<String>();
     private Map<String, EnvironmentBinding> envs = new LinkedHashMap<String, EnvironmentBinding>();
     private Map<String, MetadataCatalog.ServiceMetadata> services = new LinkedHashMap<String, MetadataCatalog.ServiceMetadata>();
 
@@ -53,6 +56,14 @@ public class RpcCtlManifest {
         this.timeoutMs = timeoutMs;
     }
 
+    public List<String> getStubPaths() {
+        return stubPaths;
+    }
+
+    public void setStubPaths(List<String> stubPaths) {
+        this.stubPaths = stubPaths;
+    }
+
     public Map<String, EnvironmentBinding> getEnvs() {
         return envs;
     }
@@ -76,6 +87,9 @@ public class RpcCtlManifest {
         config.setSerialization(serialization);
         config.setTimeoutMs(timeoutMs);
         config.setSofaRpcVersion(sofaRpcVersion);
+        config.setStubPaths(stubPaths == null
+            ? new ArrayList<String>()
+            : new ArrayList<String>(stubPaths));
 
         Map<String, RpcCtlConfig.EnvironmentConfig> resolvedEnvs =
             new LinkedHashMap<String, RpcCtlConfig.EnvironmentConfig>();
