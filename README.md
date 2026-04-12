@@ -1,5 +1,7 @@
 # sofa-rpcctl
 
+[中文说明](./README.zh-CN.md)
+
 `sofa-rpcctl` is a standalone CLI for invoking SOFABoot / SOFARPC services from the command line without depending on business interface jars.
 
 The project is designed around three constraints:
