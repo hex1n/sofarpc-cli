@@ -1,21 +1,17 @@
+defaultEnv: test-zk
+protocol: bolt
+serialization: hessian2
+timeoutMs: 3000
+sofaRpcVersion: 5.4.0
 metadataPath: metadata.yaml
 envs:
   local-direct:
     mode: direct
-    protocol: bolt
-    serialization: hessian2
     directUrl: bolt://127.0.0.1:12200
-    timeoutMs: 3000
   test-zk:
     mode: registry
-    protocol: bolt
-    serialization: hessian2
     registryProtocol: zookeeper
     registryAddress: 127.0.0.1:2181
-    timeoutMs: 3000
   sofa-registry:
     mode: registry
-    protocol: bolt
-    serialization: hessian2
     registryAddress: sofa://127.0.0.1:9603
-    timeoutMs: 3000

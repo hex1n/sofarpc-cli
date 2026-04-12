@@ -8,26 +8,36 @@ DIST_ROOT="${ROOT_DIR}/dist"
 BUILD_ROOT="${ROOT_DIR}/target/dist-build"
 PACKAGE_ROOT="${BUILD_ROOT}/${PACKAGE_NAME}"
 ARCHIVE_PATH="${DIST_ROOT}/${PACKAGE_NAME}.tar.gz"
-TARGET_JAR="${ROOT_DIR}/target/sofa-rpcctl.jar"
+LAUNCHER_JAR="${ROOT_DIR}/target/rpcctl-launcher.jar"
+RUNTIMES_DIR="${ROOT_DIR}/target/runtimes"
 
-if [[ ! -f "${TARGET_JAR}" ]]; then
+if [[ ! -f "${LAUNCHER_JAR}" ]]; then
   "${ROOT_DIR}/scripts/build.sh"
 fi
 
-rm -rf "${PACKAGE_ROOT}"
-mkdir -p "${PACKAGE_ROOT}/bin" "${PACKAGE_ROOT}/lib" "${PACKAGE_ROOT}/share/sofa-rpcctl" "${DIST_ROOT}"
+if [[ ! -d "${RUNTIMES_DIR}" ]]; then
+  echo "Missing ${RUNTIMES_DIR}. Run ./scripts/build.sh first." >&2
+  exit 1
+fi
 
-cp "${TARGET_JAR}" "${PACKAGE_ROOT}/lib/sofa-rpcctl.jar"
-cp "${ROOT_DIR}/config/rpcctl.yaml" "${PACKAGE_ROOT}/share/sofa-rpcctl/rpcctl.yaml"
-cp "${ROOT_DIR}/config/metadata.yaml" "${PACKAGE_ROOT}/share/sofa-rpcctl/metadata.yaml"
+rm -rf "${PACKAGE_ROOT}"
+mkdir -p "${PACKAGE_ROOT}/bin" "${PACKAGE_ROOT}/lib" "${PACKAGE_ROOT}/share/sofa-rpcctl/examples" "${DIST_ROOT}"
+
+cp "${LAUNCHER_JAR}" "${PACKAGE_ROOT}/lib/rpcctl-launcher.jar"
+cp -R "${RUNTIMES_DIR}" "${PACKAGE_ROOT}/lib/runtimes"
+cp "${ROOT_DIR}/config/rpcctl.yaml" "${PACKAGE_ROOT}/share/sofa-rpcctl/examples/rpcctl.yaml"
+cp "${ROOT_DIR}/config/metadata.yaml" "${PACKAGE_ROOT}/share/sofa-rpcctl/examples/metadata.yaml"
+cp "${ROOT_DIR}/config/contexts.yaml" "${PACKAGE_ROOT}/share/sofa-rpcctl/examples/contexts.yaml"
+cp "${ROOT_DIR}/rpcctl-manifest.yaml" "${PACKAGE_ROOT}/share/sofa-rpcctl/examples/rpcctl-manifest.yaml"
 cp "${ROOT_DIR}/README.md" "${PACKAGE_ROOT}/README.md"
+cp "${ROOT_DIR}/README.zh-CN.md" "${PACKAGE_ROOT}/README.zh-CN.md"
 
 cat > "${PACKAGE_ROOT}/bin/rpcctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-exec java -jar "${PACKAGE_ROOT}/lib/sofa-rpcctl.jar" "$@"
+exec java -jar "${PACKAGE_ROOT}/lib/rpcctl-launcher.jar" "$@"
 EOF
 chmod +x "${PACKAGE_ROOT}/bin/rpcctl"
 
@@ -40,22 +50,17 @@ PREFIX="${1:-${PREFIX:-$HOME/.local}}"
 BIN_DIR="${PREFIX}/bin"
 LIB_DIR="${PREFIX}/lib/sofa-rpcctl"
 SHARE_DIR="${PREFIX}/share/sofa-rpcctl"
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sofa-rpcctl"
 INSTALLED_BIN="${BIN_DIR}/rpcctl"
-INSTALLED_JAR="${LIB_DIR}/sofa-rpcctl.jar"
+INSTALLED_JAR="${LIB_DIR}/rpcctl-launcher.jar"
 
-mkdir -p "${BIN_DIR}" "${LIB_DIR}" "${SHARE_DIR}" "${CONFIG_DIR}"
-cp "${PACKAGE_ROOT}/lib/sofa-rpcctl.jar" "${INSTALLED_JAR}"
-cp "${PACKAGE_ROOT}/share/sofa-rpcctl/rpcctl.yaml" "${SHARE_DIR}/rpcctl.yaml"
-cp "${PACKAGE_ROOT}/share/sofa-rpcctl/metadata.yaml" "${SHARE_DIR}/metadata.yaml"
-
-if [[ ! -f "${CONFIG_DIR}/rpcctl.yaml" ]]; then
-  cp "${PACKAGE_ROOT}/share/sofa-rpcctl/rpcctl.yaml" "${CONFIG_DIR}/rpcctl.yaml"
-fi
-
-if [[ ! -f "${CONFIG_DIR}/metadata.yaml" ]]; then
-  cp "${PACKAGE_ROOT}/share/sofa-rpcctl/metadata.yaml" "${CONFIG_DIR}/metadata.yaml"
-fi
+mkdir -p "${BIN_DIR}" "${LIB_DIR}" "${SHARE_DIR}/examples"
+cp "${PACKAGE_ROOT}/lib/rpcctl-launcher.jar" "${INSTALLED_JAR}"
+rm -rf "${LIB_DIR}/runtimes"
+cp -R "${PACKAGE_ROOT}/lib/runtimes" "${LIB_DIR}/runtimes"
+cp "${PACKAGE_ROOT}/share/sofa-rpcctl/examples/rpcctl.yaml" "${SHARE_DIR}/examples/rpcctl.yaml"
+cp "${PACKAGE_ROOT}/share/sofa-rpcctl/examples/metadata.yaml" "${SHARE_DIR}/examples/metadata.yaml"
+cp "${PACKAGE_ROOT}/share/sofa-rpcctl/examples/contexts.yaml" "${SHARE_DIR}/examples/contexts.yaml"
+cp "${PACKAGE_ROOT}/share/sofa-rpcctl/examples/rpcctl-manifest.yaml" "${SHARE_DIR}/examples/rpcctl-manifest.yaml"
 
 cat > "${INSTALLED_BIN}" <<EOS
 #!/usr/bin/env bash
@@ -69,14 +74,25 @@ Installed:
   binary: ${INSTALLED_BIN}
   jar:    ${INSTALLED_JAR}
   share:  ${SHARE_DIR}
-  config: ${CONFIG_DIR}/rpcctl.yaml
-  meta:   ${CONFIG_DIR}/metadata.yaml
+  examples:
+    ${SHARE_DIR}/examples/rpcctl.yaml
+    ${SHARE_DIR}/examples/metadata.yaml
+    ${SHARE_DIR}/examples/contexts.yaml
+    ${SHARE_DIR}/examples/rpcctl-manifest.yaml
 
 If '${BIN_DIR}' is not already in PATH, add:
   export PATH="${BIN_DIR}:\$PATH"
 
 Then run:
   rpcctl --help
+
+Optional:
+  copy the example YAML files into ~/.config/sofa-rpcctl/ if you want
+  reusable --env shortcuts and metadata-backed list/describe commands.
+  copy contexts.yaml into ~/.config/sofa-rpcctl/contexts.yaml if you want
+  named profiles via 'rpcctl context use'.
+  copy rpcctl-manifest.yaml into a project root if you want auto-discovery,
+  defaultEnv, and automatic method/type/uniqueId completion.
 EOS
 EOF
 chmod +x "${PACKAGE_ROOT}/install.sh"

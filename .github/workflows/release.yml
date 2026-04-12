@@ -1,0 +1,50 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+          cache: maven
+
+      - name: Prepare version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' pom.xml | head -n 1)"
+          fi
+          echo "value=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build all runtimes
+        run: bash scripts/build-all-runtimes.sh
+
+      - name: Create release assets
+        run: bash scripts/release.sh "${{ steps.version.outputs.value }}"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/release-assets/sofa-rpcctl-${{ steps.version.outputs.value }}.tar.gz
+            dist/release-assets/rpcctl-runtime-sofa-*.jar
+            dist/release-assets/get-rpcctl.sh
+            dist/release-assets/checksums.txt

@@ -27,14 +27,14 @@ public final class InvocationPayloads {
     public static ResolvedPayloads resolve(List<String> rawTypes, String argsJson) {
         ArrayNode jsonArgs = parseArgs(argsJson);
         if (rawTypes.isEmpty() && jsonArgs.size() > 0) {
-            throw new RpcCtlApplication.CliException(
-                RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
                 "Argument types are required when --args is not empty."
             );
         }
         if (rawTypes.size() != jsonArgs.size()) {
-            throw new RpcCtlApplication.CliException(
-                RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
                 "Parameter count mismatch: types=" + rawTypes.size() + ", args=" + jsonArgs.size()
             );
         }
@@ -67,18 +67,18 @@ public final class InvocationPayloads {
                 return ConfigLoader.json().createArrayNode();
             }
             if (!jsonNode.isArray()) {
-                throw new RpcCtlApplication.CliException(
-                    RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+                throw new CliException(
+                    ExitCodes.PARAMETER_ERROR,
                     "--args must be a JSON array."
                 );
             }
             return (ArrayNode) jsonNode;
         } catch (Exception exception) {
-            if (exception instanceof RpcCtlApplication.CliException) {
-                throw (RpcCtlApplication.CliException) exception;
+            if (exception instanceof CliException) {
+                throw (CliException) exception;
             }
-            throw new RpcCtlApplication.CliException(
-                RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
                 "Failed to parse --args JSON array.",
                 exception
             );
@@ -130,8 +130,8 @@ public final class InvocationPayloads {
         if ("char".equals(normalizedType) || "java.lang.Character".equals(normalizedType)) {
             String text = node.asText();
             if (text.length() != 1) {
-                throw new RpcCtlApplication.CliException(
-                    RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+                throw new CliException(
+                    ExitCodes.PARAMETER_ERROR,
                     "Expected a single character value for type " + declaredType
                 );
             }
@@ -162,8 +162,8 @@ public final class InvocationPayloads {
             if (node.isNumber()) {
                 return new Date(node.asLong());
             }
-            throw new RpcCtlApplication.CliException(
-                RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
                 "java.util.Date must be provided as epoch milliseconds."
             );
         }
@@ -175,8 +175,8 @@ public final class InvocationPayloads {
 
     private static Object convertArray(JsonNode node, String declaredType) {
         if (!node.isArray()) {
-            throw new RpcCtlApplication.CliException(
-                RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
                 "Expected a JSON array for type " + declaredType
             );
         }
@@ -201,8 +201,8 @@ public final class InvocationPayloads {
 
     private static Object convertCollection(JsonNode node) {
         if (!node.isArray()) {
-            throw new RpcCtlApplication.CliException(
-                RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
                 "Expected a JSON array for collection type."
             );
         }
@@ -215,8 +215,8 @@ public final class InvocationPayloads {
 
     private static Object convertMap(JsonNode node) {
         if (!node.isObject()) {
-            throw new RpcCtlApplication.CliException(
-                RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
                 "Expected a JSON object for map type."
             );
         }
@@ -232,8 +232,8 @@ public final class InvocationPayloads {
 
     private static GenericObject convertGenericObject(ObjectNode node, String declaredType) {
         if (declaredType == null || declaredType.trim().isEmpty()) {
-            throw new RpcCtlApplication.CliException(
-                RpcCtlApplication.ExitCodes.PARAMETER_ERROR,
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
                 "Complex objects require a declared type or an @type field."
             );
         }
