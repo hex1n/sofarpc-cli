@@ -300,6 +300,84 @@ Or:
 ./sofa-rpcctl-0.1.0/install-from-archive.sh https://example.com/sofa-rpcctl-0.1.0.tar.gz
 ```
 
+## Install On A New Machine
+
+For a fresh machine, you usually only need:
+
+- a working `java` runtime
+- network access to the published GitHub Release, or a copied release archive
+- network access to the target SOFARPC provider or registry
+
+Online install:
+
+```bash
+curl -fsSL \
+  https://github.com/hex1n/sofa-rpcctl/releases/download/v0.1.0/get-rpcctl.sh \
+  | bash -s -- 0.1.0
+```
+
+If `~/.local/bin` is not already in `PATH`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Sanity check:
+
+```bash
+rpcctl --help
+```
+
+Offline install from a copied release archive:
+
+```bash
+tar -xzf sofa-rpcctl-0.1.0.tar.gz
+./sofa-rpcctl-0.1.0/install.sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+First direct call on a fresh machine:
+
+```bash
+rpcctl call \
+  com.foo.UserService/getUser \
+  '[123]' \
+  --direct-url bolt://test-provider-host:12200 \
+  --types java.lang.Long \
+  --unique-id user-service \
+  --sofa-rpc-version 5.4.0
+```
+
+First registry-backed call:
+
+```bash
+rpcctl call \
+  com.foo.UserService/getUser \
+  '[123]' \
+  --registry zookeeper://test-zk-host:2181 \
+  --types java.lang.Long \
+  --unique-id user-service \
+  --sofa-rpc-version 5.4.0
+```
+
+`rpcctl-manifest.yaml` is optional for invocation. Without a manifest, the call still works, but you must provide the target yourself and usually also provide `--types`, `--unique-id`, and sometimes `--sofa-rpc-version`.
+
+If you want smarter behavior from any directory, do a one-time user setup:
+
+```bash
+mkdir -p ~/.config/sofa-rpcctl
+cp rpcctl-manifest.yaml ~/.config/sofa-rpcctl/
+rpcctl context set test \
+  --manifest ~/.config/sofa-rpcctl/rpcctl-manifest.yaml \
+  --current
+```
+
+After that, a shorter command can work:
+
+```bash
+rpcctl call com.foo.UserService/getUser '[123]'
+```
+
 ## Release Assets
 
 Generate a releasable asset directory:

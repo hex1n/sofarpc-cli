@@ -300,6 +300,84 @@ tar -xzf dist/sofa-rpcctl-0.1.0.tar.gz
 ./sofa-rpcctl-0.1.0/install-from-archive.sh https://example.com/sofa-rpcctl-0.1.0.tar.gz
 ```
 
+## 新电脑安装与使用
+
+一台全新的机器通常只需要满足这几个条件：
+
+- 本机有可用的 `java`
+- 能访问你发布的 GitHub Release，或者你手里有拷过去的发布包
+- 能访问目标 SOFARPC 的 provider 或 registry
+
+在线安装：
+
+```bash
+curl -fsSL \
+  https://github.com/hex1n/sofa-rpcctl/releases/download/v0.1.0/get-rpcctl.sh \
+  | bash -s -- 0.1.0
+```
+
+如果 `~/.local/bin` 还没进 `PATH`：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+检查安装结果：
+
+```bash
+rpcctl --help
+```
+
+如果是离线场景，就从拷过去的发布包安装：
+
+```bash
+tar -xzf sofa-rpcctl-0.1.0.tar.gz
+./sofa-rpcctl-0.1.0/install.sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+新机器上的第一条直连调用：
+
+```bash
+rpcctl call \
+  com.foo.UserService/getUser \
+  '[123]' \
+  --direct-url bolt://test-provider-host:12200 \
+  --types java.lang.Long \
+  --unique-id user-service \
+  --sofa-rpc-version 5.4.0
+```
+
+通过注册中心调用：
+
+```bash
+rpcctl call \
+  com.foo.UserService/getUser \
+  '[123]' \
+  --registry zookeeper://test-zk-host:2181 \
+  --types java.lang.Long \
+  --unique-id user-service \
+  --sofa-rpc-version 5.4.0
+```
+
+`rpcctl-manifest.yaml` 对调用本身不是强制要求。没有 manifest 也能调，但这时你要自己把目标地址写清楚，而且大多数情况下还要自己补 `--types`、`--unique-id`，有时还要补 `--sofa-rpc-version`。
+
+如果你希望它在任意目录下都更智能，可以做一次用户级初始化：
+
+```bash
+mkdir -p ~/.config/sofa-rpcctl
+cp rpcctl-manifest.yaml ~/.config/sofa-rpcctl/
+rpcctl context set test \
+  --manifest ~/.config/sofa-rpcctl/rpcctl-manifest.yaml \
+  --current
+```
+
+做完之后，命令就可以缩短成：
+
+```bash
+rpcctl call com.foo.UserService/getUser '[123]'
+```
+
 ## 发布资产
 
 生成一套可发布的 release assets：
