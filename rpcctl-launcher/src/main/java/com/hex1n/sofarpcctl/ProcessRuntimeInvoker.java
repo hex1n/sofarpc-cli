@@ -7,7 +7,9 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -90,7 +92,7 @@ public final class ProcessRuntimeInvoker {
     }
 
     private String resolveJavaBinary() {
-        return new File(System.getProperty("java.home"), "bin/java").getAbsolutePath();
+        return new JavaBinaryResolver().resolve().getAbsolutePath();
     }
 
     private InvocationCommand buildJavaCommand(File runtimeJar, RuntimeInvocationRequest request, String encodedRequest) {
@@ -284,16 +286,23 @@ public final class ProcessRuntimeInvoker {
             return;
         }
         String compact = compact(stderr);
-        result.setDetails(compact);
+        mergeFailureDetails(result, compact);
         String combined = ((result.getMessage() == null ? "" : result.getMessage()) + " " + compact).toLowerCase();
         String providerAddress = extractProviderAddress(stderr);
+        Map<String, String> diagnostics = ensureDiagnostics(result);
+        diagnostics.put("stderrExcerpt", compact);
         if (providerAddress != null && (result.getResolvedTarget() == null || result.getResolvedTarget().trim().isEmpty())) {
             result.setResolvedTarget(providerAddress);
+        }
+        if (providerAddress != null && !diagnostics.containsKey("providerAddress")) {
+            diagnostics.put("providerAddress", providerAddress);
         }
         if ((result.getErrorCode() == null || "RPC_ERROR".equals(result.getErrorCode()))
             && combined.contains("deserialization")) {
             result.setErrorCode("RPC_DESERIALIZATION_ERROR");
-        } else if ((result.getErrorCode() == null || "RPC_ROUTE_ERROR".equals(result.getErrorCode()))
+        } else if ((result.getErrorCode() == null
+            || "RPC_ROUTE_ERROR".equals(result.getErrorCode())
+            || "RPC_PROVIDER_NOT_FOUND".equals(result.getErrorCode()))
             && combined.contains("没有获得服务")) {
             if (combined.contains("add provider of") || providerAddress != null) {
                 result.setErrorCode("RPC_PROVIDER_UNREACHABLE");
@@ -308,28 +317,16 @@ public final class ProcessRuntimeInvoker {
             result.setErrorCode("RPC_METHOD_NOT_FOUND");
         }
 
-        if ("RPC_PROVIDER_UNREACHABLE".equals(result.getErrorCode())) {
-            if (providerAddress != null) {
-                result.setHint("Registry returned provider " + providerAddress
-                    + " but it was unreachable. Check provider virtualHost/virtualPort and network reachability.");
-            } else {
-                result.setHint("A provider address was discovered but could not be reached. Check provider virtualHost/virtualPort and network reachability.");
-            }
-            if (result.getResolvedTarget() == null || result.getResolvedTarget().trim().isEmpty()) {
-                result.setResolvedTarget("registry://" + result.getUniqueId() + "/providers");
-            }
-            result.setTransportHint("Check provider registration address and whether target instance is accessible from this client.");
-        } else if ("RPC_PROVIDER_NOT_FOUND".equals(result.getErrorCode())) {
-            result.setHint("No provider was discovered. Check registry address, service name, uniqueId, version, and whether the service is exported.");
-            result.setTransportHint("The registry query returned zero providers.");
-        } else if (compact.contains("Unable to open socket")) {
-            result.setHint("Check the registry/provider address and whether your machine can reach it.");
-            result.setTransportHint("Socket-level connect error when opening provider channel.");
-        } else if (combined.contains("timeout")) {
-            result.setHint("Check network reachability, uniqueId, and timeout settings.");
-            result.setTransportHint("The invocation timed out before completing a successful transport-level response.");
-        } else if (combined.contains("classnotfound")) {
-            result.setHint("The selected runtime version may not match the provider stack.");
+        applyFallbackErrorMetadata(result, providerAddress, compact, combined);
+    }
+
+    private void mergeFailureDetails(RuntimeInvocationResult result, String compact) {
+        if (result.getDetails() == null || result.getDetails().trim().isEmpty()) {
+            result.setDetails(compact);
+            return;
+        }
+        if (!result.getDetails().contains(compact)) {
+            result.setDetails(result.getDetails() + " | stderr: " + compact);
         }
     }
 
@@ -349,6 +346,118 @@ public final class ProcessRuntimeInvoker {
         Matcher matcher = PROVIDER_ADDRESS_PATTERN.matcher(stderr);
         if (matcher.find()) {
             return matcher.group(1);
+        }
+        return null;
+    }
+
+    private Map<String, String> ensureDiagnostics(RuntimeInvocationResult result) {
+        Map<String, String> diagnostics = result.getDiagnostics();
+        if (diagnostics == null) {
+            diagnostics = new LinkedHashMap<String, String>();
+            result.setDiagnostics(diagnostics);
+        }
+        return diagnostics;
+    }
+
+    private void applyFallbackErrorMetadata(
+        RuntimeInvocationResult result,
+        String providerAddress,
+        String compact,
+        String combined
+    ) {
+        if (result.getErrorPhase() == null || result.getErrorPhase().trim().isEmpty()) {
+            result.setErrorPhase(resolveFallbackErrorPhase(result.getErrorCode(), combined));
+        }
+        if (result.getRetriable() == null) {
+            result.setRetriable(resolveFallbackRetriable(result.getErrorCode()));
+        }
+        if ("RPC_PROVIDER_UNREACHABLE".equals(result.getErrorCode())) {
+            if (result.getHint() == null || result.getHint().trim().isEmpty()) {
+                if (providerAddress != null) {
+                    result.setHint("Registry returned provider " + providerAddress
+                        + " but it was unreachable. Check provider virtualHost/virtualPort and network reachability.");
+                } else {
+                    result.setHint("A provider address was discovered but could not be reached. Check provider virtualHost/virtualPort and network reachability.");
+                }
+            }
+            if (result.getResolvedTarget() == null || result.getResolvedTarget().trim().isEmpty()) {
+                String configuredTarget = result.getDiagnostics() == null ? null : result.getDiagnostics().get("configuredTarget");
+                String targetMode = result.getDiagnostics() == null ? null : result.getDiagnostics().get("targetMode");
+                if (configuredTarget != null && !configuredTarget.trim().isEmpty()) {
+                    result.setResolvedTarget(configuredTarget);
+                } else if ("registry".equals(targetMode)) {
+                    result.setResolvedTarget("registry://" + result.getUniqueId() + "/providers");
+                }
+            }
+            if (result.getTransportHint() == null || result.getTransportHint().trim().isEmpty()) {
+                result.setTransportHint("Check provider registration address and whether target instance is accessible from this client.");
+            }
+        } else if ("RPC_PROVIDER_NOT_FOUND".equals(result.getErrorCode())) {
+            if (result.getHint() == null || result.getHint().trim().isEmpty()) {
+                result.setHint("No provider was discovered. Check registry address, service name, uniqueId, version, and whether the service is exported.");
+            }
+            if (result.getTransportHint() == null || result.getTransportHint().trim().isEmpty()) {
+                result.setTransportHint("The registry query returned zero providers.");
+            }
+        } else if (compact.contains("Unable to open socket")) {
+            if (result.getHint() == null || result.getHint().trim().isEmpty()) {
+                result.setHint("Check the registry/provider address and whether your machine can reach it.");
+            }
+            if (result.getTransportHint() == null || result.getTransportHint().trim().isEmpty()) {
+                result.setTransportHint("Socket-level connect error when opening provider channel.");
+            }
+        } else if (combined.contains("timeout")) {
+            if (result.getHint() == null || result.getHint().trim().isEmpty()) {
+                result.setHint("Check network reachability, uniqueId, and timeout settings.");
+            }
+            if (result.getTransportHint() == null || result.getTransportHint().trim().isEmpty()) {
+                result.setTransportHint("The invocation timed out before completing a successful transport-level response.");
+            }
+        } else if (combined.contains("classnotfound")) {
+            if (result.getHint() == null || result.getHint().trim().isEmpty()) {
+                result.setHint("The selected runtime version may not match the provider stack.");
+            }
+        }
+    }
+
+    private String resolveFallbackErrorPhase(String errorCode, String combined) {
+        if (errorCode == null || errorCode.trim().isEmpty()) {
+            return combined.contains("timeout") ? "invoke" : "runtime";
+        }
+        if ("RPC_DESERIALIZATION_ERROR".equals(errorCode)) {
+            return "deserialize";
+        }
+        if ("RPC_SERIALIZATION_ERROR".equals(errorCode)) {
+            return "serialize";
+        }
+        if ("RPC_METHOD_NOT_FOUND".equals(errorCode)) {
+            return "invoke";
+        }
+        if ("RPC_PROVIDER_NOT_FOUND".equals(errorCode)) {
+            return "discovery";
+        }
+        if ("RPC_PROVIDER_UNREACHABLE".equals(errorCode)) {
+            return "connect";
+        }
+        if ("RPC_TIMEOUT".equals(errorCode)) {
+            return combined.contains("connect") ? "connect" : "invoke";
+        }
+        return "runtime";
+    }
+
+    private Boolean resolveFallbackRetriable(String errorCode) {
+        if (errorCode == null || errorCode.trim().isEmpty()) {
+            return null;
+        }
+        if ("RPC_METHOD_NOT_FOUND".equals(errorCode)
+            || "RPC_SERIALIZATION_ERROR".equals(errorCode)
+            || "RPC_DESERIALIZATION_ERROR".equals(errorCode)) {
+            return Boolean.FALSE;
+        }
+        if ("RPC_TIMEOUT".equals(errorCode)
+            || "RPC_PROVIDER_UNREACHABLE".equals(errorCode)
+            || "RPC_PROVIDER_NOT_FOUND".equals(errorCode)) {
+            return Boolean.TRUE;
         }
         return null;
     }

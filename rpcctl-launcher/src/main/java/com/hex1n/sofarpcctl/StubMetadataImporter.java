@@ -6,6 +6,7 @@ import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -92,16 +93,33 @@ public final class StubMetadataImporter {
         Map<String, MetadataCatalog.MethodMetadata> imported = new LinkedHashMap<String, MetadataCatalog.MethodMetadata>();
         for (String methodName : sortedMethodNames) {
             List<Method> methods = methodsByName.get(methodName);
-            if (methods.size() > 1) {
-                result.getSkippedOverloads().add(serviceClass.getName() + "#" + methodName);
-                continue;
-            }
-            Method method = methods.get(0);
             MetadataCatalog.MethodMetadata methodMetadata = new MetadataCatalog.MethodMetadata();
-            methodMetadata.setDescription(buildSignature(method));
-            methodMetadata.setRisk(inferRisk(method.getName()));
-            methodMetadata.setParamTypes(parameterTypeNames(method));
-            imported.put(method.getName(), methodMetadata);
+            Collections.sort(methods, new Comparator<Method>() {
+                @Override
+                public int compare(Method left, Method right) {
+                    return buildSignature(left).compareTo(buildSignature(right));
+                }
+            });
+            methodMetadata.setRisk(inferRisk(methodName));
+            if (methods.size() == 1) {
+                Method method = methods.get(0);
+                methodMetadata.setDescription(buildSignature(method));
+                methodMetadata.setParamTypes(parameterTypeNames(method));
+            } else {
+                methodMetadata.setDescription("Overloaded method with " + methods.size() + " variants.");
+                List<MetadataCatalog.MethodOverload> overloads =
+                    new ArrayList<MetadataCatalog.MethodOverload>(methods.size());
+                for (Method method : methods) {
+                    MetadataCatalog.MethodOverload overload = new MetadataCatalog.MethodOverload();
+                    overload.setDescription(buildSignature(method));
+                    overload.setRisk(inferRisk(method.getName()));
+                    overload.setParamTypes(parameterTypeNames(method));
+                    overloads.add(overload);
+                }
+                methodMetadata.setOverloads(overloads);
+                result.setImportedOverloadCount(result.getImportedOverloadCount() + overloads.size());
+            }
+            imported.put(methodName, methodMetadata);
         }
         return imported;
     }
@@ -187,6 +205,7 @@ public final class StubMetadataImporter {
         private final Map<String, MetadataCatalog.ServiceMetadata> services =
             new LinkedHashMap<String, MetadataCatalog.ServiceMetadata>();
         private final List<String> skippedOverloads = new ArrayList<String>();
+        private int importedOverloadCount;
 
         public Map<String, MetadataCatalog.ServiceMetadata> getServices() {
             return services;
@@ -194,6 +213,14 @@ public final class StubMetadataImporter {
 
         public List<String> getSkippedOverloads() {
             return skippedOverloads;
+        }
+
+        public int getImportedOverloadCount() {
+            return importedOverloadCount;
+        }
+
+        public void setImportedOverloadCount(int importedOverloadCount) {
+            this.importedOverloadCount = importedOverloadCount;
         }
     }
 }

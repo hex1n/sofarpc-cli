@@ -1,6 +1,7 @@
 package com.hex1n.sofarpcctl;
 
 import java.util.List;
+import java.util.Map;
 
 public class RuntimeInvocationResult {
 
@@ -20,9 +21,12 @@ public class RuntimeInvocationResult {
     private long elapsedMs;
     private Object result;
     private String errorCode;
+    private String errorPhase;
+    private Boolean retriable;
     private String message;
     private String details;
     private String hint;
+    private Map<String, String> diagnostics;
 
     public static RuntimeInvocationResult success(
         String env,
@@ -204,6 +208,22 @@ public class RuntimeInvocationResult {
         this.errorCode = errorCode;
     }
 
+    public String getErrorPhase() {
+        return errorPhase;
+    }
+
+    public void setErrorPhase(String errorPhase) {
+        this.errorPhase = errorPhase;
+    }
+
+    public Boolean getRetriable() {
+        return retriable;
+    }
+
+    public void setRetriable(Boolean retriable) {
+        this.retriable = retriable;
+    }
+
     public String getMessage() {
         return message;
     }
@@ -226,5 +246,13 @@ public class RuntimeInvocationResult {
 
     public void setHint(String hint) {
         this.hint = hint;
+    }
+
+    public Map<String, String> getDiagnostics() {
+        return diagnostics;
+    }
+
+    public void setDiagnostics(Map<String, String> diagnostics) {
+        this.diagnostics = diagnostics;
     }
 }

@@ -26,6 +26,7 @@ public final class RpcCtlApplication {
         CommandLine commandLine = new CommandLine(new RootCommand());
         commandLine.addSubcommand("invoke", new InvokeCommand());
         commandLine.addSubcommand("call", new CallCommand());
+        commandLine.addSubcommand("doctor", new DoctorCommand());
         commandLine.addSubcommand("list", new ListCommand());
         commandLine.addSubcommand("describe", new DescribeCommand());
         commandLine.addSubcommand("context", buildContextCommand());
@@ -70,7 +71,7 @@ public final class RpcCtlApplication {
     static final class RootCommand implements Runnable {
         @Override
         public void run() {
-            System.out.println("Usage: rpcctl <invoke|call|list|describe|context|manifest> [options]");
+            System.out.println("Usage: rpcctl <invoke|call|doctor|list|describe|context|manifest> [options]");
             System.out.println("Run 'rpcctl --help' or 'rpcctl <subcommand> --help' for details.");
         }
     }
@@ -102,6 +103,22 @@ public final class RpcCtlApplication {
         @Option(names = {"-m", "--metadata"},
             description = "Path to metadata YAML. Defaults to metadataPath from config or config/metadata.yaml.")
         private String metadataPath;
+
+        String getContextName() {
+            return contextName;
+        }
+
+        String getManifestPath() {
+            return manifestPath;
+        }
+
+        String getConfigPath() {
+            return configPath;
+        }
+
+        String getMetadataPath() {
+            return metadataPath;
+        }
     }
 
     static abstract class BaseCommand implements Callable<Integer> {
@@ -231,24 +248,26 @@ public final class RpcCtlApplication {
         ) {
             RpcCtlConfig merged = new RpcCtlConfig();
             merged.setMetadataPath(config.getMetadataPath());
-            merged.setDefaultEnv(firstNonBlank(
+            merged.setDefaultEnv(StringValueResolver.firstNonBlank(
                 contextEntry == null ? null : contextEntry.getEnv(),
                 config.getDefaultEnv()
             ));
-            merged.setProtocol(firstNonBlank(
+            merged.setProtocol(StringValueResolver.firstNonBlank(
                 contextEntry == null ? null : contextEntry.getProtocol(),
                 config.getProtocol(),
                 "bolt"
             ));
-            merged.setSerialization(firstNonBlank(
+            merged.setSerialization(StringValueResolver.firstNonBlank(
                 contextEntry == null ? null : contextEntry.getSerialization(),
                 config.getSerialization(),
                 "hessian2"
             ));
-            merged.setTimeoutMs(contextEntry != null && contextEntry.getTimeoutMs() != null
-                ? contextEntry.getTimeoutMs()
-                : config.getTimeoutMs());
-            merged.setSofaRpcVersion(firstNonBlank(
+            merged.setTimeoutMs(
+                contextEntry != null && contextEntry.getTimeoutMs() != null
+                    ? contextEntry.getTimeoutMs()
+                    : config.getTimeoutMs()
+            );
+            merged.setSofaRpcVersion(StringValueResolver.firstNonBlank(
                 contextEntry == null ? null : contextEntry.getSofaRpcVersion(),
                 config.getSofaRpcVersion()
             ));
@@ -279,23 +298,18 @@ public final class RpcCtlApplication {
             return resolved;
         }
 
-        protected String firstNonBlank(String... values) {
-            if (values == null) {
-                return null;
-            }
-            for (String value : values) {
-                if (value != null && !value.trim().isEmpty()) {
-                    return value.trim();
-                }
-            }
-            return null;
-        }
+        
     }
 
     @Command(name = "invoke", mixinStandardHelpOptions = true, description = "Invoke one SOFARPC method.")
     static class InvokeCommand extends BaseCommand {
         protected final VersionDetector versionDetector = new VersionDetector();
         protected final ProcessRuntimeInvoker runtimeInvoker = new ProcessRuntimeInvoker();
+        protected final ContextLoadResolver contextLoadResolver = new ContextLoadResolver();
+        protected final InvocationResultAnnotator invocationResultAnnotator = new InvocationResultAnnotator();
+        protected final EnvironmentTargetResolver environmentTargetResolver = new EnvironmentTargetResolver();
+        protected final RuntimeAccessResolver runtimeAccessResolver = new RuntimeAccessResolver();
+        protected final StubPathResolver stubPathResolver = new StubPathResolver();
 
         @Option(names = "--env", description = "Environment name from config. Optional when target flags are passed inline.")
         protected String environmentName;
@@ -346,17 +360,33 @@ public final class RpcCtlApplication {
 
         @Override
         public Integer call() {
-            LoadedContext loadedContext = loadContextForInvoke();
-            RpcCtlConfig.EnvironmentConfig environmentConfig = resolveEnvironmentConfig(loadedContext);
+            LoadedContext loadedContext = contextLoadResolver.resolveForInvoke(this).getLoadedContext();
+            ResolvedEnvironment resolvedEnvironment = environmentTargetResolver.resolve(
+                loadedContext,
+                environmentName,
+                directUrl,
+                registryAddress,
+                registryProtocol,
+                protocol,
+                serialization,
+                timeoutMs,
+                false
+            );
+            RpcCtlConfig.EnvironmentConfig environmentConfig = resolvedEnvironment.getEnvironmentConfig();
             MetadataCatalog.ServiceMetadata serviceMetadata = loadedContext.getMetadata().getService(serviceName);
             MetadataCatalog.MethodMetadata methodMetadata = serviceMetadata == null ? null : serviceMetadata.getMethod(methodName);
 
             ResolvedParamTypes resolvedParamTypes = resolveParamTypes(methodMetadata);
             List<String> paramTypes = resolvedParamTypes.getTypes();
             String resolvedUniqueId = resolveUniqueId(environmentConfig, serviceMetadata);
-            enforceRiskConfirmation(methodMetadata);
+            enforceRiskConfirmation(resolvedParamTypes.getRisk());
 
-            String resolvedVersion = versionDetector.resolve(sofaRpcVersion, loadedContext.getConfig(), environmentConfig);
+            VersionDetector.VersionResolution versionResolution = versionDetector.resolve(
+                sofaRpcVersion,
+                loadedContext.getConfig(),
+                environmentConfig
+            );
+            String resolvedVersion = versionResolution.getResolvedVersion();
             RuntimeInvocationRequest request = new RuntimeInvocationRequest();
             request.setEnvironmentName(resolveEffectiveEnvironmentName(loadedContext));
             request.setEnvironmentConfig(environmentConfig);
@@ -364,7 +394,7 @@ public final class RpcCtlApplication {
             request.setUniqueId(resolvedUniqueId);
             request.setMethodName(methodName);
             request.setParamTypes(paramTypes);
-            request.setStubPaths(resolveStubPaths(loadedContext));
+            request.setStubPaths(stubPathResolver.resolve(stubPaths, loadedContext).getPaths());
             request.setArgsJson(argsJson);
 
             RuntimeInvocationResult result;
@@ -373,9 +403,10 @@ public final class RpcCtlApplication {
                 result = runtimeInvoker.invoke(
                     resolvedVersion,
                     request,
-                    resolveRuntimeAccessOptions(loadedContext)
+                    runtimeAccessResolver.resolve(loadedContext)
                 );
             } catch (CliException exception) {
+                String launcherErrorCode = invocationResultAnnotator.classifyLauncherError(exception);
                 result = RuntimeInvocationResult.failure(
                     request.getEnvironmentName(),
                     environmentConfig.getMode(),
@@ -385,191 +416,134 @@ public final class RpcCtlApplication {
                     paramTypes,
                     false,
                     System.currentTimeMillis() - startTime,
-                    classifyLauncherError(exception),
+                    launcherErrorCode,
                     exception.getMessage()
                 );
-                annotateInvocationResult(result, resolvedParamTypes);
-                applyFailureHints(result, exception);
-                applyInvocationFailureHints(result, resolvedParamTypes, request.getStubPaths());
+                invocationResultAnnotator.annotateInvocationResult(result, resolvedParamTypes.getSource(), paramTypes);
+                invocationResultAnnotator.annotateLauncherFailure(result, exception, launcherErrorCode);
+                invocationResultAnnotator.annotateVersionResolution(result, versionResolution);
+                invocationResultAnnotator.applyFailureHints(result, exception);
+                invocationResultAnnotator.applyInvocationFailureHints(
+                    result,
+                    resolvedParamTypes.getSource(),
+                    rawTypes,
+                    request.getStubPaths()
+                );
                 printJson(result);
                 return exception.getExitCode();
             }
-            annotateInvocationResult(result, resolvedParamTypes);
-            applyInvocationFailureHints(result, resolvedParamTypes, request.getStubPaths());
+            invocationResultAnnotator.annotateInvocationResult(result, resolvedParamTypes.getSource(), paramTypes);
+            invocationResultAnnotator.annotateVersionResolution(result, versionResolution);
+            invocationResultAnnotator.applyInvocationFailureHints(
+                result,
+                resolvedParamTypes.getSource(),
+                rawTypes,
+                request.getStubPaths()
+            );
             printJson(result);
             return result.isSuccess() ? ExitCodes.SUCCESS : ExitCodes.RPC_ERROR;
-        }
-
-        private LoadedContext loadContextForInvoke() {
-            validateSourceOptions();
-            ContextCatalog.ResolvedContext resolvedContext = resolveActiveContext();
-            if (sharedOptions.manifestPath != null && !sharedOptions.manifestPath.trim().isEmpty()) {
-                String manifestPath = ConfigLoader.resolveOptionalPath(
-                    sharedOptions.manifestPath,
-                    PathsHolder.workingDirectorySentinel()
-                );
-                return loadManifestContext(manifestPath, resolvedContext);
-            }
-
-            if (sharedOptions.configPath != null) {
-                return loadContext(true, resolvedContext);
-            }
-
-            if (sharedOptions.metadataPath != null) {
-                String metadataPath = ConfigLoader.resolveOptionalPath(
-                    sharedOptions.metadataPath,
-                    PathsHolder.workingDirectorySentinel()
-                );
-                MetadataCatalog metadata = ConfigLoader.loadMetadata(metadataPath, true);
-                return new LoadedContext(
-                    applyContextDefaults(new RpcCtlConfig(), resolvedContext.getEntry()),
-                    metadata,
-                    null,
-                    metadataPath,
-                    null,
-                    resolvedContext.getName(),
-                    resolvedContext.getEntry()
-                );
-            }
-
-            if (resolvedContext.getEntry() != null
-                && resolvedContext.getEntry().getManifestPath() != null
-                && !resolvedContext.getEntry().getManifestPath().trim().isEmpty()) {
-                String manifestPath = ConfigLoader.resolveOptionalPath(
-                    resolvedContext.getEntry().getManifestPath(),
-                    PathsHolder.workingDirectorySentinel()
-                );
-                return loadManifestContext(manifestPath, resolvedContext);
-            }
-
-            String discoveredManifestPath = ConfigLoader.resolveDefaultManifestPath();
-            if (discoveredManifestPath != null && new File(discoveredManifestPath).isFile()) {
-                return loadManifestContext(discoveredManifestPath, resolvedContext);
-            }
-
-            String defaultConfigPath = ConfigLoader.resolveDefaultConfigPath();
-            if (defaultConfigPath != null && new File(defaultConfigPath).isFile()) {
-                return loadContext(true, resolvedContext);
-            }
-
-            return new LoadedContext(
-                applyContextDefaults(new RpcCtlConfig(), resolvedContext.getEntry()),
-                new MetadataCatalog(),
-                null,
-                null,
-                null,
-                resolvedContext.getName(),
-                resolvedContext.getEntry()
-            );
-        }
-
-        private RpcCtlConfig.EnvironmentConfig resolveEnvironmentConfig(LoadedContext loadedContext) {
-            boolean hasInlineDirect = directUrl != null && !directUrl.trim().isEmpty();
-            boolean hasInlineRegistry = registryAddress != null && !registryAddress.trim().isEmpty();
-            boolean hasInlineTarget = hasInlineDirect || hasInlineRegistry;
-
-            if (environmentName != null && !environmentName.trim().isEmpty()) {
-                if (hasInlineTarget) {
-                    throw new CliException(
-                        ExitCodes.PARAMETER_ERROR,
-                        "Use either --env or inline target flags, not both."
-                    );
-                }
-                return loadedContext.getConfig().requireEnv(environmentName.trim());
-            }
-
-            if (!hasInlineTarget) {
-                String contextEnv = loadedContext.getContextEntry() == null ? null : loadedContext.getContextEntry().getEnv();
-                if (contextEnv != null && !contextEnv.trim().isEmpty()) {
-                    return loadedContext.getConfig().requireEnv(contextEnv.trim());
-                }
-                String defaultEnv = loadedContext.getConfig().getDefaultEnv();
-                if (defaultEnv != null && !defaultEnv.trim().isEmpty()) {
-                    return loadedContext.getConfig().requireEnv(defaultEnv.trim());
-                }
-                RpcCtlConfig.EnvironmentConfig contextTarget = resolveContextTarget(loadedContext);
-                if (contextTarget != null) {
-                    return contextTarget;
-                }
-                throw new CliException(
-                    ExitCodes.PARAMETER_ERROR,
-                    "Missing target. Use --env, rely on defaultEnv from manifest/config/context, or pass --direct-url / --registry inline."
-                );
-            }
-            if (hasInlineDirect && hasInlineRegistry) {
-                throw new CliException(
-                    ExitCodes.PARAMETER_ERROR,
-                    "Use either --direct-url or --registry, not both."
-                );
-            }
-
-            RpcCtlConfig.EnvironmentConfig environmentConfig = new RpcCtlConfig.EnvironmentConfig();
-            environmentConfig.setProtocol(protocol);
-            environmentConfig.setSerialization(serialization);
-            environmentConfig.setTimeoutMs(timeoutMs);
-            if (hasInlineDirect) {
-                environmentConfig.setMode("direct");
-                environmentConfig.setDirectUrl(directUrl.trim());
-            } else {
-                environmentConfig.setMode("registry");
-                environmentConfig.setRegistryAddress(registryAddress.trim());
-                if (registryProtocol != null && !registryProtocol.trim().isEmpty()) {
-                    environmentConfig.setRegistryProtocol(registryProtocol.trim());
-                }
-            }
-            return loadedContext.getConfig().applyDefaults(environmentConfig);
-        }
-
-        private RpcCtlConfig.EnvironmentConfig resolveContextTarget(LoadedContext loadedContext) {
-            ContextCatalog.ContextEntry contextEntry = loadedContext.getContextEntry();
-            if (contextEntry == null || contextEntry.isEmpty()) {
-                return null;
-            }
-            if (contextEntry.getDirectUrl() != null && !contextEntry.getDirectUrl().trim().isEmpty()) {
-                RpcCtlConfig.EnvironmentConfig environmentConfig = new RpcCtlConfig.EnvironmentConfig();
-                environmentConfig.setMode("direct");
-                environmentConfig.setDirectUrl(contextEntry.getDirectUrl());
-                environmentConfig.setProtocol(contextEntry.getProtocol());
-                environmentConfig.setSerialization(contextEntry.getSerialization());
-                environmentConfig.setTimeoutMs(contextEntry.getTimeoutMs());
-                environmentConfig.setSofaRpcVersion(contextEntry.getSofaRpcVersion());
-                return loadedContext.getConfig().applyDefaults(environmentConfig);
-            }
-            if (contextEntry.getRegistryAddress() != null && !contextEntry.getRegistryAddress().trim().isEmpty()) {
-                RpcCtlConfig.EnvironmentConfig environmentConfig = new RpcCtlConfig.EnvironmentConfig();
-                environmentConfig.setMode("registry");
-                environmentConfig.setRegistryAddress(contextEntry.getRegistryAddress());
-                environmentConfig.setRegistryProtocol(contextEntry.getRegistryProtocol());
-                environmentConfig.setProtocol(contextEntry.getProtocol());
-                environmentConfig.setSerialization(contextEntry.getSerialization());
-                environmentConfig.setTimeoutMs(contextEntry.getTimeoutMs());
-                environmentConfig.setSofaRpcVersion(contextEntry.getSofaRpcVersion());
-                return loadedContext.getConfig().applyDefaults(environmentConfig);
-            }
-            return null;
         }
 
         private ResolvedParamTypes resolveParamTypes(MetadataCatalog.MethodMetadata methodMetadata) {
             List<String> explicitTypes = TypeNameUtils.parseTypes(rawTypes);
             List<String> normalizedExplicitTypes = TypeNameUtils.normalizeParamTypes(explicitTypes);
-            List<String> metadataTypes = methodMetadata == null || methodMetadata.getParamTypes() == null
-                ? new ArrayList<String>()
-                : new ArrayList<String>(methodMetadata.getParamTypes());
-            List<String> normalizedMetadataTypes = TypeNameUtils.normalizeParamTypes(metadataTypes);
+            List<MetadataCatalog.MethodOverload> overloads = methodMetadata == null
+                ? Collections.<MetadataCatalog.MethodOverload>emptyList()
+                : methodMetadata.getResolvedOverloads();
 
-            if (!normalizedExplicitTypes.isEmpty()
-                && !normalizedMetadataTypes.isEmpty()
-                && normalizedExplicitTypes.size() == normalizedMetadataTypes.size()
-                && normalizedExplicitTypes.equals(normalizedMetadataTypes)) {
-                return new ResolvedParamTypes(normalizedMetadataTypes, "metadata");
-            }
             if (!normalizedExplicitTypes.isEmpty()) {
-                return new ResolvedParamTypes(normalizedExplicitTypes, "cli");
+                MetadataCatalog.MethodOverload matchingOverload = findMatchingOverload(overloads, normalizedExplicitTypes);
+                if (matchingOverload != null) {
+                    return new ResolvedParamTypes(
+                        TypeNameUtils.normalizeParamTypes(matchingOverload.getParamTypes()),
+                        "metadata",
+                        matchingOverload.getRisk()
+                    );
+                }
+                return new ResolvedParamTypes(normalizedExplicitTypes, "cli", deriveRisk(methodMetadata));
             }
-            if (!normalizedMetadataTypes.isEmpty()) {
-                return new ResolvedParamTypes(normalizedMetadataTypes, "metadata");
+
+            if (overloads.isEmpty()) {
+                return new ResolvedParamTypes(new ArrayList<String>(), "none", null);
             }
-            return new ResolvedParamTypes(new ArrayList<String>(), "none");
+
+            int argCount = resolveArgsCount();
+            List<MetadataCatalog.MethodOverload> matchingArity = new ArrayList<MetadataCatalog.MethodOverload>();
+            for (MetadataCatalog.MethodOverload overload : overloads) {
+                List<String> normalizedMetadataTypes = TypeNameUtils.normalizeParamTypes(overload.getParamTypes());
+                if (normalizedMetadataTypes.size() == argCount) {
+                    matchingArity.add(overload);
+                }
+            }
+
+            if (matchingArity.size() == 1) {
+                MetadataCatalog.MethodOverload matched = matchingArity.get(0);
+                return new ResolvedParamTypes(
+                    TypeNameUtils.normalizeParamTypes(matched.getParamTypes()),
+                    "metadata",
+                    matched.getRisk()
+                );
+            }
+            if (matchingArity.size() > 1) {
+                throw new CliException(
+                    ExitCodes.PARAMETER_ERROR,
+                    "Method " + serviceName + "/" + methodName + " has multiple overloads with "
+                        + argCount + " arguments. Pass --types to disambiguate."
+                );
+            }
+            if (methodMetadata != null) {
+                throw new CliException(
+                    ExitCodes.PARAMETER_ERROR,
+                    "No overload of " + serviceName + "/" + methodName + " accepts "
+                        + argCount + " arguments. Pass --types if metadata is stale."
+                );
+            }
+            return new ResolvedParamTypes(new ArrayList<String>(), "none", null);
+        }
+
+        private MetadataCatalog.MethodOverload findMatchingOverload(
+            List<MetadataCatalog.MethodOverload> overloads,
+            List<String> normalizedExplicitTypes
+        ) {
+            if (overloads == null || overloads.isEmpty()) {
+                return null;
+            }
+            for (MetadataCatalog.MethodOverload overload : overloads) {
+                List<String> normalizedMetadataTypes = TypeNameUtils.normalizeParamTypes(overload.getParamTypes());
+                if (normalizedExplicitTypes.equals(normalizedMetadataTypes)) {
+                    return overload;
+                }
+            }
+            return null;
+        }
+
+        private int resolveArgsCount() {
+            String candidate = argsJson == null || argsJson.trim().isEmpty() ? "[]" : argsJson.trim();
+            try {
+                com.fasterxml.jackson.databind.JsonNode jsonNode = ConfigLoader.json().readTree(candidate);
+                if (jsonNode == null || jsonNode.isNull()) {
+                    return 0;
+                }
+                if (!jsonNode.isArray()) {
+                    throw new CliException(ExitCodes.PARAMETER_ERROR, "--args must be a JSON array.");
+                }
+                return jsonNode.size();
+            } catch (CliException exception) {
+                throw exception;
+            } catch (Exception exception) {
+                throw new CliException(
+                    ExitCodes.PARAMETER_ERROR,
+                    "Failed to parse --args JSON array.",
+                    exception
+                );
+            }
+        }
+
+        private String deriveRisk(MetadataCatalog.MethodMetadata methodMetadata) {
+            if (methodMetadata == null || methodMetadata.getRisk() == null || methodMetadata.getRisk().trim().isEmpty()) {
+                return null;
+            }
+            return methodMetadata.getRisk();
         }
 
         private String resolveUniqueId(
@@ -585,27 +559,17 @@ public final class RpcCtlApplication {
             return environmentConfig.getUniqueId();
         }
 
-        private void enforceRiskConfirmation(MetadataCatalog.MethodMetadata methodMetadata) {
-            if (methodMetadata == null || methodMetadata.getRisk() == null) {
+        private void enforceRiskConfirmation(String risk) {
+            if (risk == null) {
                 return;
             }
-            String normalizedRisk = methodMetadata.getRisk().trim().toLowerCase();
+            String normalizedRisk = risk.trim().toLowerCase();
             if (("write".equals(normalizedRisk) || "dangerous".equals(normalizedRisk)) && !confirm) {
                 throw new CliException(
                     ExitCodes.POLICY_DENIED,
                     "Method is marked as " + normalizedRisk + ". Re-run with --confirm."
                 );
             }
-        }
-
-        private String classifyLauncherError(CliException exception) {
-            if (exception.getExitCode() == ExitCodes.PARAMETER_ERROR) {
-                return "RUNTIME_SETUP_ERROR";
-            }
-            if (exception.getExitCode() == ExitCodes.POLICY_DENIED) {
-                return "POLICY_DENIED";
-            }
-            return "RUNTIME_ERROR";
         }
 
         private String resolveEffectiveEnvironmentName(LoadedContext loadedContext) {
@@ -627,154 +591,15 @@ public final class RpcCtlApplication {
             return null;
         }
 
-        private RuntimeAccessOptions resolveRuntimeAccessOptions(LoadedContext loadedContext) {
-            String runtimeHome = firstNonBlank(
-                System.getenv("RPCCTL_RUNTIME_HOME"),
-                loadedContext.getContextEntry() == null ? null : loadedContext.getContextEntry().getRuntimeHome()
-            );
-            String runtimeBaseUrl = firstNonBlank(
-                System.getenv("RPCCTL_RUNTIME_BASE_URL"),
-                loadedContext.getContextEntry() == null ? null : loadedContext.getContextEntry().getRuntimeBaseUrl(),
-                defaultRuntimeBaseUrl()
-            );
-            String runtimeCacheDir = firstNonBlank(
-                System.getenv("RPCCTL_RUNTIME_CACHE_DIR"),
-                loadedContext.getContextEntry() == null ? null : loadedContext.getContextEntry().getRuntimeCacheDir(),
-                ConfigLoader.resolveXdgCacheRoot().resolve("sofa-rpcctl").resolve("runtimes").toString()
-            );
-            boolean autoDownloadEnabled = loadedContext.getContextEntry() == null
-                || loadedContext.getContextEntry().getAutoDownloadRuntimes() == null
-                || loadedContext.getContextEntry().getAutoDownloadRuntimes().booleanValue();
-            String explicitAutoDownload = System.getenv("RPCCTL_RUNTIME_AUTO_DOWNLOAD");
-            if (explicitAutoDownload != null && !explicitAutoDownload.trim().isEmpty()) {
-                autoDownloadEnabled = Boolean.parseBoolean(explicitAutoDownload.trim());
-            }
-            return new RuntimeAccessOptions(runtimeHome, runtimeBaseUrl, runtimeCacheDir, autoDownloadEnabled);
-        }
-
-        private void applyFailureHints(RuntimeInvocationResult result, CliException exception) {
-            String message = exception.getMessage() == null ? "" : exception.getMessage();
-            if (message.contains("No SOFARPC runtime found")) {
-                result.setHint("Set --sofa-rpc-version, configure runtimeBaseUrl via context, or build/install the matching runtime.");
-            } else if (message.toLowerCase().contains("timed out")) {
-                result.setHint("Check registry/provider reachability, uniqueId, and timeout settings.");
-            } else if (message.contains("Missing target")) {
-                result.setHint("Use a context/defaultEnv, or pass --direct-url / --registry inline.");
-            }
-        }
-
-        private void annotateInvocationResult(
-            RuntimeInvocationResult result,
-            ResolvedParamTypes resolvedParamTypes
-        ) {
-            if (result == null) {
-                return;
-            }
-            result.setParamTypeSource(resolvedParamTypes.getSource());
-            if (result.getInvokeStyle() == null || result.getInvokeStyle().trim().isEmpty()) {
-                result.setInvokeStyle(result.isGenericCall() ? "$genericInvoke" : "$invoke");
-            }
-            result.setPayloadMode(resolvePayloadMode(resolvedParamTypes));
-        }
-
-        private void applyInvocationFailureHints(
-            RuntimeInvocationResult result,
-            ResolvedParamTypes resolvedParamTypes,
-            List<String> resolvedStubPaths
-        ) {
-            if (result == null || result.isSuccess()) {
-                return;
-            }
-            String errorCode = result.getErrorCode() == null ? "" : result.getErrorCode();
-            if ("RPC_METHOD_NOT_FOUND".equals(errorCode)
-                && "cli".equals(resolvedParamTypes.getSource())
-                && containsConcreteCollectionTypes(TypeNameUtils.parseTypes(rawTypes))) {
-                result.setHint("Use interface-declared parameter types such as java.util.Map / java.util.List instead of concrete implementations.");
-                return;
-            }
-            if ("RPC_DESERIALIZATION_ERROR".equals(errorCode)
-                && ("schema".equals(result.getPayloadMode()) || "generic".equals(result.getPayloadMode()))) {
-                if (resolvedStubPaths != null && !resolvedStubPaths.isEmpty()) {
-                    result.setHint("Stub-aware DTO deserialization still failed. Check the stub classpath, DTO field names, and the selected SOFARPC version.");
-                } else {
-                    result.setHint("Complex DTO payloads should use schema/stub mode or GenericObject-compatible payloads. Add --stub-path for local business classes, or prefer raw Map/List mode when no DTO schema is available.");
-                }
-                return;
-            }
-            if ("none".equals(resolvedParamTypes.getSource())
-                && result.getMessage() != null
-                && result.getMessage().toLowerCase().contains("parameter count")) {
-                result.setHint("Provide --types explicitly, or add metadata/manifest so rpcctl can resolve the method signature.");
-            }
-        }
-
-        private boolean containsConcreteCollectionTypes(List<String> rawParamTypes) {
-            for (String rawParamType : rawParamTypes) {
-                String normalized = TypeNameUtils.normalizeForRpc(rawParamType);
-                if ("java.util.ArrayList".equals(normalized)
-                    || "java.util.LinkedList".equals(normalized)
-                    || "java.util.HashSet".equals(normalized)
-                    || "java.util.LinkedHashSet".equals(normalized)
-                    || "java.util.HashMap".equals(normalized)
-                    || "java.util.LinkedHashMap".equals(normalized)
-                    || "java.util.TreeMap".equals(normalized)) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private String resolvePayloadMode(ResolvedParamTypes resolvedParamTypes) {
-            if ("metadata".equals(resolvedParamTypes.getSource())) {
-                return "schema";
-            }
-            List<String> types = resolvedParamTypes.getTypes();
-            if (types.isEmpty()) {
-                return "raw";
-            }
-            for (String type : types) {
-                if (!TypeNameUtils.isRawFriendlyType(type)) {
-                    return "generic";
-                }
-            }
-            return "raw";
-        }
-
-        private List<String> resolveStubPaths(LoadedContext loadedContext) {
-            List<String> explicitStubPaths = resolvePathList(stubPaths, PathsHolder.workingDirectorySentinel());
-            if (!explicitStubPaths.isEmpty()) {
-                return explicitStubPaths;
-            }
-
-            String envStubPath = System.getenv("RPCCTL_STUB_PATH");
-            if (envStubPath != null && !envStubPath.trim().isEmpty()) {
-                List<String> envPaths = new ArrayList<String>();
-                String[] chunks = envStubPath.split(java.io.File.pathSeparator);
-                for (String chunk : chunks) {
-                    if (chunk != null && !chunk.trim().isEmpty()) {
-                        envPaths.add(chunk.trim());
-                    }
-                }
-                return resolvePathList(envPaths, PathsHolder.workingDirectorySentinel());
-            }
-
-            List<String> configuredStubPaths = loadedContext.getConfig().getStubPaths();
-            if (configuredStubPaths == null || configuredStubPaths.isEmpty()) {
-                return Collections.emptyList();
-            }
-            String basePath = loadedContext.getManifestPath() != null
-                ? loadedContext.getManifestPath()
-                : (loadedContext.getConfigPath() != null ? loadedContext.getConfigPath() : PathsHolder.workingDirectorySentinel());
-            return resolvePathList(configuredStubPaths, basePath);
-        }
-
         static final class ResolvedParamTypes {
             private final List<String> types;
             private final String source;
+            private final String risk;
 
-            ResolvedParamTypes(List<String> types, String source) {
+            ResolvedParamTypes(List<String> types, String source, String risk) {
                 this.types = types;
                 this.source = source;
+                this.risk = risk;
             }
 
             List<String> getTypes() {
@@ -784,11 +609,12 @@ public final class RpcCtlApplication {
             String getSource() {
                 return source;
             }
+
+            String getRisk() {
+                return risk;
+            }
         }
 
-        private String defaultRuntimeBaseUrl() {
-            return "https://github.com/hex1n/sofa-rpcctl/releases/download/v" + VERSION;
-        }
     }
 
     @Command(name = "call", mixinStandardHelpOptions = true, description = "Short syntax for invoke. Example: rpcctl call test-zk::com.foo.UserService/getUser '[123]'")
@@ -929,6 +755,7 @@ public final class RpcCtlApplication {
                 row.put("description", entry.getValue().getDescription());
                 row.put("uniqueId", entry.getValue().getUniqueId());
                 row.put("methodCount", entry.getValue().getMethods() == null ? 0 : entry.getValue().getMethods().size());
+                row.put("overloadCount", entry.getValue().getOverloadCount());
                 services.add(row);
             }
 
@@ -963,6 +790,119 @@ public final class RpcCtlApplication {
             payload.put("methods", serviceMetadata.getMethods());
             printJson(payload);
             return ExitCodes.SUCCESS;
+        }
+    }
+
+    @Command(name = "doctor", mixinStandardHelpOptions = true, description = "Diagnose config discovery, runtime resolution, and target reachability.")
+    static final class DoctorCommand extends BaseCommand {
+        private final VersionDetector versionDetector = new VersionDetector();
+        private final RuntimeLocator runtimeLocator = new RuntimeLocator();
+        private final NetworkProbe networkProbe = new NetworkProbe();
+        private final ContextLoadResolver contextLoadResolver = new ContextLoadResolver();
+        private final EnvironmentTargetResolver environmentTargetResolver = new EnvironmentTargetResolver();
+        private final RuntimeAccessResolver runtimeAccessResolver = new RuntimeAccessResolver();
+        private final StubPathResolver stubPathResolver = new StubPathResolver();
+        private final DoctorReportAssembler doctorReportAssembler = new DoctorReportAssembler();
+
+        @Option(names = "--env", description = "Environment name override.")
+        private String environmentName;
+
+        @Option(names = "--direct-url", description = "Direct SOFARPC target, for example bolt://127.0.0.1:12200")
+        private String directUrl;
+
+        @Option(names = "--registry", description = "Registry address, for example zookeeper://127.0.0.1:2181")
+        private String registryAddress;
+
+        @Option(names = "--registry-protocol", description = "Registry protocol when --registry has no URI scheme.")
+        private String registryProtocol;
+
+        @Option(names = "--protocol", description = "SOFARPC protocol override.")
+        private String protocol;
+
+        @Option(names = "--serialization", description = "Serialization override.")
+        private String serialization;
+
+        @Option(names = "--timeout-ms", description = "SOFARPC timeout override.")
+        private Integer timeoutMs;
+
+        @Option(names = "--sofa-rpc-version", description = "SOFARPC version override.")
+        private String sofaRpcVersion;
+
+        @Option(names = "--stub-path",
+            description = "Business interface jar or classes directory. Repeat to add multiple entries.")
+        private List<String> stubPaths = new ArrayList<String>();
+
+        @Option(names = "--probe-timeout-ms", description = "TCP timeout for reachability probes.", defaultValue = "1000")
+        private int probeTimeoutMs;
+
+        @Override
+        public Integer call() {
+            DoctorReport report = new DoctorReport();
+
+            ContextCatalog catalog = loadContextCatalog(true);
+            ContextCatalog.ResolvedContext resolvedContext = doctorReportAssembler.collectContextSection(
+                report,
+                catalog,
+                sharedOptions.contextName
+            );
+            if (resolvedContext == null) {
+                return finishDoctor(report);
+            }
+
+            ContextLoadResolution contextLoad;
+            try {
+                contextLoad = contextLoadResolver.resolveForDoctor(this, resolvedContext);
+            } catch (CliException exception) {
+                report.error("discovery", exception.getMessage(), null);
+                return finishDoctor(report);
+            }
+            doctorReportAssembler.collectDiscoverySection(report, contextLoad);
+
+            StubPathResolution resolvedStubPaths = stubPathResolver.resolve(stubPaths, contextLoad.getLoadedContext());
+            doctorReportAssembler.collectStubPathSection(report, resolvedStubPaths);
+            doctorReportAssembler.collectJavaSection(report);
+
+            ResolvedEnvironment resolvedEnvironment;
+            try {
+                resolvedEnvironment = environmentTargetResolver.resolve(
+                    contextLoad.getLoadedContext(),
+                    environmentName,
+                    directUrl,
+                    registryAddress,
+                    registryProtocol,
+                    protocol,
+                    serialization,
+                    timeoutMs,
+                    true
+                );
+            } catch (CliException exception) {
+                report.error("environment", exception.getMessage(), null);
+                return finishDoctor(report);
+            }
+
+            doctorReportAssembler.collectEnvironmentSection(report, resolvedEnvironment);
+
+            VersionDetector.VersionResolution versionResolution = versionDetector.resolve(
+                sofaRpcVersion,
+                contextLoad.getLoadedContext().getConfig(),
+                resolvedEnvironment.getEnvironmentConfig()
+            );
+            doctorReportAssembler.collectVersionSection(report, versionResolution);
+
+            RuntimeAccessOptions runtimeAccessOptions = runtimeAccessResolver.resolve(contextLoad.getLoadedContext());
+            RuntimeLocator.RuntimeResolutionProbe runtimeProbe = runtimeLocator.probeRuntimeJar(
+                versionResolution.getResolvedVersion(),
+                runtimeAccessOptions
+            );
+            doctorReportAssembler.collectRuntimeSection(report, versionResolution, runtimeProbe, runtimeAccessOptions);
+            doctorReportAssembler.collectNetworkSection(report, networkProbe, resolvedEnvironment, probeTimeoutMs);
+
+            return finishDoctor(report);
+        }
+
+        private Integer finishDoctor(DoctorReport report) {
+            printJson(report.toPayload());
+            return report.exitCode();
         }
     }
 
@@ -1345,6 +1285,7 @@ public final class RpcCtlApplication {
             payload.put("envCount", manifest.getEnvs() == null ? 0 : manifest.getEnvs().size());
             payload.put("stubPathCount", manifest.getStubPaths() == null ? 0 : manifest.getStubPaths().size());
             payload.put("importedServiceCount", importResult.getServices().size());
+            payload.put("importedOverloadCount", importResult.getImportedOverloadCount());
             payload.put("skippedOverloads", importResult.getSkippedOverloads());
             System.out.println(ConfigLoader.toPrettyJson(payload));
             return ExitCodes.SUCCESS;

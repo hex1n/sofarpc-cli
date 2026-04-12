@@ -5,12 +5,16 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class VersionDetector {
 
     private static final String DEFAULT_SOFA_RPC_VERSION = "5.4.0";
+    private final RuntimeVersionMatrix runtimeVersionMatrix = new RuntimeVersionMatrix();
     private static final Pattern[] MAVEN_PATTERNS = new Pattern[] {
         Pattern.compile("<sofa-rpc\\.version>\\s*([^<\\s]+)\\s*</sofa-rpc\\.version>"),
         Pattern.compile("<artifactId>\\s*sofa-rpc-(?:all|bom)\\s*</artifactId>[\\s\\S]{0,400}?<version>\\s*([^<\\s]+)\\s*</version>")
@@ -21,27 +25,30 @@ public final class VersionDetector {
         Pattern.compile("com\\.alipay\\.sofa:sofa-rpc-(?:all|bom):([0-9A-Za-z_.\\-]+)")
     };
 
-    public String resolve(String explicitVersion, RpcCtlConfig config, RpcCtlConfig.EnvironmentConfig environmentConfig) {
+    public VersionResolution resolve(String explicitVersion, RpcCtlConfig config, RpcCtlConfig.EnvironmentConfig environmentConfig) {
         if (explicitVersion != null && !explicitVersion.trim().isEmpty()) {
-            return explicitVersion.trim();
+            return buildResolution(explicitVersion.trim(), "cli", false);
         }
         if (environmentConfig != null
             && environmentConfig.getSofaRpcVersion() != null
             && !environmentConfig.getSofaRpcVersion().trim().isEmpty()) {
-            return environmentConfig.getSofaRpcVersion().trim();
+            return buildResolution(environmentConfig.getSofaRpcVersion().trim(), "env-config", false);
         }
         if (config != null
             && config.getSofaRpcVersion() != null
             && !config.getSofaRpcVersion().trim().isEmpty()) {
-            return config.getSofaRpcVersion().trim();
+            return buildResolution(config.getSofaRpcVersion().trim(), "config", false);
         }
         String environmentVersion = System.getenv("RPCCTL_SOFA_RPC_VERSION");
         if (environmentVersion != null && !environmentVersion.trim().isEmpty()) {
-            return environmentVersion.trim();
+            return buildResolution(environmentVersion.trim(), "system-env", false);
         }
 
         String discovered = detectFromWorkspace(Paths.get(System.getProperty("user.dir")).toAbsolutePath().normalize());
-        return discovered == null ? DEFAULT_SOFA_RPC_VERSION : discovered;
+        if (discovered != null) {
+            return buildResolution(discovered, "workspace-detected", false);
+        }
+        return buildResolution(DEFAULT_SOFA_RPC_VERSION, "default-fallback", true);
     }
 
     private String detectFromWorkspace(Path start) {
@@ -87,5 +94,58 @@ public final class VersionDetector {
             return null;
         }
         return null;
+    }
+
+    private VersionResolution buildResolution(String resolvedVersion, String source, boolean fallbackUsed) {
+        List<String> supportedVersions = runtimeVersionMatrix.listSupportedVersions();
+        return new VersionResolution(
+            resolvedVersion,
+            source,
+            fallbackUsed,
+            runtimeVersionMatrix.isDeclaredSupported(resolvedVersion),
+            supportedVersions
+        );
+    }
+
+    public static final class VersionResolution {
+        private final String resolvedVersion;
+        private final String source;
+        private final boolean fallbackUsed;
+        private final boolean declaredSupported;
+        private final List<String> supportedVersions;
+
+        VersionResolution(
+            String resolvedVersion,
+            String source,
+            boolean fallbackUsed,
+            boolean declaredSupported,
+            List<String> supportedVersions
+        ) {
+            this.resolvedVersion = resolvedVersion;
+            this.source = source;
+            this.fallbackUsed = fallbackUsed;
+            this.declaredSupported = declaredSupported;
+            this.supportedVersions = Collections.unmodifiableList(new ArrayList<String>(supportedVersions));
+        }
+
+        public String getResolvedVersion() {
+            return resolvedVersion;
+        }
+
+        public String getSource() {
+            return source;
+        }
+
+        public boolean isFallbackUsed() {
+            return fallbackUsed;
+        }
+
+        public boolean isDeclaredSupported() {
+            return declaredSupported;
+        }
+
+        public List<String> getSupportedVersions() {
+            return supportedVersions;
+        }
     }
 }

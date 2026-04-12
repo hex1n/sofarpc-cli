@@ -22,18 +22,20 @@
 - 支持从当前项目或 `~/.config/sofa-rpcctl/` 自动发现 `rpcctl-manifest.yaml`。
 - 支持通过 `rpcctl context` 维护可复用的全局 context/profile。
 - 支持从已有 `config/rpcctl.yaml` 和 `config/metadata.yaml` 生成 manifest。
-- 输出结构化诊断字段，比如 `payloadMode`、`paramTypeSource`、`invokeStyle` 和 provider 可达性 hint。
+- 支持在生成 manifest 时保留 Java 重载方法签名；如果仅靠 metadata 无法唯一定位重载，调用时会明确要求传 `--types`。
+- 输出结构化诊断字段，比如 `payloadMode`、`paramTypeSource`、`invokeStyle`、`errorPhase`、`retriable`、runtime 版本解析信息和 provider 可达性 hint。
 - 支持生成发布资产和 bootstrap installer，不需要复制源码目录就能安装。
 
 ## 命令
 
 - `invoke`：完整形式的 RPC 调用。
 - `call`：`invoke` 的短语法。
+- `doctor`：在真正调用前诊断 context 发现、runtime 解析和目标可达性。
 - `list`：从 metadata 或 manifest 列出服务。
 - `describe`：查看单个服务的 metadata。
 - `context`：管理 `~/.config/sofa-rpcctl/contexts.yaml` 里的全局 context/profile。
 - `manifest generate|init`：从现有配置生成 `rpcctl-manifest.yaml`，或者初始化一个骨架。
-- `manifest generate` 也可以直接从本地接口 jar 或编译产物导入方法签名。
+- `manifest generate` 也可以直接从本地接口 jar 或编译产物导入方法签名，包括重载方法。
 
 ## 快速开始
 
@@ -161,6 +163,30 @@ rpcctl call \
 - 方法签名不匹配
 - DTO / payload 不兼容导致的反序列化失败
 
+失败响应还会携带稳定的机器可读字段：
+
+- `errorCode`：稳定错误类别，比如 `RPC_PROVIDER_UNREACHABLE`、`RPC_METHOD_NOT_FOUND`
+- `errorPhase`：失败发生在哪个阶段，比如 `discovery`、`connect`、`invoke`、`serialize`、`deserialize`
+- `retriable`：同一份请求不改 payload 再重试，是否有机会成功
+- `diagnostics`：结构化底层诊断，比如 `targetMode`、`configuredTarget`、`providerAddress`、`invokeStyle`
+
+## Doctor
+
+可以在真正发起调用前先跑一次诊断：
+
+```bash
+rpcctl doctor \
+  --direct-url bolt://127.0.0.1:12200 \
+  --sofa-rpc-version 5.4.0
+```
+
+它会输出：
+
+- config / manifest / context 是从哪里发现的
+- 最终解析出的 SOFARPC 版本，以及是否走了 fallback
+- 本地 runtime jar 是否能解析到，是否会走自动下载
+- direct 或 registry 的 TCP 可达性
+
 ## Context
 
 context 是保存在下面这个文件里的全局 profile：
@@ -238,6 +264,8 @@ rpcctl manifest generate \
   --service-unique-id com.example.OrderService=order-service
 ```
 
+如果导入的接口存在重载方法，`manifest generate` 会把它们保留在 `overloads:` 下。调用时，`rpcctl` 会优先按 `--types` 选重载；如果没传 `--types`，只有在参数个数可以唯一定位时才会自动选择。
+
 初始化一个带根级默认值的 manifest：
 
 ```bash
@@ -305,6 +333,7 @@ runtime 选择顺序：
 - `RPCCTL_RUNTIME_CACHE_DIR`
 - `RPCCTL_RUNTIME_AUTO_DOWNLOAD`
 - `RPCCTL_DEBUG_RUNTIME=1`
+- `RPCCTL_RUNTIME_VERBOSE=1`
 
 默认下载基地址是：
 
@@ -314,6 +343,8 @@ https://github.com/hex1n/sofa-rpcctl/releases/download/v<version>
 
 如果你是离线环境，也可以把它指到本地目录或 `file://` URL。
 
+现在 auto-download 失败时，`rpcctl` 会把前几个候选 URL 和失败原因一起带出来；如果要看逐个候选源的下载日志，可以设 `RPCCTL_RUNTIME_VERBOSE=1`。
+
 ## 兼容性策略
 
 `rpcctl` 的关键策略是显式运行时隔离：
@@ -321,6 +352,7 @@ https://github.com/hex1n/sofa-rpcctl/releases/download/v<version>
 - 版本解析顺序为：显式 `--sofa-rpc-version`、context、manifest/config、当前项目探测、运行时缓存/本地资源、自动下载。
 - 不假设一个 runtime 可以兼容所有 SOFARPC 版本；不同服务栈建议使用独立 `rpcctl-runtime-sofa-<version>.jar`。
 - 复杂 DTO 时优先默认到官方文档中的兼容组合（`bolt` + `hessian2`）并保证签名类型可见。
+- 调用输出里会带版本诊断字段，比如 `resolvedSofaRpcVersion`、`sofaRpcVersionSource`，以及在 fallback 或支持矩阵不匹配时出现的 `sofaRpcVersionFallback`、`supportedSofaRpcVersions`。
 
 SOFAStack 的配置文档里对应关键字段：
 
@@ -410,6 +442,8 @@ curl -fsSL \
   | bash -s -- 0.1.0
 ```
 
+这个 bootstrap installer 在解压前会先用发布页里的 `checksums.txt` 校验归档；只有你明确要跳过校验时，才建议临时设 `RPCCTL_SKIP_CHECKSUM=1`。
+
 如果 `~/.local/bin` 还没进 `PATH`：
 
 ```bash
@@ -429,6 +463,8 @@ tar -xzf sofa-rpcctl-0.1.0.tar.gz
 ./sofa-rpcctl-0.1.0/install.sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+如果你使用 `install-from-archive.sh`，并且归档旁边存在 `.sha256` 或 `checksums.txt`，它会优先校验；找不到校验文件时会打印 warning 后继续。
 
 新机器上的第一条直连调用：
 

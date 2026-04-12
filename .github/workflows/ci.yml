@@ -24,7 +24,7 @@ jobs:
           java-version: "8"
 
       - name: Build all modules
-        run: mvn -B -DskipTests package
+        run: mvn -B package
 
       - name: Run repository smoke checks
         run: bash scripts/e2e-smoke.sh

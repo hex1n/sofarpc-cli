@@ -8,26 +8,35 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.RandomAccessFile;
 import java.net.URL;
 import java.net.URLConnection;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 
 public final class RuntimeDownloader {
     private static final int STREAM_BUFFER_SIZE = 8192;
+    private static final String VERBOSE_ENV = "RPCCTL_RUNTIME_VERBOSE";
 
-    public File download(String sofaRpcVersion, String fileName, RuntimeAccessOptions accessOptions) {
+    public DownloadResult download(String sofaRpcVersion, String fileName, RuntimeAccessOptions accessOptions) {
         String baseUrl = normalizeBaseUrl(accessOptions.getRuntimeBaseUrl());
         if (baseUrl == null) {
-            return null;
+            return DownloadResult.notAttempted();
         }
 
         File targetFile = resolveCacheFile(sofaRpcVersion, fileName, accessOptions);
         if (targetFile.isFile()) {
-            return targetFile;
+            return DownloadResult.success(targetFile, Collections.<DownloadAttempt>emptyList());
         }
 
         String[] candidates = new String[] {
@@ -35,13 +44,73 @@ public final class RuntimeDownloader {
             baseUrl + "/sofa-rpc/" + sofaRpcVersion + "/" + fileName,
             baseUrl + "/runtimes/sofa-rpc/" + sofaRpcVersion + "/" + fileName
         };
-        for (String candidate : candidates) {
-            String expectedSha256 = resolveExpectedChecksum(candidate, fileName);
-            if (tryDownload(candidate, targetFile, expectedSha256)) {
-                return targetFile;
+        return downloadUnderLock(sofaRpcVersion, fileName, targetFile, candidates);
+    }
+
+    private DownloadResult downloadUnderLock(
+        String sofaRpcVersion,
+        String fileName,
+        File targetFile,
+        String[] candidates
+    ) {
+        File parent = targetFile.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            throw new CliException(
+                ExitCodes.RPC_ERROR,
+                "Failed to create runtime cache directory: " + parent.getPath()
+            );
+        }
+
+        File lockFile = new File(targetFile.getPath() + ".lock");
+        RandomAccessFile lockStream = null;
+        FileChannel channel = null;
+        FileLock lock = null;
+        try {
+            lockStream = new RandomAccessFile(lockFile, "rw");
+            channel = lockStream.getChannel();
+            log("Waiting for runtime cache lock: " + lockFile.getAbsolutePath());
+            lock = channel.lock();
+            log("Acquired runtime cache lock: " + lockFile.getAbsolutePath());
+            if (targetFile.isFile()) {
+                return DownloadResult.success(targetFile, Collections.<DownloadAttempt>emptyList());
+            }
+
+            List<DownloadAttempt> attempts = new ArrayList<DownloadAttempt>();
+            for (String candidate : candidates) {
+                ChecksumExpectation checksumExpectation = resolveExpectedChecksum(candidate, fileName);
+                DownloadAttempt attempt = tryDownload(candidate, targetFile, checksumExpectation);
+                attempts.add(attempt);
+                if (attempt.isSuccess()) {
+                    return DownloadResult.success(targetFile, attempts);
+                }
+            }
+            return DownloadResult.failed(attempts);
+        } catch (IOException exception) {
+            throw new CliException(
+                ExitCodes.RPC_ERROR,
+                "Failed to coordinate runtime download for version " + sofaRpcVersion + ".",
+                exception
+            );
+        } finally {
+            if (lock != null) {
+                try {
+                    lock.release();
+                } catch (IOException ignore) {
+                }
+            }
+            if (channel != null) {
+                try {
+                    channel.close();
+                } catch (IOException ignore) {
+                }
+            }
+            if (lockStream != null) {
+                try {
+                    lockStream.close();
+                } catch (IOException ignore) {
+                }
             }
         }
-        return null;
     }
 
     private File resolveCacheFile(String sofaRpcVersion, String fileName, RuntimeAccessOptions accessOptions) {
@@ -67,16 +136,15 @@ public final class RuntimeDownloader {
         return trimmed.endsWith("/") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
     }
 
-    private boolean tryDownload(String sourceUrl, File targetFile, String expectedSha256) {
-        File parent = targetFile.getParentFile();
-        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
-            throw new CliException(
-                ExitCodes.RPC_ERROR,
-                "Failed to create runtime cache directory: " + parent.getPath()
-            );
+    private DownloadAttempt tryDownload(String sourceUrl, File targetFile, ChecksumExpectation checksumExpectation) {
+        File partialFile = new File(targetFile.getPath() + ".part");
+        log("Trying runtime download candidate: " + sourceUrl);
+        if (checksumExpectation.getSha256() != null) {
+            log("Resolved runtime checksum from " + checksumExpectation.getSource() + ": " + checksumExpectation.getSha256());
+        } else {
+            log("No checksum metadata found for " + sourceUrl);
         }
 
-        File partialFile = new File(targetFile.getPath() + ".part");
         try {
             URLConnection connection = new URL(sourceUrl).openConnection();
             connection.setConnectTimeout(3000);
@@ -107,39 +175,55 @@ public final class RuntimeDownloader {
                 }
             }
 
-            if (expectedSha256 != null && !isSha256Match(partialFile, expectedSha256)) {
-                partialFile.delete();
-                throw new CliException(
-                    ExitCodes.RPC_ERROR,
-                    "Downloaded runtime checksum mismatch: " + sourceUrl
+            if (checksumExpectation.getSha256() != null && !isSha256Match(partialFile, checksumExpectation.getSha256())) {
+                if (partialFile.exists()) {
+                    partialFile.delete();
+                }
+                return DownloadAttempt.failure(
+                    sourceUrl,
+                    checksumExpectation.getSource(),
+                    "Checksum mismatch after download."
                 );
             }
 
-            if (!partialFile.renameTo(targetFile)) {
-                throw new CliException(
-                    ExitCodes.RPC_ERROR,
-                    "Failed to move downloaded runtime into cache: " + targetFile.getPath()
+            try {
+                Files.move(
+                    partialFile.toPath(),
+                    targetFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE
                 );
+            } catch (IOException atomicMoveException) {
+                Files.move(partialFile.toPath(), targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
-            return true;
-        } catch (Exception ignored) {
+            log("Runtime download succeeded: " + targetFile.getAbsolutePath());
+            return DownloadAttempt.success(sourceUrl, checksumExpectation.getSource());
+        } catch (Exception exception) {
             if (partialFile.exists()) {
                 partialFile.delete();
             }
-            return false;
+            String message = exception.getClass().getSimpleName() + ": " + exception.getMessage();
+            log("Runtime download failed from " + sourceUrl + ": " + message);
+            return DownloadAttempt.failure(sourceUrl, checksumExpectation.getSource(), message);
         }
     }
 
-    private String resolveExpectedChecksum(String sourceUrl, String fileName) {
+    private ChecksumExpectation resolveExpectedChecksum(String sourceUrl, String fileName) {
         String parentUrl = parentUrl(sourceUrl);
         if (parentUrl == null || parentUrl.trim().isEmpty()) {
-            return null;
+            return ChecksumExpectation.missing();
         }
-        String fromChecksumsTxt = readChecksumFromChecksumsTxt(parentUrl + "/checksums.txt", fileName);
+        String checksumsTxtUrl = parentUrl + "/checksums.txt";
+        String fromChecksumsTxt = readChecksumFromChecksumsTxt(checksumsTxtUrl, fileName);
         if (fromChecksumsTxt != null) {
-            return fromChecksumsTxt;
+            return new ChecksumExpectation(fromChecksumsTxt, checksumsTxtUrl);
         }
-        return readSingleChecksum(parentUrl + "/" + fileName + ".sha256");
+        String singleChecksumUrl = parentUrl + "/" + fileName + ".sha256";
+        String singleChecksum = readSingleChecksum(singleChecksumUrl);
+        if (singleChecksum != null) {
+            return new ChecksumExpectation(singleChecksum, singleChecksumUrl);
+        }
+        return ChecksumExpectation.missing();
     }
 
     private String readChecksumFromChecksumsTxt(String checksumUrl, String fileName) {
@@ -274,5 +358,127 @@ public final class RuntimeDownloader {
             return null;
         }
         return sourceUrl.substring(0, lastSlash);
+    }
+
+    private void log(String message) {
+        if ("1".equals(System.getenv(VERBOSE_ENV)) || "true".equalsIgnoreCase(System.getenv(VERBOSE_ENV))) {
+            System.err.println("rpcctl runtime download: " + message);
+        }
+    }
+
+    public static final class DownloadResult {
+        private final File file;
+        private final List<DownloadAttempt> attempts;
+        private final boolean attempted;
+
+        private DownloadResult(File file, List<DownloadAttempt> attempts, boolean attempted) {
+            this.file = file;
+            this.attempts = attempts;
+            this.attempted = attempted;
+        }
+
+        public static DownloadResult success(File file, List<DownloadAttempt> attempts) {
+            return new DownloadResult(file, Collections.unmodifiableList(new ArrayList<DownloadAttempt>(attempts)), true);
+        }
+
+        public static DownloadResult failed(List<DownloadAttempt> attempts) {
+            return new DownloadResult(null, Collections.unmodifiableList(new ArrayList<DownloadAttempt>(attempts)), true);
+        }
+
+        public static DownloadResult notAttempted() {
+            return new DownloadResult(null, Collections.<DownloadAttempt>emptyList(), false);
+        }
+
+        public File getFile() {
+            return file;
+        }
+
+        public List<DownloadAttempt> getAttempts() {
+            return attempts;
+        }
+
+        public boolean isAttempted() {
+            return attempted;
+        }
+
+        public boolean isSuccess() {
+            return file != null && file.isFile();
+        }
+
+        public String summarizeFailures() {
+            if (attempts == null || attempts.isEmpty()) {
+                return "";
+            }
+            StringBuilder builder = new StringBuilder();
+            int limit = Math.min(3, attempts.size());
+            for (int i = 0; i < limit; i++) {
+                DownloadAttempt attempt = attempts.get(i);
+                if (builder.length() > 0) {
+                    builder.append(" | ");
+                }
+                builder.append(attempt.getSourceUrl()).append(" -> ").append(attempt.getMessage());
+            }
+            return builder.toString();
+        }
+    }
+
+    public static final class DownloadAttempt {
+        private final String sourceUrl;
+        private final String checksumSource;
+        private final boolean success;
+        private final String message;
+
+        private DownloadAttempt(String sourceUrl, String checksumSource, boolean success, String message) {
+            this.sourceUrl = sourceUrl;
+            this.checksumSource = checksumSource;
+            this.success = success;
+            this.message = message;
+        }
+
+        public static DownloadAttempt success(String sourceUrl, String checksumSource) {
+            return new DownloadAttempt(sourceUrl, checksumSource, true, "ok");
+        }
+
+        public static DownloadAttempt failure(String sourceUrl, String checksumSource, String message) {
+            return new DownloadAttempt(sourceUrl, checksumSource, false, message);
+        }
+
+        public String getSourceUrl() {
+            return sourceUrl;
+        }
+
+        public String getChecksumSource() {
+            return checksumSource;
+        }
+
+        public boolean isSuccess() {
+            return success;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+    }
+
+    private static final class ChecksumExpectation {
+        private final String sha256;
+        private final String source;
+
+        private ChecksumExpectation(String sha256, String source) {
+            this.sha256 = sha256;
+            this.source = source;
+        }
+
+        static ChecksumExpectation missing() {
+            return new ChecksumExpectation(null, null);
+        }
+
+        String getSha256() {
+            return sha256;
+        }
+
+        String getSource() {
+            return source;
+        }
     }
 }

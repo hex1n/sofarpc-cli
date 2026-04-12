@@ -22,18 +22,20 @@ The design follows four constraints:
 - Auto-discovers `rpcctl-manifest.yaml` from the current project or `~/.config/sofa-rpcctl/`.
 - Supports reusable global contexts via `rpcctl context`.
 - Generates manifests from existing `config/rpcctl.yaml` and `config/metadata.yaml`.
-- Emits structured diagnostics such as `payloadMode`, `paramTypeSource`, `invokeStyle`, and provider reachability hints.
+- Preserves overloaded Java method signatures in generated manifests and requires `--types` when metadata alone is ambiguous.
+- Emits structured diagnostics such as `payloadMode`, `paramTypeSource`, `invokeStyle`, `errorPhase`, `retriable`, resolved runtime version/source, and provider reachability hints.
 - Produces release assets and a bootstrap installer so the CLI can be installed without copying the source tree.
 
 ## Commands
 
 - `invoke`: full-form method invocation.
 - `call`: shorter syntax for `invoke`.
+- `doctor`: diagnose context discovery, runtime resolution, and target reachability before invoking.
 - `list`: list services from metadata or a manifest.
 - `describe`: show one service from metadata or a manifest.
 - `context`: manage named user profiles in `~/.config/sofa-rpcctl/contexts.yaml`.
 - `manifest generate|init`: generate `rpcctl-manifest.yaml` from existing config/metadata or create a skeleton.
-- `manifest generate` can also import method signatures directly from local interface jars or compiled classes.
+- `manifest generate` can also import method signatures directly from local interface jars or compiled classes, including overloaded methods.
 - `rpcctl-manifest-maven-plugin`: Maven goal `generate` can emit `rpcctl-manifest.yaml` using the same schema import pipeline.
 
 ## Quick Start
@@ -162,6 +164,30 @@ For local and containerized tests, prefer setting `ServerConfig#setVirtualHost(.
 - method signature mismatches
 - deserialization failures caused by DTO / payload incompatibility
 
+Failure responses also carry machine-readable fields:
+
+- `errorCode`: stable category such as `RPC_PROVIDER_UNREACHABLE` or `RPC_METHOD_NOT_FOUND`
+- `errorPhase`: where the failure happened, such as `discovery`, `connect`, `invoke`, `serialize`, or `deserialize`
+- `retriable`: whether retrying the same request may succeed without changing the payload
+- `diagnostics`: structured low-level hints such as `targetMode`, `configuredTarget`, `providerAddress`, and `invokeStyle`
+
+## Doctor
+
+Run a dry diagnostic before the real call:
+
+```bash
+rpcctl doctor \
+  --direct-url bolt://127.0.0.1:12200 \
+  --sofa-rpc-version 5.4.0
+```
+
+It reports:
+
+- config / manifest / context discovery source
+- resolved SOFARPC version and whether it came from fallback
+- local runtime jar resolution and whether auto-download would be used
+- direct or registry TCP reachability
+
 ## Contexts
 
 Contexts are reusable user profiles stored at:
@@ -238,6 +264,8 @@ rpcctl manifest generate \
   --service-class com.example.OrderService \
   --service-unique-id com.example.OrderService=order-service
 ```
+
+When imported interfaces contain overloaded methods, `manifest generate` keeps them under `overloads:`. During invocation, `rpcctl` resolves them by `--types` first, then by argument count when that is unambiguous.
 
 Generate with Maven (same importer pipeline as CLI `manifest generate`):
 
@@ -316,6 +344,7 @@ Relevant environment variables:
 - `RPCCTL_RUNTIME_CACHE_DIR`
 - `RPCCTL_RUNTIME_AUTO_DOWNLOAD`
 - `RPCCTL_DEBUG_RUNTIME=1`
+- `RPCCTL_RUNTIME_VERBOSE=1`
 
 The default runtime download base is:
 
@@ -325,6 +354,8 @@ https://github.com/hex1n/sofa-rpcctl/releases/download/v<version>
 
 You can also point it at a local directory or `file://` URL for offline usage.
 
+When auto-download fails, `rpcctl` now reports the first few candidate URLs and failure reasons. Set `RPCCTL_RUNTIME_VERBOSE=1` to stream per-candidate download diagnostics to stderr.
+
 ## Compatibility Strategy
 
 `rpcctl` is designed around explicit runtime isolation:
@@ -332,6 +363,7 @@ You can also point it at a local directory or `file://` URL for offline usage.
 - Discover version from `--sofa-rpc-version`, current manifest/config, then workspace (`pom.xml` / `gradle.*`), then local/remote runtime cache.
 - Do not assume one runtime works for all provider stacks. Keep one runtime per target SOFARPC version.
 - For complex payloads, run with the documented SOFARPC compatibility envelope (`bolt` + `hessian2`) as a default.
+- Invocation output includes version diagnostics such as `resolvedSofaRpcVersion`, `sofaRpcVersionSource`, `sofaRpcVersionFallback`, and `supportedSofaRpcVersions` when fallback or support mismatches happen.
 
 Official SOFARPC references:
 
@@ -421,6 +453,8 @@ curl -fsSL \
   | bash -s -- 0.1.0
 ```
 
+The bootstrap installer verifies the release archive against the published `checksums.txt` before extracting it. Set `RPCCTL_SKIP_CHECKSUM=1` only if you intentionally want to bypass that verification.
+
 If `~/.local/bin` is not already in `PATH`:
 
 ```bash
@@ -440,6 +474,8 @@ tar -xzf sofa-rpcctl-0.1.0.tar.gz
 ./sofa-rpcctl-0.1.0/install.sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+If you use `install-from-archive.sh`, it will verify the archive when a neighboring `.sha256` file or `checksums.txt` is available; otherwise it prints a warning and continues.
 
 First direct call on a fresh machine:
 
