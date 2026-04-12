@@ -562,6 +562,26 @@ curl -fsSL \
 - `RPCCTL_E2E_ZK_PORT`
 - `RPCCTL_E2E_ZK_CONTAINER`
 
+如果你要更接近“本地终端 -> 测试环境”的链路模拟，仓库里还提供了：
+
+```bash
+./scripts/e2e-orbstack.sh
+```
+
+这条脚本会把样例 provider 跑在 OrbStack / Docker 容器里，再从 macOS 宿主机直接用 `rpcctl` 去调。它会验证：
+
+- 一条简单 direct 标量请求
+- 一条带 `--stub-path` 的复杂 direct DTO 请求
+- 一条通过 ZooKeeper 的复杂 registry raw `Map` 请求
+
+可选环境变量：
+
+- `RPCCTL_ORB_DIRECT_PORT`
+- `RPCCTL_ORB_ORDER_PORT`
+- `RPCCTL_ORB_PAYLOAD_PORT`
+- `RPCCTL_ORB_ZK_PORT`
+- `RPCCTL_ORB_NETWORK`
+
 ## 当前范围
 
 已实现：
@@ -578,6 +598,7 @@ curl -fsSL \
 - 基于 metadata 的写操作确认
 - 带 hint 的结构化 JSON 错误输出
 - 仓库内可重复执行的 direct / registry smoke 样例 `./scripts/e2e-smoke.sh`
+- 宿主机到容器化测试环境的 OrbStack smoke 样例 `./scripts/e2e-orbstack.sh`
 
 未实现：
 

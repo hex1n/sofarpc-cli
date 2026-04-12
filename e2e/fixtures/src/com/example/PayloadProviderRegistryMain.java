@@ -20,12 +20,14 @@ public final class PayloadProviderRegistryMain {
         int port = Integer.parseInt(System.getProperty("rpcctl.e2e.port", "12203"));
         String host = System.getProperty("rpcctl.e2e.host", "127.0.0.1");
         String virtualHost = System.getProperty("rpcctl.e2e.virtualHost", host);
+        int virtualPort = Integer.parseInt(System.getProperty("rpcctl.e2e.virtualPort", String.valueOf(port)));
         String zkAddress = System.getProperty("rpcctl.e2e.zkAddress", "127.0.0.1:2181");
 
         ServerConfig serverConfig = new ServerConfig()
             .setProtocol("bolt")
             .setHost(host)
             .setVirtualHost(virtualHost)
+            .setVirtualPort(virtualPort)
             .setPort(port)
             .setDaemon(false);
 

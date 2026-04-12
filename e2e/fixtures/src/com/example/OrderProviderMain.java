@@ -17,10 +17,15 @@ public final class OrderProviderMain {
 
     public static void main(String[] args) throws Exception {
         int port = Integer.parseInt(System.getProperty("rpcctl.e2e.port", "12241"));
+        String host = System.getProperty("rpcctl.e2e.host", "127.0.0.1");
+        String virtualHost = System.getProperty("rpcctl.e2e.virtualHost", host);
+        int virtualPort = Integer.parseInt(System.getProperty("rpcctl.e2e.virtualPort", String.valueOf(port)));
 
         ServerConfig serverConfig = new ServerConfig()
             .setProtocol("bolt")
-            .setHost("127.0.0.1")
+            .setHost(host)
+            .setVirtualHost(virtualHost)
+            .setVirtualPort(virtualPort)
             .setPort(port)
             .setDaemon(false);
 

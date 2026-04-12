@@ -572,6 +572,26 @@ Optional environment overrides:
 - `RPCCTL_E2E_ZK_PORT`
 - `RPCCTL_E2E_ZK_CONTAINER`
 
+For a closer "local terminal -> test environment" simulation on OrbStack or Docker, the repository also includes:
+
+```bash
+./scripts/e2e-orbstack.sh
+```
+
+That flow runs the sample providers inside containers and invokes them from the macOS host with `rpcctl`. It verifies:
+
+- a simple direct scalar request
+- a complex direct DTO request with `--stub-path`
+- a complex registry-backed raw `Map` request through ZooKeeper
+
+Optional environment overrides:
+
+- `RPCCTL_ORB_DIRECT_PORT`
+- `RPCCTL_ORB_ORDER_PORT`
+- `RPCCTL_ORB_PAYLOAD_PORT`
+- `RPCCTL_ORB_ZK_PORT`
+- `RPCCTL_ORB_NETWORK`
+
 ## Current Scope
 
 Implemented:
@@ -588,6 +608,7 @@ Implemented:
 - write-risk confirmation based on metadata
 - normalized JSON error output with hints
 - repo-native direct and registry smoke fixtures via `./scripts/e2e-smoke.sh`
+- host-to-container OrbStack smoke fixtures via `./scripts/e2e-orbstack.sh`
 
 Not implemented:
 
