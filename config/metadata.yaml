@@ -1,0 +1,21 @@
+services:
+  com.example.UserService:
+    description: Example metadata only. Replace with your real services.
+    uniqueId: user-service
+    methods:
+      getUser:
+        description: Read one user by id.
+        risk: read
+        paramTypes:
+          - java.lang.Long
+      queryUsers:
+        description: Query users with a keyword and a page size.
+        risk: read
+        paramTypes:
+          - java.lang.String
+          - java.lang.Integer
+      updateUser:
+        description: Update a user profile.
+        risk: write
+        paramTypes:
+          - com.example.UserUpdateRequest
