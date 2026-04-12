@@ -232,10 +232,51 @@ public final class ProcessRuntimeInvoker {
         }
         int start = index + RESULT_MARKER.length();
         int lineEnd = stdout.indexOf('\n', start);
-        if (lineEnd < 0) {
-            return stdout.substring(start).trim();
+        String afterMarker = (lineEnd < 0) ? stdout.substring(start) : stdout.substring(start, lineEnd);
+        String sameLinePayload = afterMarker.trim();
+        if (sameLinePayload.startsWith("{") && sameLinePayload.endsWith("}")) {
+            return sameLinePayload;
         }
-        return stdout.substring(start, lineEnd).trim();
+
+        String candidate = stdout.substring(start).trim();
+        return extractBalancedJson(candidate);
+    }
+
+    private String extractBalancedJson(String content) {
+        int start = content.indexOf('{');
+        if (start < 0) {
+            return content.isEmpty() ? null : content;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = start; i < content.length(); i++) {
+            char ch = content.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == '\"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (ch == '{') {
+                depth++;
+            } else if (ch == '}') {
+                depth--;
+                if (depth == 0) {
+                    return content.substring(start, i + 1);
+                }
+            }
+        }
+        return content.substring(start);
     }
 
     private void enrichFailure(RuntimeInvocationResult result, String stderr) {
