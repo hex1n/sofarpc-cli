@@ -2,6 +2,7 @@ package com.hex1n.sofarpcctl;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -13,6 +14,8 @@ import java.util.regex.Pattern;
 
 public final class ProcessRuntimeInvoker {
 
+    private static final int INLINE_REQUEST_LIMIT = 8192;
+    private static final String RESULT_MARKER = "RPCCTL_RESULT_JSON:";
     private final RuntimeLocator runtimeLocator = new RuntimeLocator();
     private static final Pattern PROVIDER_ADDRESS_PATTERN = Pattern.compile(
         "(?:Try connect to|Create connection to)\\s+([^\\s!]+)"
@@ -28,11 +31,13 @@ public final class ProcessRuntimeInvoker {
             System.err.println("rpcctl runtime: " + runtimeJar.getAbsolutePath());
         }
         String encodedRequest = encodeRequest(request);
+        InvocationCommand invocationCommand = buildJavaCommand(runtimeJar, request, encodedRequest);
 
         Process process;
         try {
-            process = new ProcessBuilder(buildJavaCommand(runtimeJar, request, encodedRequest)).start();
+            process = new ProcessBuilder(invocationCommand.command).start();
         } catch (Exception exception) {
+            invocationCommand.cleanup();
             throw new CliException(
                 ExitCodes.RPC_ERROR,
                 "Failed to start SOFARPC runtime for version " + sofaRpcVersion,
@@ -42,6 +47,7 @@ public final class ProcessRuntimeInvoker {
 
         RuntimeProcessOutput output = waitFor(process, request);
         if (output.getStdout().trim().isEmpty()) {
+            invocationCommand.cleanup();
             throw new CliException(
                 output.getExitCode() == 0 ? ExitCodes.RPC_ERROR : output.getExitCode(),
                 normalizeNoResponseMessage(output.getStderr())
@@ -65,6 +71,8 @@ public final class ProcessRuntimeInvoker {
                 "Failed to parse SOFARPC runtime response.",
                 exception
             );
+        } finally {
+            invocationCommand.cleanup();
         }
     }
 
@@ -85,9 +93,17 @@ public final class ProcessRuntimeInvoker {
         return new File(System.getProperty("java.home"), "bin/java").getAbsolutePath();
     }
 
-    private List<String> buildJavaCommand(File runtimeJar, RuntimeInvocationRequest request, String encodedRequest) {
+    private InvocationCommand buildJavaCommand(File runtimeJar, RuntimeInvocationRequest request, String encodedRequest) {
+        if (encodedRequest != null && encodedRequest.length() > INLINE_REQUEST_LIMIT) {
+            return buildInvocationCommandWithRequestFile(runtimeJar, request, encodedRequest);
+        }
+        return buildInvocationCommandByArgument(runtimeJar, request, encodedRequest);
+    }
+
+    private InvocationCommand buildInvocationCommandByArgument(File runtimeJar, RuntimeInvocationRequest request, String encodedRequest) {
         List<String> command = new ArrayList<String>();
         command.add(resolveJavaBinary());
+        command.add("-Dorg.slf4j.simpleLogger.defaultLogLevel=error");
         if (request.getStubPaths() != null && !request.getStubPaths().isEmpty()) {
             command.add("-cp");
             command.add(buildClassPath(runtimeJar, request.getStubPaths()));
@@ -98,7 +114,45 @@ public final class ProcessRuntimeInvoker {
         }
         command.add("invoke");
         command.add(encodedRequest);
-        return command;
+        return new InvocationCommand(command, null);
+    }
+
+    private InvocationCommand buildInvocationCommandWithRequestFile(
+        File runtimeJar,
+        RuntimeInvocationRequest request,
+        String encodedRequest
+    ) {
+        File requestFile;
+        try {
+            requestFile = File.createTempFile("rpcctl-runtime-request-", ".txt");
+            requestFile.deleteOnExit();
+            java.nio.file.Files.write(
+                requestFile.toPath(),
+                encodedRequest.getBytes(StandardCharsets.UTF_8)
+            );
+        } catch (IOException exception) {
+            throw new CliException(
+                ExitCodes.PARAMETER_ERROR,
+                "Failed to prepare runtime request file.",
+                exception
+            );
+        }
+
+        List<String> command = new ArrayList<String>();
+        command.add(resolveJavaBinary());
+        command.add("-Dorg.slf4j.simpleLogger.defaultLogLevel=error");
+        if (request.getStubPaths() != null && !request.getStubPaths().isEmpty()) {
+            command.add("-cp");
+            command.add(buildClassPath(runtimeJar, request.getStubPaths()));
+            command.add("com.hex1n.sofarpcctl.RuntimeMain");
+        } else {
+            command.add("-jar");
+            command.add(runtimeJar.getAbsolutePath());
+        }
+        command.add("invoke");
+        command.add("--request-file");
+        command.add(requestFile.getAbsolutePath());
+        return new InvocationCommand(command, requestFile);
     }
 
     private String buildClassPath(File runtimeJar, List<String> stubPaths) {
@@ -150,6 +204,11 @@ public final class ProcessRuntimeInvoker {
     }
 
     private String extractJsonPayload(String stdout) {
+        String markedPayload = extractPayloadFromMarker(stdout);
+        if (markedPayload != null && !markedPayload.isEmpty()) {
+            return markedPayload;
+        }
+
         String trimmed = stdout.trim();
         if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
             return trimmed;
@@ -161,6 +220,22 @@ public final class ProcessRuntimeInvoker {
             return trimmed.substring(start, end + 1);
         }
         return trimmed;
+    }
+
+    private String extractPayloadFromMarker(String stdout) {
+        if (stdout == null || stdout.isEmpty()) {
+            return null;
+        }
+        int index = stdout.indexOf(RESULT_MARKER);
+        if (index < 0) {
+            return null;
+        }
+        int start = index + RESULT_MARKER.length();
+        int lineEnd = stdout.indexOf('\n', start);
+        if (lineEnd < 0) {
+            return stdout.substring(start).trim();
+        }
+        return stdout.substring(start, lineEnd).trim();
     }
 
     private void enrichFailure(RuntimeInvocationResult result, String stderr) {
@@ -260,6 +335,22 @@ public final class ProcessRuntimeInvoker {
 
         String output() {
             return new String(outputStream.toByteArray(), StandardCharsets.UTF_8);
+        }
+    }
+
+    static final class InvocationCommand {
+        private final List<String> command;
+        private final File requestFile;
+
+        InvocationCommand(List<String> command, File requestFile) {
+            this.command = command;
+            this.requestFile = requestFile;
+        }
+
+        void cleanup() {
+            if (requestFile != null && requestFile.isFile()) {
+                requestFile.delete();
+            }
         }
     }
 }
