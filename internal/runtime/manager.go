@@ -674,13 +674,6 @@ func dialAddress(target model.TargetConfig) (string, error) {
 	return raw, nil
 }
 
-func max(left, right int) int {
-	if left > right {
-		return left
-	}
-	return right
-}
-
 func (m *Manager) bundledRuntimeJarCandidates(version string) []string {
 	return runtimeJarCandidatesForBase(m.Cwd, version)
 }
