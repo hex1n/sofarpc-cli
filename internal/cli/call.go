@@ -10,6 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/runtime"
 )
 
 func (a *App) runCall(args []string) error {
@@ -67,12 +70,27 @@ func (a *App) runCall(args []string) error {
 	if err != nil {
 		return err
 	}
+	ctx := context.Background()
+	if len(resolved.Request.ParamTypes) == 0 && len(spec.StubPaths) > 0 {
+		schema, describeErr := a.Runtime.DescribeService(ctx, spec, resolved.Request.Service, runtime.DescribeOptions{})
+		if describeErr != nil {
+			return fmt.Errorf("infer paramTypes via describe: %w", describeErr)
+		}
+		types, err := pickMethodTypes(schema, resolved.Request.Method, resolved.Request.Args)
+		if err != nil {
+			return err
+		}
+		resolved.Request.ParamTypes = types
+	}
+	if wrapped, ok := maybeWrapSingleArg(resolved.Request.Args, len(resolved.Request.ParamTypes)); ok {
+		resolved.Request.Args = wrapped
+	}
 	resolved.Request.RequestID = randomID()
-	metadata, err := a.Runtime.EnsureDaemon(context.Background(), spec)
+	metadata, err := a.Runtime.EnsureDaemon(ctx, spec)
 	if err != nil {
 		return err
 	}
-	response, err := a.Runtime.Invoke(context.Background(), metadata, resolved.Request)
+	response, err := a.Runtime.Invoke(ctx, metadata, resolved.Request)
 	if err != nil {
 		return err
 	}
@@ -108,6 +126,84 @@ func randomID() string {
 	var buffer [8]byte
 	_, _ = rand.Read(buffer[:])
 	return hex.EncodeToString(buffer[:])
+}
+
+func pickMethodTypes(schema model.ServiceSchema, method string, rawArgs json.RawMessage) ([]string, error) {
+	var matches []model.MethodSchema
+	for _, candidate := range schema.Methods {
+		if candidate.Name == method {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("method %s not found on %s", method, schema.Service)
+	}
+	if len(matches) == 1 {
+		return matches[0].ParamTypes, nil
+	}
+	hint := argsArityHint(rawArgs)
+	if hint >= 0 {
+		var narrowed []model.MethodSchema
+		for _, candidate := range matches {
+			if len(candidate.ParamTypes) == hint {
+				narrowed = append(narrowed, candidate)
+			}
+		}
+		if len(narrowed) == 1 {
+			return narrowed[0].ParamTypes, nil
+		}
+	}
+	options := make([]string, 0, len(matches))
+	for _, candidate := range matches {
+		options = append(options, "["+strings.Join(candidate.ParamTypes, ",")+"]")
+	}
+	return nil, fmt.Errorf("method %s.%s is overloaded; pass --types to disambiguate: %s",
+		schema.Service, method, strings.Join(options, " | "))
+}
+
+func maybeWrapSingleArg(raw json.RawMessage, arity int) (json.RawMessage, bool) {
+	if arity != 1 {
+		return nil, false
+	}
+	if len(raw) == 0 {
+		return nil, false
+	}
+	if isJSONArray(raw) {
+		return nil, false
+	}
+	wrapped := make([]byte, 0, len(raw)+2)
+	wrapped = append(wrapped, '[')
+	wrapped = append(wrapped, raw...)
+	wrapped = append(wrapped, ']')
+	return wrapped, true
+}
+
+func isJSONArray(raw []byte) bool {
+	for _, b := range raw {
+		switch b {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func argsArityHint(raw json.RawMessage) int {
+	if len(raw) == 0 {
+		return -1
+	}
+	if !isJSONArray(raw) {
+		return 1
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return -1
+	}
+	return len(items)
 }
 
 func loadArgsInput(value, cwd string, stdin io.Reader) (string, error) {

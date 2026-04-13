@@ -206,13 +206,19 @@ The examples below assume `sofarpc.exe` is on `PATH` and a context named `dev-di
 
 ### Simple request — primitive argument
 
-One `Long` argument, positional form:
+One `Long` argument, positional form. When a stub jar is configured the CLI infers `--types` via reflection, so this is enough:
 
 ```powershell
 sofarpc call com.example.UserService.getUser "[123]"
 ```
 
-Equivalent with explicit flags — useful when the paramType isn't obvious from the JSON:
+For a single-arg method the body can skip the outer array — the CLI wraps it into `[123]` automatically:
+
+```powershell
+sofarpc call com.example.UserService.getUser "123"
+```
+
+Equivalent with explicit flags — useful when no stub jar is available or you want to pin a specific overload:
 
 ```powershell
 sofarpc call `
@@ -319,11 +325,13 @@ Built-in defaults:
 
 - `--service`, `--method`, `--types`, `--payload-mode`
 - matching entry in `manifest.services`
+- for `--types`, when still unset and a stub jar is configured, the CLI reflects the interface and picks the method's `paramTypes` (errors on overload ambiguity — pass `--types` to pin one)
 
 Important behavior:
 
 - `--args` must be valid JSON
 - if `--args` is omitted, it defaults to `[]`
+- if the resolved method takes exactly one parameter and the body isn't already a JSON array, it's wrapped as `[body]` automatically
 - either a direct target or a registry target must be resolvable
 - relative `stubPaths` in the manifest are resolved relative to the manifest file directory
 
