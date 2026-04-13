@@ -53,6 +53,14 @@ mvn -f runtime-worker-java/pom.xml package
 go build -o bin/sofarpc ./cmd/sofarpc
 ```
 
+The worker jar is written to `runtime-worker-java/target/sofarpc-worker-<version>.jar`,
+where `<version>` comes from the `sofa-rpc.version` Maven property (default `5.7.6`).
+Build for a different runtime version by overriding the property:
+
+```powershell
+mvn -f runtime-worker-java/pom.xml -Dsofa-rpc.version=5.8.0 package
+```
+
 You can also run the CLI without building a binary:
 
 ```powershell
