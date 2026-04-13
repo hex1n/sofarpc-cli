@@ -245,7 +245,7 @@ func TestGetRuntimeReturnsInstalledRecord(t *testing.T) {
 	}
 }
 
-func TestDefaultRuntimeJarPrefersInstalledRuntime(t *testing.T) {
+func TestEnsureRuntimeAvailableReturnsInstalledJar(t *testing.T) {
 	manager := testManager(t)
 	targetJar := manager.installedRuntimeJar("5.7.6")
 	if err := os.MkdirAll(filepath.Dir(targetJar), 0o755); err != nil {
@@ -253,8 +253,38 @@ func TestDefaultRuntimeJarPrefersInstalledRuntime(t *testing.T) {
 	}
 	writeTextFile(t, targetJar, "jar-bits")
 
-	if got := manager.defaultRuntimeJar("5.7.6"); got != targetJar {
+	got, err := manager.EnsureRuntimeAvailable("5.7.6")
+	if err != nil {
+		t.Fatalf("EnsureRuntimeAvailable() error = %v", err)
+	}
+	if got != targetJar {
 		t.Fatalf("expected installed runtime jar %q, got %q", targetJar, got)
+	}
+}
+
+func TestEnsureRuntimeAvailableAutoInstallsFromBundled(t *testing.T) {
+	manager := testManager(t)
+	bundledJar := filepath.Join(manager.Cwd, "runtime-worker-java", "target", "rpc-runtime-worker-sofa-5.7.6.jar")
+	if err := os.MkdirAll(filepath.Dir(bundledJar), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	writeTextFile(t, bundledJar, "bundled-jar")
+
+	got, err := manager.EnsureRuntimeAvailable("5.7.6")
+	if err != nil {
+		t.Fatalf("EnsureRuntimeAvailable() error = %v", err)
+	}
+	if got != manager.installedRuntimeJar("5.7.6") {
+		t.Fatalf("expected cached runtime path, got %q", got)
+	}
+	assertExists(t, got)
+}
+
+func TestEnsureRuntimeAvailableErrorsWhenNothingAvailable(t *testing.T) {
+	manager := testManager(t)
+
+	if _, err := manager.EnsureRuntimeAvailable("5.7.6"); err == nil {
+		t.Fatal("expected error when runtime is missing and no source is configured")
 	}
 }
 
