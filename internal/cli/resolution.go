@@ -33,14 +33,15 @@ type invocationInputs struct {
 }
 
 type resolvedInvocation struct {
-	Request        model.InvocationRequest
-	ManifestPath   string
-	ManifestFound  bool
-	ActiveContext  string
-	SofaRPCVersion string
-	JavaBin        string
-	RuntimeJar     string
-	StubPaths      []string
+	Request              model.InvocationRequest
+	ManifestPath         string
+	ManifestFound        bool
+	ActiveContext        string
+	SofaRPCVersion       string
+	SofaRPCVersionSource string
+	JavaBin              string
+	RuntimeJar           string
+	StubPaths            []string
 }
 
 func (a *App) resolveInvocation(input invocationInputs) (resolvedInvocation, error) {
@@ -120,16 +121,28 @@ func (a *App) resolveInvocation(input invocationInputs) (resolvedInvocation, err
 		PayloadMode: payloadMode,
 		Target:      target,
 	}
+	sofaRPCVersion, sofaRPCVersionSource := resolveSofaRPCVersion(input.SofaRPCVersion, manifest.SofaRPCVersion)
 	return resolvedInvocation{
-		Request:        request,
-		ManifestPath:   manifestPath,
-		ManifestFound:  manifestFound,
-		ActiveContext:  activeName,
-		SofaRPCVersion: firstNonEmpty(input.SofaRPCVersion, manifest.SofaRPCVersion, defaultSofaRPCVersion),
-		JavaBin:        firstNonEmpty(input.JavaBin, "java"),
-		RuntimeJar:     input.RuntimeJar,
-		StubPaths:      stubPaths,
+		Request:              request,
+		ManifestPath:         manifestPath,
+		ManifestFound:        manifestFound,
+		ActiveContext:        activeName,
+		SofaRPCVersion:       sofaRPCVersion,
+		SofaRPCVersionSource: sofaRPCVersionSource,
+		JavaBin:              firstNonEmpty(input.JavaBin, "java"),
+		RuntimeJar:           input.RuntimeJar,
+		StubPaths:            stubPaths,
 	}, nil
+}
+
+func resolveSofaRPCVersion(flagValue, manifestValue string) (string, string) {
+	if strings.TrimSpace(flagValue) != "" {
+		return flagValue, "flag"
+	}
+	if strings.TrimSpace(manifestValue) != "" {
+		return manifestValue, "manifest"
+	}
+	return defaultSofaRPCVersion, "default"
 }
 
 func inputMode(input invocationInputs) string {

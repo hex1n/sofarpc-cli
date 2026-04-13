@@ -47,11 +47,12 @@ func (a *App) runDoctor(args []string) error {
 	}
 	if err == nil {
 		report.Runtime = model.RuntimeSnapshot{
-			SofaRPCVersion: spec.SofaRPCVersion,
-			RuntimeJar:     spec.RuntimeJar,
-			JavaBin:        spec.JavaBin,
-			JavaMajor:      spec.JavaMajor,
-			DaemonKey:      spec.DaemonKey,
+			SofaRPCVersion:       spec.SofaRPCVersion,
+			SofaRPCVersionSource: resolved.SofaRPCVersionSource,
+			RuntimeJar:           spec.RuntimeJar,
+			JavaBin:              spec.JavaBin,
+			JavaMajor:            spec.JavaMajor,
+			DaemonKey:            spec.DaemonKey,
 		}
 		metadata, ensureErr := a.Runtime.EnsureDaemon(context.Background(), spec)
 		if ensureErr != nil {
@@ -70,7 +71,10 @@ func (a *App) runDoctor(args []string) error {
 			report.InvokeProbe = summarizeInvokeProbe(probeResponse, invokeErr)
 		}
 	} else {
-		report.Runtime = model.RuntimeSnapshot{SofaRPCVersion: resolved.SofaRPCVersion}
+		report.Runtime = model.RuntimeSnapshot{
+			SofaRPCVersion:       resolved.SofaRPCVersion,
+			SofaRPCVersionSource: resolved.SofaRPCVersionSource,
+		}
 		report.Daemon = model.DaemonSnapshot{Ready: false, Error: err.Error()}
 	}
 	return printJSON(a.Stdout, report)

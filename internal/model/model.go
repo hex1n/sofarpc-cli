@@ -183,11 +183,12 @@ type DoctorReport struct {
 }
 
 type RuntimeSnapshot struct {
-	SofaRPCVersion string `json:"sofaRpcVersion,omitempty"`
-	RuntimeJar     string `json:"runtimeJar,omitempty"`
-	JavaBin        string `json:"javaBin,omitempty"`
-	JavaMajor      string `json:"javaMajor,omitempty"`
-	DaemonKey      string `json:"daemonKey,omitempty"`
+	SofaRPCVersion       string `json:"sofaRpcVersion,omitempty"`
+	SofaRPCVersionSource string `json:"sofaRpcVersionSource,omitempty"`
+	RuntimeJar           string `json:"runtimeJar,omitempty"`
+	JavaBin              string `json:"javaBin,omitempty"`
+	JavaMajor            string `json:"javaMajor,omitempty"`
+	DaemonKey            string `json:"daemonKey,omitempty"`
 }
 
 type ProbeResult struct {
