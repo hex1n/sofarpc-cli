@@ -1,4 +1,4 @@
-package com.hex1n.rpcctl.greenfield.worker;
+package com.hex1n.sofarpc.worker;
 
 import com.alipay.sofa.rpc.core.exception.RpcErrorType;
 import com.alipay.sofa.rpc.core.exception.SofaRpcException;

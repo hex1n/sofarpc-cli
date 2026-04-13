@@ -329,7 +329,7 @@ go run ./cmd/rpc runtime show 5.7.6
 Install from an explicit jar:
 
 ```powershell
-go run ./cmd/rpc runtime install --version 5.7.6 --jar C:\path\to\rpc-runtime-worker-sofa-5.7.6.jar
+go run ./cmd/rpc runtime install --version 5.7.6 --jar C:\path\to\sofarpc-worker-5.7.6.jar
 ```
 
 Install from the active runtime source or bundled workspace artifact:
@@ -360,7 +360,7 @@ Supported kinds:
 ```powershell
 go run ./cmd/rpc runtime source set `
   --kind file `
-  --path C:\artifacts\rpc-runtime-worker-sofa-5.7.6.jar `
+  --path C:\artifacts\sofarpc-worker-5.7.6.jar `
   local-file
 ```
 
@@ -368,10 +368,10 @@ go run ./cmd/rpc runtime source set `
 
 The directory source looks for these candidate paths:
 
-- `<base>/rpc-runtime-worker-sofa-<version>.jar`
-- `<base>/<version>/rpc-runtime-worker-sofa-<version>.jar`
-- `<base>/runtime-worker-java/target/rpc-runtime-worker-sofa-<version>.jar`
-- `<base>/greenfield/runtime-worker-java/target/rpc-runtime-worker-sofa-<version>.jar`
+- `<base>/sofarpc-worker-<version>.jar`
+- `<base>/<version>/sofarpc-worker-<version>.jar`
+- `<base>/runtime-worker-java/target/sofarpc-worker-<version>.jar`
+- `<base>/greenfield/runtime-worker-java/target/sofarpc-worker-<version>.jar`
 
 Example:
 
@@ -387,8 +387,8 @@ go run ./cmd/rpc runtime source set `
 ```powershell
 go run ./cmd/rpc runtime source set `
   --kind url-template `
-  --path https://artifacts.example.com/sofa/{version}/rpc-runtime-worker-sofa-{version}.jar `
-  --sha256-url https://artifacts.example.com/sofa/{version}/rpc-runtime-worker-sofa-{version}.jar.sha256 `
+  --path https://artifacts.example.com/sofa/{version}/sofarpc-worker-{version}.jar `
+  --sha256-url https://artifacts.example.com/sofa/{version}/sofarpc-worker-{version}.jar.sha256 `
   remote-template
 ```
 
@@ -410,12 +410,12 @@ Example runtime source manifest:
   "schemaVersion": "v1alpha1",
   "versions": {
     "5.7.6": {
-      "url": "https://artifacts.example.com/sofa/5.7.6/rpc-runtime-worker-sofa-{version}.jar",
+      "url": "https://artifacts.example.com/sofa/5.7.6/sofarpc-worker-{version}.jar",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
     "5.8.0": {
-      "url": "https://artifacts.example.com/sofa/5.8.0/rpc-runtime-worker-sofa-{version}.jar",
-      "sha256Url": "https://artifacts.example.com/sofa/5.8.0/rpc-runtime-worker-sofa-{version}.jar.sha256"
+      "url": "https://artifacts.example.com/sofa/5.8.0/sofarpc-worker-{version}.jar",
+      "sha256Url": "https://artifacts.example.com/sofa/5.8.0/sofarpc-worker-{version}.jar.sha256"
     }
   }
 }

@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.hex1n</groupId>
-    <artifactId>rpc-runtime-worker-sofa-5.7.6</artifactId>
+    <artifactId>sofarpc-worker-5.7.6</artifactId>
     <version>0.1.0</version>
 
     <properties>
@@ -57,7 +57,7 @@
     </dependencies>
 
     <build>
-        <finalName>rpc-runtime-worker-sofa-5.7.6</finalName>
+        <finalName>sofarpc-worker-5.7.6</finalName>
         <plugins>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -83,7 +83,7 @@
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.hex1n.rpcctl.greenfield.worker.WorkerMain</mainClass>
+                                    <mainClass>com.hex1n.sofarpc.worker.WorkerMain</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>

@@ -264,7 +264,7 @@ func TestEnsureRuntimeAvailableReturnsInstalledJar(t *testing.T) {
 
 func TestEnsureRuntimeAvailableAutoInstallsFromBundled(t *testing.T) {
 	manager := testManager(t)
-	bundledJar := filepath.Join(manager.Cwd, "runtime-worker-java", "target", "rpc-runtime-worker-sofa-5.7.6.jar")
+	bundledJar := filepath.Join(manager.Cwd, "runtime-worker-java", "target", "sofarpc-worker-5.7.6.jar")
 	if err := os.MkdirAll(filepath.Dir(bundledJar), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -290,7 +290,7 @@ func TestEnsureRuntimeAvailableErrorsWhenNothingAvailable(t *testing.T) {
 
 func TestInstallRuntimeUsesBundledCandidateWhenJarOmitted(t *testing.T) {
 	manager := testManager(t)
-	bundledJar := filepath.Join(manager.Cwd, "runtime-worker-java", "target", "rpc-runtime-worker-sofa-5.7.6.jar")
+	bundledJar := filepath.Join(manager.Cwd, "runtime-worker-java", "target", "sofarpc-worker-5.7.6.jar")
 	if err := os.MkdirAll(filepath.Dir(bundledJar), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -311,7 +311,7 @@ func TestInstallRuntimeUsesBundledCandidateWhenJarOmitted(t *testing.T) {
 func TestInstallRuntimeUsesActiveNamedSourceWhenConfigured(t *testing.T) {
 	manager := testManager(t)
 	sourceDir := filepath.Join(t.TempDir(), "source")
-	bundledJar := filepath.Join(sourceDir, "5.7.6", "rpc-runtime-worker-sofa-5.7.6.jar")
+	bundledJar := filepath.Join(sourceDir, "5.7.6", "sofarpc-worker-5.7.6.jar")
 	if err := os.MkdirAll(filepath.Dir(bundledJar), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -341,7 +341,7 @@ func TestInstallRuntimeUsesActiveNamedSourceWhenConfigured(t *testing.T) {
 func TestInstallRuntimeUsesNamedSourceOverride(t *testing.T) {
 	manager := testManager(t)
 	sourceDir := filepath.Join(t.TempDir(), "source")
-	bundledJar := filepath.Join(sourceDir, "rpc-runtime-worker-sofa-5.7.6.jar")
+	bundledJar := filepath.Join(sourceDir, "sofarpc-worker-5.7.6.jar")
 	if err := os.MkdirAll(filepath.Dir(bundledJar), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -374,10 +374,10 @@ func TestInstallRuntimeDownloadsFromURLTemplateSource(t *testing.T) {
 	digest := hex.EncodeToString(hash[:])
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/runtime/5.7.6/rpc-runtime-worker-sofa-5.7.6.jar":
+		case "/runtime/5.7.6/sofarpc-worker-5.7.6.jar":
 			_, _ = w.Write(jarBody)
-		case "/runtime/5.7.6/rpc-runtime-worker-sofa-5.7.6.jar.sha256":
-			_, _ = w.Write([]byte(digest + "  rpc-runtime-worker-sofa-5.7.6.jar\n"))
+		case "/runtime/5.7.6/sofarpc-worker-5.7.6.jar.sha256":
+			_, _ = w.Write([]byte(digest + "  sofarpc-worker-5.7.6.jar\n"))
 		default:
 			http.NotFound(w, r)
 		}
@@ -389,8 +389,8 @@ func TestInstallRuntimeDownloadsFromURLTemplateSource(t *testing.T) {
 			"remote": {
 				Name:      "remote",
 				Kind:      "url-template",
-				Path:      server.URL + "/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar",
-				SHA256URL: server.URL + "/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar.sha256",
+				Path:      server.URL + "/runtime/{version}/sofarpc-worker-{version}.jar",
+				SHA256URL: server.URL + "/runtime/{version}/sofarpc-worker-{version}.jar.sha256",
 			},
 		},
 	}); err != nil {
@@ -424,9 +424,9 @@ func TestInstallRuntimeFailsOnSHA256Mismatch(t *testing.T) {
 	manager := testManager(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/runtime/5.7.6/rpc-runtime-worker-sofa-5.7.6.jar":
+		case "/runtime/5.7.6/sofarpc-worker-5.7.6.jar":
 			_, _ = w.Write([]byte("remote-jar"))
-		case "/runtime/5.7.6/rpc-runtime-worker-sofa-5.7.6.jar.sha256":
+		case "/runtime/5.7.6/sofarpc-worker-5.7.6.jar.sha256":
 			_, _ = w.Write([]byte(strings.Repeat("0", 64)))
 		default:
 			http.NotFound(w, r)
@@ -439,8 +439,8 @@ func TestInstallRuntimeFailsOnSHA256Mismatch(t *testing.T) {
 			"remote": {
 				Name:      "remote",
 				Kind:      "url-template",
-				Path:      server.URL + "/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar",
-				SHA256URL: server.URL + "/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar.sha256",
+				Path:      server.URL + "/runtime/{version}/sofarpc-worker-{version}.jar",
+				SHA256URL: server.URL + "/runtime/{version}/sofarpc-worker-{version}.jar.sha256",
 			},
 		},
 	}); err != nil {
@@ -476,12 +476,12 @@ func TestInstallRuntimeDownloadsFromManifestURLSource(t *testing.T) {
   "schemaVersion": "v1alpha1",
   "versions": {
     "5.7.6": {
-      "url": "` + server.URL + `/artifacts/rpc-runtime-worker-sofa-{version}.jar",
+      "url": "` + server.URL + `/artifacts/sofarpc-worker-{version}.jar",
       "sha256": "` + digest + `"
     }
   }
 }`))
-		case "/artifacts/rpc-runtime-worker-sofa-5.7.6.jar":
+		case "/artifacts/sofarpc-worker-5.7.6.jar":
 			_, _ = w.Write(jarBody)
 		default:
 			http.NotFound(w, r)
@@ -527,7 +527,7 @@ func TestInstallRuntimeFailsWhenManifestURLSourceMissingVersion(t *testing.T) {
   "schemaVersion": "v1alpha1",
   "versions": {
     "5.4.0": {
-      "url": "` + server.URL + `/artifacts/rpc-runtime-worker-sofa-5.4.0.jar"
+      "url": "` + server.URL + `/artifacts/sofarpc-worker-5.4.0.jar"
     }
   }
 }`))
@@ -568,12 +568,12 @@ func TestInstallRuntimeFailsWhenManifestURLChecksumMismatch(t *testing.T) {
   "schemaVersion": "v1alpha1",
   "versions": {
     "5.7.6": {
-      "url": "` + server.URL + `/artifacts/rpc-runtime-worker-sofa-5.7.6.jar",
+      "url": "` + server.URL + `/artifacts/sofarpc-worker-5.7.6.jar",
       "sha256": "` + strings.Repeat("0", 64) + `"
     }
   }
 }`))
-		case "/artifacts/rpc-runtime-worker-sofa-5.7.6.jar":
+		case "/artifacts/sofarpc-worker-5.7.6.jar":
 			_, _ = w.Write([]byte("manifest-jar"))
 		default:
 			http.NotFound(w, r)
@@ -606,9 +606,9 @@ func TestValidateRuntimeSourceReportsURLTemplateReachability(t *testing.T) {
 	manager := testManager(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/runtime/5.7.6/rpc-runtime-worker-sofa-5.7.6.jar":
+		case "/runtime/5.7.6/sofarpc-worker-5.7.6.jar":
 			w.WriteHeader(http.StatusOK)
-		case "/runtime/5.7.6/rpc-runtime-worker-sofa-5.7.6.jar.sha256":
+		case "/runtime/5.7.6/sofarpc-worker-5.7.6.jar.sha256":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.NotFound(w, r)
@@ -622,8 +622,8 @@ func TestValidateRuntimeSourceReportsURLTemplateReachability(t *testing.T) {
 			"remote": {
 				Name:      "remote",
 				Kind:      "url-template",
-				Path:      server.URL + "/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar",
-				SHA256URL: server.URL + "/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar.sha256",
+				Path:      server.URL + "/runtime/{version}/sofarpc-worker-{version}.jar",
+				SHA256URL: server.URL + "/runtime/{version}/sofarpc-worker-{version}.jar.sha256",
 			},
 		},
 	}); err != nil {
@@ -652,7 +652,7 @@ func TestValidateRuntimeSourceReportsManifestVersionMissing(t *testing.T) {
   "schemaVersion": "v1alpha1",
   "versions": {
     "5.4.0": {
-      "url": "` + server.URL + `/artifacts/rpc-runtime-worker-sofa-5.4.0.jar"
+      "url": "` + server.URL + `/artifacts/sofarpc-worker-5.4.0.jar"
     }
   }
 }`))
@@ -696,12 +696,12 @@ func TestValidateRuntimeSourceReportsManifestInlineChecksum(t *testing.T) {
   "schemaVersion": "v1alpha1",
   "versions": {
     "5.7.6": {
-      "url": "` + server.URL + `/artifacts/rpc-runtime-worker-sofa-5.7.6.jar",
+      "url": "` + server.URL + `/artifacts/sofarpc-worker-5.7.6.jar",
       "sha256": "` + strings.Repeat("a", 64) + `"
     }
   }
 }`))
-		case "/artifacts/rpc-runtime-worker-sofa-5.7.6.jar":
+		case "/artifacts/sofarpc-worker-5.7.6.jar":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.NotFound(w, r)

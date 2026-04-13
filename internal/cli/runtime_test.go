@@ -33,7 +33,7 @@ func TestRunRuntimeSourceSetPreservesURLTemplate(t *testing.T) {
 
 	if err := app.runRuntimeSourceSet([]string{
 		"--kind", "url-template",
-		"--path", "https://example.test/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar",
+		"--path", "https://example.test/runtime/{version}/sofarpc-worker-{version}.jar",
 		"remote",
 	}); err != nil {
 		t.Fatalf("runRuntimeSourceSet() error = %v", err)
@@ -43,7 +43,7 @@ func TestRunRuntimeSourceSetPreservesURLTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRuntimeSourceStore() error = %v", err)
 	}
-	if got := store.Sources["remote"].Path; got != "https://example.test/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar" {
+	if got := store.Sources["remote"].Path; got != "https://example.test/runtime/{version}/sofarpc-worker-{version}.jar" {
 		t.Fatalf("expected URL template to be preserved, got %q", got)
 	}
 }
@@ -67,8 +67,8 @@ func TestRunRuntimeSourceSetStoresSHA256URLForURLTemplate(t *testing.T) {
 
 	if err := app.runRuntimeSourceSet([]string{
 		"--kind", "url-template",
-		"--path", "https://example.test/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar",
-		"--sha256-url", "https://example.test/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar.sha256",
+		"--path", "https://example.test/runtime/{version}/sofarpc-worker-{version}.jar",
+		"--sha256-url", "https://example.test/runtime/{version}/sofarpc-worker-{version}.jar.sha256",
 		"remote",
 	}); err != nil {
 		t.Fatalf("runRuntimeSourceSet() error = %v", err)
@@ -78,7 +78,7 @@ func TestRunRuntimeSourceSetStoresSHA256URLForURLTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRuntimeSourceStore() error = %v", err)
 	}
-	if got := store.Sources["remote"].SHA256URL; got != "https://example.test/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar.sha256" {
+	if got := store.Sources["remote"].SHA256URL; got != "https://example.test/runtime/{version}/sofarpc-worker-{version}.jar.sha256" {
 		t.Fatalf("expected SHA-256 URL template to be preserved, got %q", got)
 	}
 }
@@ -160,9 +160,9 @@ func TestRunRuntimeSourceListIncludesValidationsWhenVersionProvided(t *testing.T
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/runtime/5.7.6/rpc-runtime-worker-sofa-5.7.6.jar":
+		case "/runtime/5.7.6/sofarpc-worker-5.7.6.jar":
 			w.WriteHeader(http.StatusOK)
-		case "/runtime/5.7.6/rpc-runtime-worker-sofa-5.7.6.jar.sha256":
+		case "/runtime/5.7.6/sofarpc-worker-5.7.6.jar.sha256":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.NotFound(w, r)
@@ -176,8 +176,8 @@ func TestRunRuntimeSourceListIncludesValidationsWhenVersionProvided(t *testing.T
 			"remote": {
 				Name:      "remote",
 				Kind:      "url-template",
-				Path:      server.URL + "/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar",
-				SHA256URL: server.URL + "/runtime/{version}/rpc-runtime-worker-sofa-{version}.jar.sha256",
+				Path:      server.URL + "/runtime/{version}/sofarpc-worker-{version}.jar",
+				SHA256URL: server.URL + "/runtime/{version}/sofarpc-worker-{version}.jar.sha256",
 			},
 		},
 	}); err != nil {
