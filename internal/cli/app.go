@@ -63,6 +63,8 @@ func (a *App) Run(args []string) error {
 	switch args[0] {
 	case "call":
 		return a.runCall(args[1:])
+	case "describe":
+		return a.runDescribe(args[1:])
 	case "doctor":
 		return a.runDoctor(args[1:])
 	case "daemon":
@@ -87,6 +89,7 @@ sofarpc — SOFARPC CLI
 
 Commands:
   call      invoke a SOFARPC service through the Java runtime daemon
+  describe  reflect an interface from stub jars and print its method schema
   doctor    show resolved config, runtime, target reachability, and daemon state
   daemon    inspect and manage local Java runtime daemons
   runtime   install and inspect locally cached Java worker runtimes

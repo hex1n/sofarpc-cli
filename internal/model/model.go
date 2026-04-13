@@ -197,3 +197,14 @@ type InvokeProbe struct {
 	TransportError string        `json:"transportError,omitempty"`
 	Error          *RuntimeError `json:"error,omitempty"`
 }
+
+type ServiceSchema struct {
+	Service string         `json:"service"`
+	Methods []MethodSchema `json:"methods"`
+}
+
+type MethodSchema struct {
+	Name       string   `json:"name"`
+	ParamTypes []string `json:"paramTypes"`
+	ReturnType string   `json:"returnType,omitempty"`
+}
