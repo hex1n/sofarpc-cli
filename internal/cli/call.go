@@ -6,6 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 func (a *App) runCall(args []string) error {
@@ -17,7 +21,10 @@ func (a *App) runCall(args []string) error {
 	flags.StringVar(&input.Service, "service", "", "service name")
 	flags.StringVar(&input.Method, "method", "", "method name")
 	flags.StringVar(&input.TypesCSV, "types", "", "comma-separated parameter type names")
-	flags.StringVar(&input.ArgsJSON, "args", "", "JSON array of arguments")
+	setArgs := func(value string) error { input.ArgsJSON = value; return nil }
+	flags.Func("args", "JSON array of arguments; supports @file or - for stdin", setArgs)
+	flags.Func("data", "alias for --args (curl-style)", setArgs)
+	flags.Func("d", "alias for --args (curl-style short form)", setArgs)
 	flags.StringVar(&input.PayloadMode, "payload-mode", "", "payload mode: raw, generic, schema")
 	flags.StringVar(&input.DirectURL, "direct-url", "", "direct bolt target")
 	flags.StringVar(&input.RegistryAddress, "registry-address", "", "registry address")
@@ -47,6 +54,11 @@ func (a *App) runCall(args []string) error {
 	if input.ArgsJSON == "" && len(positionals) > 1 {
 		input.ArgsJSON = positionals[1]
 	}
+	resolvedArgs, err := loadArgsInput(input.ArgsJSON, a.Cwd, a.Stdin)
+	if err != nil {
+		return err
+	}
+	input.ArgsJSON = resolvedArgs
 	resolved, err := a.resolveInvocation(input)
 	if err != nil {
 		return err
@@ -96,4 +108,35 @@ func randomID() string {
 	var buffer [8]byte
 	_, _ = rand.Read(buffer[:])
 	return hex.EncodeToString(buffer[:])
+}
+
+func loadArgsInput(value, cwd string, stdin io.Reader) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if value == "-" {
+		if stdin == nil {
+			return "", fmt.Errorf("--args - requires stdin")
+		}
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", fmt.Errorf("read --args from stdin: %w", err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+	if strings.HasPrefix(value, "@") {
+		path := value[1:]
+		if path == "" {
+			return "", fmt.Errorf("--args @ requires a file path")
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read --args from %s: %w", path, err)
+		}
+		return strings.TrimSpace(string(data)), nil
+	}
+	return value, nil
 }

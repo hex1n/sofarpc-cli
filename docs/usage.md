@@ -224,37 +224,41 @@ On success the CLI prints just the decoded `result`. Add `--full-response` to se
 
 ### Complex request — DTO payload with stub jar
 
-Send a domain DTO to a service that expects a custom request type. The worker classpath must be able to resolve the type, so pass the app's API jar via `--stub-path`:
+The worker classpath needs to resolve any custom DTO. Pass the API jar via `--stub-path`, and put the JSON body in a file to skip shell-quoting:
 
 ```powershell
 sofarpc call `
-  --context dev-direct `
   --service com.example.OrderService `
   --method createOrder `
   --types com.example.OrderCreateRequest `
-  --payload-mode raw `
   --stub-path D:\projects\order-app\target\order-api.jar `
-  --args "[{\"userId\":123,\"items\":[{\"sku\":\"A1\",\"qty\":2},{\"sku\":\"B7\",\"qty\":1}],\"note\":\"rush\"}]"
+  -d @order.json
 ```
 
-Pin the SOFARPC version, override the Java binary, and raise the timeout when the default runtime doesn't match the target cluster:
+Where `order.json` is plain JSON:
 
-```powershell
-sofarpc call `
-  --context dev-direct `
-  --service com.example.OrderService `
-  --method createOrder `
-  --types com.example.OrderCreateRequest `
-  --payload-mode raw `
-  --stub-path D:\projects\order-app\target\order-api.jar `
-  --sofa-rpc-version 5.8.0 `
-  --java-bin "C:\Program Files\Zulu\zulu-8\bin\java.exe" `
-  --timeout-ms 15000 `
-  --args "[{\"userId\":123,\"items\":[{\"sku\":\"A1\",\"qty\":2}]}]" `
-  --full-response
+```json
+[{"userId":123,"sku":"A1","qty":2}]
 ```
+
+Useful overrides when the defaults don't fit:
+
+- `--sofa-rpc-version 5.8.0` — pin a runtime version
+- `--java-bin "C:\Program Files\Zulu\zulu-8\bin\java.exe"` — pick a JDK
+- `--timeout-ms 15000` — raise the call timeout
+- `--full-response` — also print runtime/daemon diagnostics
 
 For repeated invocations, move the service metadata and stub path into a `sofarpc.manifest.json` (see [Manifest](#manifest)) so the positional form stays terse.
+
+### Body input forms
+
+`--args` (alias `--data` / `-d`, curl-style) accepts three forms:
+
+- inline JSON: `-d "[123]"`
+- `@path` — read from file (relative to cwd): `-d @order.json`
+- `-` — read from stdin: `cat order.json | sofarpc call ... -d -`
+
+Use `@file` or stdin to dodge PowerShell / bash JSON escaping.
 
 ## How Resolution Works
 

@@ -23,6 +23,7 @@ func newDaemonTestApp(t *testing.T, stdout io.Writer) *App {
 		RuntimeSourcesFile: filepath.Join(configDir, "runtime-sources.json"),
 	}
 	return &App{
+		Stdin:   strings.NewReader(""),
 		Stdout:  stdout,
 		Stderr:  io.Discard,
 		Cwd:     cwd,
