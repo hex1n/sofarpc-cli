@@ -171,10 +171,10 @@ go run ./cmd/sofarpc call `
   --args "[123]"
 ```
 
-Positional shorthand:
+Positional shorthand (`<fqcn>.<method>`; legacy `Service/method` slash form still works):
 
 ```powershell
-go run ./cmd/sofarpc call com.example.UserService/getUser "[123]"
+go run ./cmd/sofarpc call com.example.UserService.getUser "[123]"
 ```
 
 Print the full structured response:
@@ -207,7 +207,7 @@ The examples below assume `sofarpc.exe` is on `PATH` and a context named `dev-di
 One `Long` argument, positional form:
 
 ```powershell
-sofarpc call com.example.UserService/getUser "[123]"
+sofarpc call com.example.UserService.getUser "[123]"
 ```
 
 Equivalent with explicit flags — useful when the paramType isn't obvious from the JSON:

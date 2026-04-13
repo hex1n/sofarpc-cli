@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -162,11 +161,18 @@ func firstPositive(values ...int) int {
 }
 
 func parseServiceMethod(token string) (string, string, error) {
-	parts := strings.Split(token, "/")
-	if len(parts) != 2 {
-		return "", "", errors.New("service/method positional form must look like com.example.Service/methodName")
+	if strings.Contains(token, "/") {
+		parts := strings.Split(token, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", "", fmt.Errorf("positional form must be %q or %q, got %q", "service.method", "service/method", token)
+		}
+		return parts[0], parts[1], nil
 	}
-	return parts[0], parts[1], nil
+	idx := strings.LastIndex(token, ".")
+	if idx <= 0 || idx == len(token)-1 {
+		return "", "", fmt.Errorf("positional form must be %q or %q, got %q", "service.method", "service/method", token)
+	}
+	return token[:idx], token[idx+1:], nil
 }
 
 func defaultsTarget() model.TargetConfig {
