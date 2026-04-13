@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.lang.management.ManagementFactory;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -45,7 +46,32 @@ public final class WorkerMain {
             serve(options);
             return;
         }
+        if ("describe".equalsIgnoreCase(args[0])) {
+            Map<String, String> options = parseOptions(args, 1);
+            describe(options);
+            return;
+        }
         throw new IllegalArgumentException("unsupported subcommand: " + args[0]);
+    }
+
+    private void describe(Map<String, String> options) throws Exception {
+        String serviceName = require(options, "--service");
+        Class<?> clazz = Class.forName(serviceName, false, Thread.currentThread().getContextClassLoader());
+        ServiceSchema schema = new ServiceSchema();
+        schema.service = serviceName;
+        for (Method method : clazz.getMethods()) {
+            if (method.getDeclaringClass() == Object.class) {
+                continue;
+            }
+            MethodSchema ms = new MethodSchema();
+            ms.name = method.getName();
+            for (Class<?> paramType : method.getParameterTypes()) {
+                ms.paramTypes.add(paramType.getName());
+            }
+            ms.returnType = method.getReturnType().getName();
+            schema.methods.add(ms);
+        }
+        System.out.println(mapper.writeValueAsString(schema));
     }
 
     private void serve(Map<String, String> options) throws Exception {

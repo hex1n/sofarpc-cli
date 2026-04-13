@@ -44,6 +44,10 @@ func (m *Manager) RuntimeDir() string {
 	return filepath.Join(m.Paths.CacheDir, "runtimes")
 }
 
+func (m *Manager) SchemaDir() string {
+	return filepath.Join(m.Paths.CacheDir, "schemas")
+}
+
 func (m *Manager) ResolveSpec(javaBin, runtimeJar, version string, stubPaths []string) (Spec, error) {
 	if javaBin == "" {
 		javaBin = "java"

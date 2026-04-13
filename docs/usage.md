@@ -15,6 +15,7 @@ Architecture:
 Current commands:
 
 - `call`
+- `describe`
 - `doctor`
 - `context`
 - `manifest`
@@ -29,6 +30,7 @@ Current runtime features:
 - local runtime install and cache
 - runtime sources: `file`, `directory`
 - local daemon inspection and cleanup
+- interface reflection and local schema cache
 
 ## Repo Layout
 
@@ -259,6 +261,24 @@ For repeated invocations, move the service metadata and stub path into a `sofarp
 - `-` — read from stdin: `cat order.json | sofarpc call ... -d -`
 
 Use `@file` or stdin to dodge PowerShell / bash JSON escaping.
+
+## Describe
+
+Reflect an interface from its stub jar and print the method signatures. Result is cached locally (keyed by stub-jar content), so later calls are sub-50ms.
+
+```powershell
+sofarpc describe --stub-path target\order-api.jar com.example.OrderService
+```
+
+Put flags before the positional FQCN (Go's flag parser stops at the first non-flag arg).
+
+Bypass the cache and re-run the worker:
+
+```powershell
+sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderService
+```
+
+Schemas live in `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`; `classpathDigest` changes whenever a stub jar's content changes, so rebuilt jars invalidate automatically.
 
 ## How Resolution Works
 
@@ -524,6 +544,7 @@ Cache files:
 
 - `<cacheDir>/sofarpc-cli/runtimes/<version>/`
 - `<cacheDir>/sofarpc-cli/daemons/`
+- `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`
 
 Typical Windows locations:
 
@@ -531,6 +552,7 @@ Typical Windows locations:
 - `%AppData%\sofarpc-cli\runtime-sources.json`
 - `%LocalAppData%\sofarpc-cli\runtimes\`
 - `%LocalAppData%\sofarpc-cli\daemons\`
+- `%LocalAppData%\sofarpc-cli\schemas\`
 
 ## Notes and Limitations
 
