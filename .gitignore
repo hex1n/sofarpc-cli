@@ -3,5 +3,5 @@
 target/
 dist/
 e2e/fixtures/target/
-greenfield/bin/
-greenfield/rpc.exe
+bin/
+rpc.exe
