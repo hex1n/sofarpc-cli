@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hex1n/sofa-rpcctl/greenfield/internal/cli"
+	"github.com/hex1n/sofarpc-cli/internal/cli"
 )
 
 func main() {

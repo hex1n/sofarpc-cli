@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/hex1n/sofa-rpcctl/greenfield/internal/model"
-	"github.com/hex1n/sofa-rpcctl/greenfield/internal/runtime"
+	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/runtime"
 )
 
 func (a *App) runDoctor(args []string) error {
