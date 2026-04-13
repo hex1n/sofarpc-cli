@@ -62,3 +62,28 @@ func TestResolveInvocationPrefersFlagsOverContextAndManifest(t *testing.T) {
 		t.Fatalf("expected direct url from flags, got %q", got)
 	}
 }
+
+func TestResolveSofaRPCVersionAttribution(t *testing.T) {
+	cases := []struct {
+		name        string
+		flag        string
+		manifest    string
+		wantVersion string
+		wantSource  string
+	}{
+		{name: "flag wins", flag: "5.9.0", manifest: "5.8.0", wantVersion: "5.9.0", wantSource: "flag"},
+		{name: "manifest when no flag", manifest: "5.8.0", wantVersion: "5.8.0", wantSource: "manifest"},
+		{name: "default when neither", wantVersion: defaultSofaRPCVersion, wantSource: "default"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotVersion, gotSource := resolveSofaRPCVersion(tc.flag, tc.manifest)
+			if gotVersion != tc.wantVersion {
+				t.Fatalf("version: got %q, want %q", gotVersion, tc.wantVersion)
+			}
+			if gotSource != tc.wantSource {
+				t.Fatalf("source: got %q, want %q", gotSource, tc.wantSource)
+			}
+		})
+	}
+}

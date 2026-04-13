@@ -104,4 +104,3 @@ func (m *Manager) resolveSourceRecord(version, sourceName string, source model.R
 		return installSource{}, fmt.Errorf("runtime source %q uses unsupported kind %q", source.Name, source.Kind)
 	}
 }
-

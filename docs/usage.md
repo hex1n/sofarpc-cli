@@ -118,6 +118,7 @@ go run ./cmd/sofarpc doctor --context dev-direct
 - active context
 - resolved target config
 - selected runtime jar and Java version
+- selected SOFARPC runtime version and where it came from (`flag`, `manifest`, or `default`)
 - daemon state
 - TCP reachability
 - a synthetic invoke probe that distinguishes TCP-only success from real RPC path success
