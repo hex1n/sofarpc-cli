@@ -15,21 +15,9 @@ type Manifest struct {
 	SchemaVersion  string                   `json:"schemaVersion,omitempty"`
 	SofaRPCVersion string                   `json:"sofaRpcVersion,omitempty"`
 	DefaultContext string                   `json:"defaultContext,omitempty"`
-	DefaultTarget  TargetDefaults           `json:"defaultTarget,omitempty"`
+	DefaultTarget  TargetConfig             `json:"defaultTarget,omitempty"`
 	StubPaths      []string                 `json:"stubPaths,omitempty"`
 	Services       map[string]ServiceConfig `json:"services,omitempty"`
-}
-
-type TargetDefaults struct {
-	Mode             string `json:"mode,omitempty"`
-	DirectURL        string `json:"directUrl,omitempty"`
-	RegistryAddress  string `json:"registryAddress,omitempty"`
-	RegistryProtocol string `json:"registryProtocol,omitempty"`
-	Protocol         string `json:"protocol,omitempty"`
-	Serialization    string `json:"serialization,omitempty"`
-	UniqueID         string `json:"uniqueId,omitempty"`
-	TimeoutMS        int    `json:"timeoutMs,omitempty"`
-	ConnectTimeoutMS int    `json:"connectTimeoutMs,omitempty"`
 }
 
 type ServiceConfig struct {

@@ -38,17 +38,13 @@ func (a *App) runManifestInit(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	target := defaultsTarget()
+	target.Mode = model.ModeDirect
+	target.DirectURL = directURL
 	manifest := model.Manifest{
 		SchemaVersion:  "v1alpha1",
 		SofaRPCVersion: defaultSofaRPCVersion,
-		DefaultTarget: model.TargetDefaults{
-			Mode:             model.ModeDirect,
-			DirectURL:        directURL,
-			Protocol:         "bolt",
-			Serialization:    "hessian2",
-			TimeoutMS:        3000,
-			ConnectTimeoutMS: 1000,
-		},
+		DefaultTarget:  target,
 		Services: map[string]model.ServiceConfig{
 			service: {
 				Methods: map[string]model.MethodConfig{
@@ -92,7 +88,7 @@ func (a *App) runManifestGenerate(args []string) error {
 		SchemaVersion:  "v1alpha1",
 		SofaRPCVersion: defaultSofaRPCVersion,
 		DefaultContext: name,
-		DefaultTarget: model.TargetDefaults{
+		DefaultTarget: model.TargetConfig{
 			Mode:             contextValue.Mode,
 			DirectURL:        contextValue.DirectURL,
 			RegistryAddress:  contextValue.RegistryAddress,
