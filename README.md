@@ -1,9 +1,8 @@
-# sofa-rpcctl
+# sofarpc-cli
 
-This repository now uses the `greenfield/` implementation as the primary
-`rpcctl`.
+CLI for invoking SOFARPC services.
 
-Current architecture:
+Architecture:
 
 - Go CLI control plane
 - Java SOFARPC worker runtime
@@ -11,30 +10,23 @@ Current architecture:
 
 Start here:
 
-- usage and command reference: [greenfield/README.md](./greenfield/README.md)
-- implementation design: [docs/greenfield-sofarpc-cli-design.md](./docs/greenfield-sofarpc-cli-design.md)
+- usage and command reference: [docs/usage.md](./docs/usage.md)
+- design notes: [docs/sofarpc-cli-design.md](./docs/sofarpc-cli-design.md)
 
 ## Quick Start
 
 Build:
 
 ```powershell
-mvn -f greenfield/runtime-worker-java/pom.xml package
-go build -o greenfield/bin/rpc ./greenfield/cmd/rpc
+mvn -f runtime-worker-java/pom.xml package
+go build -o bin/sofarpc ./cmd/sofarpc
 ```
 
 Run:
 
 ```powershell
-cd greenfield
-go run ./cmd/rpc help
-```
-
-Or invoke directly from the repo root:
-
-```powershell
-go run ./greenfield/cmd/rpc help
+go run ./cmd/sofarpc help
 ```
 
 For full usage, examples, manifest format, runtime source management, and
-diagnostics, use [greenfield/README.md](./greenfield/README.md).
+diagnostics, see [docs/usage.md](./docs/usage.md).
