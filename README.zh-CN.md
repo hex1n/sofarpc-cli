@@ -10,7 +10,7 @@
 
 入口文档：
 
-- 使用说明和命令参考：[docs/usage.md](./docs/usage.md)
+- 使用说明和命令参考：[docs/usage.zh-CN.md](./docs/usage.zh-CN.md)
 - 设计文档：[docs/sofarpc-cli-design.md](./docs/sofarpc-cli-design.md)
 
 ## 快速开始
@@ -29,4 +29,4 @@ go run ./cmd/sofarpc help
 ```
 
 完整用法、manifest 格式、runtime source 管理和诊断命令，请看
-[docs/usage.md](./docs/usage.md)。
+[docs/usage.zh-CN.md](./docs/usage.zh-CN.md)。
