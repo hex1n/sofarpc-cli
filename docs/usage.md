@@ -40,32 +40,67 @@ Current runtime features:
 
 ## Prerequisites
 
-- Java must be available on `PATH`, or pass `--java-bin`
-- Maven is required to build the Java worker
-- Go is required to build or run the CLI
+- **Go 1.26+** — required to build or run the CLI (`go version`)
+- **JDK 8+** — worker runtime targets Java 8 bytecode; must be on `PATH` or passed via `--java-bin` (`java -version`)
+- **Maven 3.6+** — required to build the worker jar (`mvn -version`)
 
-## Build
+Confirm all three are on `PATH` before building.
 
-From the repo root:
+## Install
 
-```powershell
-mvn -f runtime-worker-java/pom.xml package
-go build -o bin/sofarpc ./cmd/sofarpc
-```
+### Fresh-machine walkthrough
 
-The worker jar is written to `runtime-worker-java/target/sofarpc-worker-<version>.jar`,
-where `<version>` comes from the `sofa-rpc.version` Maven property (default `5.7.6`).
-Build for a different runtime version by overriding the property:
+1. Install the prerequisites above.
+2. Clone the repo:
+
+   ```powershell
+   git clone <repo-url> sofarpc-cli
+   cd sofarpc-cli
+   ```
+
+3. Build the Java worker and the Go CLI:
+
+   ```powershell
+   mvn -f runtime-worker-java/pom.xml package
+   go build -o bin/sofarpc.exe ./cmd/sofarpc
+   ```
+
+   Produces:
+
+   - `runtime-worker-java/target/sofarpc-worker-5.7.6.jar`
+   - `bin/sofarpc.exe` (or `bin/sofarpc` on macOS/Linux — drop the `.exe`)
+
+4. Add `bin\` to your `PATH`, or copy the binary into any directory already on `PATH`. After that `sofarpc ...` works anywhere.
+
+### Build for a different SOFARPC version
+
+The shaded jar's filename reflects the `sofa-rpc.version` Maven property (default `5.7.6`). Override it to target another enterprise sofa-boot version:
 
 ```powershell
 mvn -f runtime-worker-java/pom.xml -Dsofa-rpc.version=5.8.0 package
 ```
 
-You can also run the CLI without building a binary:
+Output lands at `runtime-worker-java/target/sofarpc-worker-5.8.0.jar`.
+
+### Transferring a prebuilt worker jar
+
+If the new machine can't reach Maven central or an internal repo, copy a built jar from another box and register it directly — no Maven needed:
+
+```powershell
+sofarpc runtime install --version 5.7.6 --jar D:\transfer\sofarpc-worker-5.7.6.jar
+```
+
+You still need Go for the CLI binary. Copying the `sofarpc.exe` across works too.
+
+### Running without installing a binary
+
+While iterating on the Go code you can skip `go build`:
 
 ```powershell
 go run ./cmd/sofarpc help
 ```
+
+For everyday use, a built binary on `PATH` is faster and avoids recompiling.
 
 ## Quick Start
 
@@ -162,6 +197,64 @@ Failure behavior:
 
 - CLI prints the full structured error response to `stderr`
 - process exits with code `1`
+
+## Call Examples
+
+The examples below assume `sofarpc.exe` is on `PATH` and a context named `dev-direct` is active. Substitute `go run ./cmd/sofarpc` for `sofarpc` when running from source.
+
+### Simple request — primitive argument
+
+One `Long` argument, positional form:
+
+```powershell
+sofarpc call com.example.UserService/getUser "[123]"
+```
+
+Equivalent with explicit flags — useful when the paramType isn't obvious from the JSON:
+
+```powershell
+sofarpc call `
+  --service com.example.UserService `
+  --method getUser `
+  --types java.lang.Long `
+  --args "[123]"
+```
+
+On success the CLI prints just the decoded `result`. Add `--full-response` to see diagnostics (runtime jar, daemon key, java version).
+
+### Complex request — DTO payload with stub jar
+
+Send a domain DTO to a service that expects a custom request type. The worker classpath must be able to resolve the type, so pass the app's API jar via `--stub-path`:
+
+```powershell
+sofarpc call `
+  --context dev-direct `
+  --service com.example.OrderService `
+  --method createOrder `
+  --types com.example.OrderCreateRequest `
+  --payload-mode raw `
+  --stub-path D:\projects\order-app\target\order-api.jar `
+  --args "[{\"userId\":123,\"items\":[{\"sku\":\"A1\",\"qty\":2},{\"sku\":\"B7\",\"qty\":1}],\"note\":\"rush\"}]"
+```
+
+Pin the SOFARPC version, override the Java binary, and raise the timeout when the default runtime doesn't match the target cluster:
+
+```powershell
+sofarpc call `
+  --context dev-direct `
+  --service com.example.OrderService `
+  --method createOrder `
+  --types com.example.OrderCreateRequest `
+  --payload-mode raw `
+  --stub-path D:\projects\order-app\target\order-api.jar `
+  --sofa-rpc-version 5.8.0 `
+  --java-bin "C:\Program Files\Zulu\zulu-8\bin\java.exe" `
+  --timeout-ms 15000 `
+  --args "[{\"userId\":123,\"items\":[{\"sku\":\"A1\",\"qty\":2}]}]" `
+  --full-response
+```
+
+For repeated invocations, move the service metadata and stub path into a `sofarpc.manifest.json` (see [Manifest](#manifest)) so the positional form stays terse.
 
 ## How Resolution Works
 
