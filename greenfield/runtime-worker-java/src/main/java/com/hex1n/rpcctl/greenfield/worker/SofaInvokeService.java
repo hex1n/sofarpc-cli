@@ -163,7 +163,7 @@ public final class SofaInvokeService {
         return error;
     }
 
-    private RuntimeError mapRpcError(SofaRpcException ex, DiagnosticInfo diagnostics) {
+    RuntimeError mapRpcError(SofaRpcException ex, DiagnosticInfo diagnostics) {
         RuntimeError error = baseError(diagnostics);
         error.message = ex.getMessage();
         switch (ex.getErrorType()) {
