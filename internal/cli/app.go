@@ -82,7 +82,7 @@ func (a *App) Run(args []string) error {
 
 func (a *App) printUsage() {
 	fmt.Fprintln(a.Stdout, strings.TrimSpace(`
-rpc greenfield
+sofarpc — SOFARPC CLI
 
 Commands:
   call      invoke a SOFARPC service through the Java runtime daemon
@@ -125,7 +125,7 @@ func resolveManifestPath(cwd, explicit string) string {
 		}
 		return filepath.Join(cwd, explicit)
 	}
-	return filepath.Join(cwd, "rpcctl.manifest.json")
+	return filepath.Join(cwd, "sofarpc.manifest.json")
 }
 
 func failFlagSet(name string) *flag.FlagSet {

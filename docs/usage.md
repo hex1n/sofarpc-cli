@@ -252,13 +252,13 @@ Use this when:
 
 Default manifest path:
 
-- `rpcctl.manifest.json` in the current working directory
+- `sofarpc.manifest.json` in the current working directory
 
 Create a starter manifest:
 
 ```powershell
 go run ./cmd/rpc manifest init `
-  --output rpcctl.manifest.json `
+  --output sofarpc.manifest.json `
   --service com.example.UserService `
   --method getUser `
   --types java.lang.Long `
@@ -271,7 +271,7 @@ Generate a manifest from an existing context:
 ```powershell
 go run ./cmd/rpc manifest generate `
   --context dev-direct `
-  --output rpcctl.manifest.json `
+  --output sofarpc.manifest.json `
   --service com.example.UserService `
   --method getUser `
   --types java.lang.Long `

@@ -29,7 +29,7 @@ func (a *App) runManifestInit(args []string) error {
 	types := "java.lang.Long"
 	payloadMode := model.PayloadRaw
 	directURL := ""
-	flags.StringVar(&output, "output", "rpcctl.manifest.json", "output file")
+	flags.StringVar(&output, "output", "sofarpc.manifest.json", "output file")
 	flags.StringVar(&service, "service", service, "service name")
 	flags.StringVar(&method, "method", method, "method name")
 	flags.StringVar(&types, "types", types, "comma-separated parameter types")
@@ -72,7 +72,7 @@ func (a *App) runManifestGenerate(args []string) error {
 	types := ""
 	payloadMode := model.PayloadRaw
 	stubPathCSV := ""
-	flags.StringVar(&output, "output", "rpcctl.manifest.json", "output file")
+	flags.StringVar(&output, "output", "sofarpc.manifest.json", "output file")
 	flags.StringVar(&contextName, "context", "", "source context name")
 	flags.StringVar(&service, "service", "", "service name")
 	flags.StringVar(&method, "method", "", "method name")
