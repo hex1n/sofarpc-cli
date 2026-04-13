@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.hex1n</groupId>
-    <artifactId>sofarpc-worker-5.7.6</artifactId>
+    <artifactId>sofarpc-worker</artifactId>
     <version>0.1.0</version>
 
     <properties>
@@ -57,7 +57,7 @@
     </dependencies>
 
     <build>
-        <finalName>sofarpc-worker-5.7.6</finalName>
+        <finalName>sofarpc-worker-${sofa-rpc.version}</finalName>
         <plugins>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
