@@ -27,7 +27,7 @@ Current runtime features:
 - payload modes: `raw`, `generic`, `schema`
 - target modes: `direct`, `registry`
 - local runtime install and cache
-- runtime sources: `file`, `directory`, `url-template`, `manifest-url`
+- runtime sources: `file`, `directory`
 - runtime source validation without installation
 - local daemon inspection and cleanup
 
@@ -342,8 +342,6 @@ Supported kinds:
 
 - `file`
 - `directory`
-- `url-template`
-- `manifest-url`
 
 ### Local file source
 
@@ -371,53 +369,14 @@ go run ./cmd/sofarpc runtime source set `
   local-dir
 ```
 
-### URL template source
-
-```powershell
-go run ./cmd/sofarpc runtime source set `
-  --kind url-template `
-  --path https://artifacts.example.com/sofa/{version}/sofarpc-worker-{version}.jar `
-  --sha256-url https://artifacts.example.com/sofa/{version}/sofarpc-worker-{version}.jar.sha256 `
-  remote-template
-```
-
-`--sha256-url` is only supported for `url-template`.
-
-### Manifest URL source
-
-```powershell
-go run ./cmd/sofarpc runtime source set `
-  --kind manifest-url `
-  --path https://artifacts.example.com/sofa/runtime-manifest.json `
-  remote-catalog
-```
-
-Example runtime source manifest:
-
-```json
-{
-  "schemaVersion": "v1alpha1",
-  "versions": {
-    "5.7.6": {
-      "url": "https://artifacts.example.com/sofa/5.7.6/sofarpc-worker-{version}.jar",
-      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    },
-    "5.8.0": {
-      "url": "https://artifacts.example.com/sofa/5.8.0/sofarpc-worker-{version}.jar",
-      "sha256Url": "https://artifacts.example.com/sofa/5.8.0/sofarpc-worker-{version}.jar.sha256"
-    }
-  }
-}
-```
-
 ### Inspect and switch sources
 
 ```powershell
 go run ./cmd/sofarpc runtime source list
 go run ./cmd/sofarpc runtime source show
-go run ./cmd/sofarpc runtime source show remote-template
-go run ./cmd/sofarpc runtime source use remote-template
-go run ./cmd/sofarpc runtime source delete remote-template
+go run ./cmd/sofarpc runtime source show local-dir
+go run ./cmd/sofarpc runtime source use local-dir
+go run ./cmd/sofarpc runtime source delete local-dir
 ```
 
 ### Validate sources without installation
@@ -425,7 +384,7 @@ go run ./cmd/sofarpc runtime source delete remote-template
 Validate one source:
 
 ```powershell
-go run ./cmd/sofarpc runtime source validate remote-template --version 5.7.6
+go run ./cmd/sofarpc runtime source validate local-dir --version 5.7.6
 ```
 
 Validate the active source:
@@ -443,9 +402,7 @@ go run ./cmd/sofarpc runtime source list --version 5.7.6
 Validation reports include:
 
 - whether the source defines the requested version
-- whether the artifact is reachable
-- whether checksum metadata is available
-- resolved runtime, manifest, and checksum URLs when applicable
+- whether the artifact is reachable on disk
 
 `runtime source validate` exits `0` on success and `1` on validation failure after printing the JSON report.
 
