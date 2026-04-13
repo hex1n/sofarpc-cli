@@ -75,7 +75,11 @@ func (m *Manager) ResolveSpec(javaBin, runtimeJar, version string, stubPaths []s
 		version = defaultRuntimeVersion
 	}
 	if runtimeJar == "" {
-		runtimeJar = m.defaultRuntimeJar(version)
+		resolved, err := m.EnsureRuntimeAvailable(version)
+		if err != nil {
+			return Spec{}, err
+		}
+		runtimeJar = resolved
 	}
 	runtimeJar, err := filepath.Abs(runtimeJar)
 	if err != nil {
@@ -171,6 +175,21 @@ func (m *Manager) GetRuntime(version string) (model.RuntimeRecord, error) {
 
 func (m *Manager) InstallRuntime(version, sourceJar string) (model.RuntimeRecord, error) {
 	return m.InstallRuntimeFrom(version, "", sourceJar)
+}
+
+func (m *Manager) EnsureRuntimeAvailable(version string) (string, error) {
+	if strings.TrimSpace(version) == "" {
+		version = defaultRuntimeVersion
+	}
+	installed := m.installedRuntimeJar(version)
+	if _, err := os.Stat(installed); err == nil {
+		return installed, nil
+	}
+	record, err := m.InstallRuntimeFrom(version, "", "")
+	if err != nil {
+		return "", fmt.Errorf("runtime %q is not available: %w", version, err)
+	}
+	return record.Path, nil
 }
 
 func (m *Manager) InstallRuntimeFrom(version, sourceName, sourceJar string) (model.RuntimeRecord, error) {
@@ -666,20 +685,6 @@ func max(left, right int) int {
 		return left
 	}
 	return right
-}
-
-func (m *Manager) defaultRuntimeJar(version string) string {
-	installed := m.installedRuntimeJar(version)
-	if _, err := os.Stat(installed); err == nil {
-		return installed
-	}
-	for _, candidate := range m.bundledRuntimeJarCandidates(version) {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	candidates := m.bundledRuntimeJarCandidates(version)
-	return candidates[0]
 }
 
 func (m *Manager) bundledRuntimeJarCandidates(version string) []string {
