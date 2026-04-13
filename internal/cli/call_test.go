@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
+	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/runtime"
 )
 
@@ -262,5 +264,141 @@ func TestRunCallReadsArgsFromStdin(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "--args must be valid JSON") {
 		t.Fatalf("expected stdin-loaded args to flow through validation, got %v", err)
+	}
+}
+
+func TestPickMethodTypesSingleMatch(t *testing.T) {
+	schema := model.ServiceSchema{
+		Service: "com.example.Svc",
+		Methods: []model.MethodSchema{
+			{Name: "ping", ParamTypes: []string{"java.lang.Long"}},
+		},
+	}
+	types, err := pickMethodTypes(schema, "ping", nil)
+	if err != nil {
+		t.Fatalf("pickMethodTypes error = %v", err)
+	}
+	if len(types) != 1 || types[0] != "java.lang.Long" {
+		t.Fatalf("got %v, want [java.lang.Long]", types)
+	}
+}
+
+func TestPickMethodTypesMissingMethod(t *testing.T) {
+	schema := model.ServiceSchema{Service: "com.example.Svc"}
+	_, err := pickMethodTypes(schema, "ping", nil)
+	if err == nil || !strings.Contains(err.Error(), "method ping not found") {
+		t.Fatalf("expected missing-method error, got %v", err)
+	}
+}
+
+func TestPickMethodTypesOverloadResolvedByArity(t *testing.T) {
+	schema := model.ServiceSchema{
+		Service: "com.example.Svc",
+		Methods: []model.MethodSchema{
+			{Name: "put", ParamTypes: []string{"java.lang.String"}},
+			{Name: "put", ParamTypes: []string{"java.lang.String", "java.lang.Long"}},
+		},
+	}
+	types, err := pickMethodTypes(schema, "put", json.RawMessage(`["a", 1]`))
+	if err != nil {
+		t.Fatalf("pickMethodTypes error = %v", err)
+	}
+	if len(types) != 2 || types[0] != "java.lang.String" || types[1] != "java.lang.Long" {
+		t.Fatalf("got %v, want [java.lang.String java.lang.Long]", types)
+	}
+}
+
+func TestPickMethodTypesOverloadAmbiguous(t *testing.T) {
+	schema := model.ServiceSchema{
+		Service: "com.example.Svc",
+		Methods: []model.MethodSchema{
+			{Name: "put", ParamTypes: []string{"java.lang.String"}},
+			{Name: "put", ParamTypes: []string{"java.lang.Long"}},
+		},
+	}
+	_, err := pickMethodTypes(schema, "put", json.RawMessage(`["a"]`))
+	if err == nil || !strings.Contains(err.Error(), "overloaded") {
+		t.Fatalf("expected overload ambiguity error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "--types") {
+		t.Fatalf("expected hint pointing at --types, got %v", err)
+	}
+}
+
+func TestMaybeWrapSingleArgWrapsScalar(t *testing.T) {
+	wrapped, ok := maybeWrapSingleArg(json.RawMessage(`123`), 1)
+	if !ok {
+		t.Fatal("expected scalar to be wrapped")
+	}
+	if string(wrapped) != "[123]" {
+		t.Fatalf("got %q, want [123]", wrapped)
+	}
+}
+
+func TestMaybeWrapSingleArgWrapsObject(t *testing.T) {
+	wrapped, ok := maybeWrapSingleArg(json.RawMessage(`{"id":1}`), 1)
+	if !ok {
+		t.Fatal("expected object to be wrapped")
+	}
+	if string(wrapped) != `[{"id":1}]` {
+		t.Fatalf("got %q, want [{\"id\":1}]", wrapped)
+	}
+}
+
+func TestMaybeWrapSingleArgSkipsArray(t *testing.T) {
+	if _, ok := maybeWrapSingleArg(json.RawMessage(`[1]`), 1); ok {
+		t.Fatal("expected array to be left alone")
+	}
+}
+
+func TestMaybeWrapSingleArgSkipsNonSingleArity(t *testing.T) {
+	if _, ok := maybeWrapSingleArg(json.RawMessage(`1`), 2); ok {
+		t.Fatal("expected arity != 1 to skip wrapping")
+	}
+	if _, ok := maybeWrapSingleArg(json.RawMessage(`1`), 0); ok {
+		t.Fatal("expected arity 0 to skip wrapping")
+	}
+}
+
+func TestMaybeWrapSingleArgSkipsEmpty(t *testing.T) {
+	if _, ok := maybeWrapSingleArg(nil, 1); ok {
+		t.Fatal("expected empty raw to skip wrapping")
+	}
+}
+
+func TestIsJSONArray(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"[]", true},
+		{"  \n\t[1]", true},
+		{"{}", false},
+		{"123", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isJSONArray([]byte(c.in)); got != c.want {
+			t.Fatalf("isJSONArray(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestArgsArityHint(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"", -1},
+		{"123", 1},
+		{`{"id":1}`, 1},
+		{"[]", 0},
+		{"[1,2,3]", 3},
+		{"[", -1},
+	}
+	for _, c := range cases {
+		if got := argsArityHint(json.RawMessage(c.in)); got != c.want {
+			t.Fatalf("argsArityHint(%q) = %d, want %d", c.in, got, c.want)
+		}
 	}
 }

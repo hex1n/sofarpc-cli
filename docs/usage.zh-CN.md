@@ -205,13 +205,19 @@ go run ./cmd/sofarpc call `
 
 ### 简单请求 — 基础类型参数
 
-一个 `Long` 入参，位置参数形式：
+一个 `Long` 入参，位置参数形式。配置了 stub jar 时 CLI 会反射推断 `--types`，因此下面这样就够了：
 
 ```powershell
 sofarpc call com.example.UserService.getUser "[123]"
 ```
 
-显式 flag 等价写法 — 当 paramType 不能从 JSON 推断出来时更稳：
+单参方法时 body 可以省略外层数组 —— CLI 会自动包成 `[123]`：
+
+```powershell
+sofarpc call com.example.UserService.getUser "123"
+```
+
+显式 flag 等价写法 — 没有 stub jar 或想指定具体重载时更稳：
 
 ```powershell
 sofarpc call `
@@ -318,11 +324,13 @@ schema 存在 `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`；`
 
 - `--service`、`--method`、`--types`、`--payload-mode`
 - `manifest.services` 中匹配的条目
+- 对 `--types`：上述都没给且配了 stub jar 时，CLI 会反射接口并取该方法的 `paramTypes`（遇到重载歧义会报错 —— 显式传 `--types` 指定一个）
 
 注意事项：
 
 - `--args` 必须是合法 JSON
 - 如果省略 `--args`，默认取 `[]`
+- 若解析到的方法只有一个参数且 body 不是 JSON 数组，CLI 会自动包成 `[body]`
 - 必须能解析出 direct target 或 registry target 之一
 - manifest 中的相对 `stubPaths` 以 manifest 文件所在目录为基准
 
