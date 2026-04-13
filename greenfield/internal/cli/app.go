@@ -1,0 +1,177 @@
+package cli
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"path/filepath"
+	"strings"
+
+	"github.com/hex1n/sofa-rpcctl/greenfield/internal/config"
+	"github.com/hex1n/sofa-rpcctl/greenfield/internal/model"
+	"github.com/hex1n/sofa-rpcctl/greenfield/internal/runtime"
+)
+
+const defaultSofaRPCVersion = "5.7.6"
+
+type App struct {
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Cwd     string
+	Paths   config.Paths
+	Runtime *runtime.Manager
+}
+
+type exitError struct {
+	message string
+	silent  bool
+}
+
+func (e *exitError) Error() string {
+	return e.message
+}
+
+func (e *exitError) Silent() bool {
+	return e.silent
+}
+
+func New(stdout, stderr io.Writer, cwd string) (*App, error) {
+	paths, err := config.ResolvePaths()
+	if err != nil {
+		return nil, err
+	}
+	if err := paths.Ensure(); err != nil {
+		return nil, err
+	}
+	return &App{
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Cwd:     cwd,
+		Paths:   paths,
+		Runtime: runtime.NewManager(paths, cwd),
+	}, nil
+}
+
+func (a *App) Run(args []string) error {
+	if len(args) == 0 {
+		a.printUsage()
+		return nil
+	}
+	switch args[0] {
+	case "call":
+		return a.runCall(args[1:])
+	case "doctor":
+		return a.runDoctor(args[1:])
+	case "daemon":
+		return a.runDaemon(args[1:])
+	case "runtime":
+		return a.runRuntime(args[1:])
+	case "context":
+		return a.runContext(args[1:])
+	case "manifest":
+		return a.runManifest(args[1:])
+	case "help":
+		a.printUsage()
+		return nil
+	default:
+		return fmt.Errorf("unknown command %q", args[0])
+	}
+}
+
+func (a *App) printUsage() {
+	fmt.Fprintln(a.Stdout, strings.TrimSpace(`
+rpc greenfield
+
+Commands:
+  call      invoke a SOFARPC service through the Java runtime daemon
+  doctor    show resolved config, runtime, target reachability, and daemon state
+  daemon    inspect and manage local Java runtime daemons
+  runtime   install and inspect locally cached Java worker runtimes
+  context   manage reusable target contexts
+  manifest  initialize or generate a project manifest
+`))
+}
+
+func printJSON(out io.Writer, value any) error {
+	body, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "%s\n", body)
+	return err
+}
+
+func parseCSV(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			items = append(items, part)
+		}
+	}
+	return items
+}
+
+func resolveManifestPath(cwd, explicit string) string {
+	if explicit != "" {
+		if filepath.IsAbs(explicit) {
+			return explicit
+		}
+		return filepath.Join(cwd, explicit)
+	}
+	return filepath.Join(cwd, "rpcctl.manifest.json")
+}
+
+func failFlagSet(name string) *flag.FlagSet {
+	set := flag.NewFlagSet(name, flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	return set
+}
+
+func requireValue(name, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is required", name)
+	}
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func parseServiceMethod(token string) (string, string, error) {
+	parts := strings.Split(token, "/")
+	if len(parts) != 2 {
+		return "", "", errors.New("service/method positional form must look like com.example.Service/methodName")
+	}
+	return parts[0], parts[1], nil
+}
+
+func defaultsTarget() model.TargetConfig {
+	return model.TargetConfig{
+		Protocol:         "bolt",
+		Serialization:    "hessian2",
+		TimeoutMS:        3000,
+		ConnectTimeoutMS: 1000,
+	}
+}
