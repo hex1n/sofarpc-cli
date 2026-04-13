@@ -34,7 +34,7 @@ func TestResolveInvocationPrefersFlagsOverContextAndManifest(t *testing.T) {
 	manifest := model.Manifest{
 		SchemaVersion:  "v1alpha1",
 		SofaRPCVersion: defaultSofaRPCVersion,
-		DefaultTarget: model.TargetDefaults{
+		DefaultTarget: model.TargetConfig{
 			Mode:      model.ModeDirect,
 			DirectURL: "bolt://127.0.0.1:12201",
 		},
