@@ -160,10 +160,9 @@ type RuntimeSourceStore struct {
 }
 
 type RuntimeSource struct {
-	Name      string `json:"name,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	Path      string `json:"path,omitempty"`
-	SHA256URL string `json:"sha256Url,omitempty"`
+	Name string `json:"name,omitempty"`
+	Kind string `json:"kind,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 type RuntimeSourceValidation struct {
@@ -174,12 +173,7 @@ type RuntimeSourceValidation struct {
 	OK                bool   `json:"ok"`
 	VersionDefined    bool   `json:"versionDefined"`
 	ArtifactReachable bool   `json:"artifactReachable"`
-	ChecksumMode      string `json:"checksumMode,omitempty"`
-	ChecksumAvailable bool   `json:"checksumAvailable"`
 	ResolvedPath      string `json:"resolvedPath,omitempty"`
-	ResolvedURL       string `json:"resolvedUrl,omitempty"`
-	ManifestURL       string `json:"manifestUrl,omitempty"`
-	ChecksumURL       string `json:"checksumUrl,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
 

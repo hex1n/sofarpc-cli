@@ -52,7 +52,6 @@ type Spec struct {
 type installSource struct {
 	JarPath string
 	Source  string
-	Cleanup func() error
 }
 
 func NewManager(paths config.Paths, cwd string) *Manager {
@@ -199,11 +198,6 @@ func (m *Manager) InstallRuntimeFrom(version, sourceName, sourceJar string) (mod
 	resolved, err := m.resolveInstallSource(version, sourceName, sourceJar)
 	if err != nil {
 		return model.RuntimeRecord{}, err
-	}
-	if resolved.Cleanup != nil {
-		defer func() {
-			_ = resolved.Cleanup()
-		}()
 	}
 	targetJar := m.installedRuntimeJar(version)
 	if err := os.MkdirAll(filepath.Dir(targetJar), 0o755); err != nil {

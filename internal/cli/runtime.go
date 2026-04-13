@@ -152,10 +152,8 @@ func (a *App) runRuntimeSourceSet(args []string) error {
 	flags := failFlagSet("runtime source set")
 	kind := ""
 	pathValue := ""
-	sha256URL := ""
-	flags.StringVar(&kind, "kind", "", "source kind: file, directory, url-template, or manifest-url")
-	flags.StringVar(&pathValue, "path", "", "source path, URL template, or manifest URL")
-	flags.StringVar(&sha256URL, "sha256-url", "", "optional SHA-256 checksum URL template for url-template sources")
+	flags.StringVar(&kind, "kind", "", "source kind: file or directory")
+	flags.StringVar(&pathValue, "path", "", "source path to a worker jar (file) or to a directory containing one")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -163,31 +161,25 @@ func (a *App) runRuntimeSourceSet(args []string) error {
 	if len(positionals) != 1 {
 		return fmt.Errorf("runtime source set requires exactly one source name")
 	}
-	if kind != "file" && kind != "directory" && kind != "url-template" && kind != "manifest-url" {
-		return fmt.Errorf("runtime source set requires --kind file, directory, url-template, or manifest-url")
+	if kind != "file" && kind != "directory" {
+		return fmt.Errorf("runtime source set requires --kind file or directory")
 	}
 	if err := requireValue("--path", pathValue); err != nil {
 		return err
 	}
-	if kind != "url-template" && strings.TrimSpace(sha256URL) != "" {
-		return fmt.Errorf("--sha256-url is only supported for --kind url-template")
+	if !filepath.IsAbs(pathValue) {
+		pathValue = filepath.Join(a.Cwd, pathValue)
 	}
-	if kind == "file" || kind == "directory" {
-		if !filepath.IsAbs(pathValue) {
-			pathValue = filepath.Join(a.Cwd, pathValue)
-		}
-		pathValue = filepath.Clean(pathValue)
-	}
+	pathValue = filepath.Clean(pathValue)
 	store, err := config.LoadRuntimeSourceStore(a.Paths)
 	if err != nil {
 		return err
 	}
 	name := positionals[0]
 	store.Sources[name] = model.RuntimeSource{
-		Name:      name,
-		Kind:      kind,
-		Path:      pathValue,
-		SHA256URL: strings.TrimSpace(sha256URL),
+		Name: name,
+		Kind: kind,
+		Path: pathValue,
 	}
 	if store.Active == "" {
 		store.Active = name
