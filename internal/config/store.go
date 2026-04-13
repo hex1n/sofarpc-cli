@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hex1n/sofa-rpcctl/greenfield/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/model"
 )
 
 const appName = "rpcctl-greenfield"

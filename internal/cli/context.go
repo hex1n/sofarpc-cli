@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 
-	"github.com/hex1n/sofa-rpcctl/greenfield/internal/config"
-	"github.com/hex1n/sofa-rpcctl/greenfield/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/config"
+	"github.com/hex1n/sofarpc-cli/internal/model"
 )
 
 func (a *App) runContext(args []string) error {

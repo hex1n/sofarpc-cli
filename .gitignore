@@ -4,4 +4,4 @@ target/
 dist/
 e2e/fixtures/target/
 bin/
-rpc.exe
+sofarpc.exe

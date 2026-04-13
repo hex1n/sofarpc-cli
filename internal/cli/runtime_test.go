@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hex1n/sofa-rpcctl/greenfield/internal/config"
-	"github.com/hex1n/sofa-rpcctl/greenfield/internal/model"
-	"github.com/hex1n/sofa-rpcctl/greenfield/internal/runtime"
+	"github.com/hex1n/sofarpc-cli/internal/config"
+	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/runtime"
 )
 
 func TestRunRuntimeSourceSetPreservesURLTemplate(t *testing.T) {
