@@ -223,37 +223,41 @@ sofarpc call `
 
 ### 复杂请求 — DTO 入参 + stub jar
 
-调用一个需要业务 DTO 的服务时，worker classpath 必须能解析这个类型，所以通过 `--stub-path` 把业务的 API jar 提供出来：
+worker classpath 必须能解析业务 DTO，通过 `--stub-path` 把业务的 API jar 提供出来；body 用 `-d @file` 直接从文件读，避开 shell 转义：
 
 ```powershell
 sofarpc call `
-  --context dev-direct `
   --service com.example.OrderService `
   --method createOrder `
   --types com.example.OrderCreateRequest `
-  --payload-mode raw `
   --stub-path D:\projects\order-app\target\order-api.jar `
-  --args "[{\"userId\":123,\"items\":[{\"sku\":\"A1\",\"qty\":2},{\"sku\":\"B7\",\"qty\":1}],\"note\":\"rush\"}]"
+  -d @order.json
 ```
 
-当默认 runtime 与目标集群不一致时，可以同时覆盖 SOFARPC 版本、Java 二进制路径，并把超时调大：
+`order.json` 就是普通 JSON：
 
-```powershell
-sofarpc call `
-  --context dev-direct `
-  --service com.example.OrderService `
-  --method createOrder `
-  --types com.example.OrderCreateRequest `
-  --payload-mode raw `
-  --stub-path D:\projects\order-app\target\order-api.jar `
-  --sofa-rpc-version 5.8.0 `
-  --java-bin "C:\Program Files\Zulu\zulu-8\bin\java.exe" `
-  --timeout-ms 15000 `
-  --args "[{\"userId\":123,\"items\":[{\"sku\":\"A1\",\"qty\":2}]}]" `
-  --full-response
+```json
+[{"userId":123,"sku":"A1","qty":2}]
 ```
+
+当默认值不合适时，常用的覆盖项：
+
+- `--sofa-rpc-version 5.8.0` — 指定 runtime 版本
+- `--java-bin "C:\Program Files\Zulu\zulu-8\bin\java.exe"` — 指定 JDK
+- `--timeout-ms 15000` — 调大调用超时
+- `--full-response` — 同时打印 runtime/daemon 诊断信息
 
 如果同一组服务要反复调用，把服务元信息和 stub path 写进 `sofarpc.manifest.json`（见 [Manifest](#manifest)），这样位置参数形式就足够了。
+
+### Body 输入形式
+
+`--args`（别名 `--data` / `-d`，对齐 curl）支持三种形式：
+
+- 内联 JSON：`-d "[123]"`
+- `@path` — 从文件读（相对 cwd）：`-d @order.json`
+- `-` — 从 stdin 读：`cat order.json | sofarpc call ... -d -`
+
+复杂 DTO 一律用 `@file` 或 stdin，能彻底绕开 PowerShell / bash 的 JSON 转义。
 
 ## 解析顺序
 

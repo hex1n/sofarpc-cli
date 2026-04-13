@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	app, err := cli.New(os.Stdout, os.Stderr, mustGetwd())
+	app, err := cli.New(os.Stdin, os.Stdout, os.Stderr, mustGetwd())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

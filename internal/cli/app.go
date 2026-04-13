@@ -17,6 +17,7 @@ import (
 const defaultSofaRPCVersion = "5.7.6"
 
 type App struct {
+	Stdin   io.Reader
 	Stdout  io.Writer
 	Stderr  io.Writer
 	Cwd     string
@@ -37,7 +38,7 @@ func (e *exitError) Silent() bool {
 	return e.silent
 }
 
-func New(stdout, stderr io.Writer, cwd string) (*App, error) {
+func New(stdin io.Reader, stdout, stderr io.Writer, cwd string) (*App, error) {
 	paths, err := config.ResolvePaths()
 	if err != nil {
 		return nil, err
@@ -46,6 +47,7 @@ func New(stdout, stderr io.Writer, cwd string) (*App, error) {
 		return nil, err
 	}
 	return &App{
+		Stdin:   stdin,
 		Stdout:  stdout,
 		Stderr:  stderr,
 		Cwd:     cwd,
