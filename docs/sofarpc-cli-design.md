@@ -207,7 +207,7 @@ daemon key 必须包含：
 示例：
 
 ```bash
-rpc call \
+sofarpc call \
   --direct-url bolt://127.0.0.1:12200 \
   --service com.foo.UserService \
   --method getUser \
@@ -218,7 +218,7 @@ rpc call \
 或：
 
 ```bash
-rpc call com.foo.UserService/getUser '[123]'
+sofarpc call com.foo.UserService/getUser '[123]'
 ```
 
 ### `doctor`

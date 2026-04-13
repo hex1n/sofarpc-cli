@@ -1,16 +1,14 @@
-# Greenfield SOFARPC CLI
+# sofarpc-cli usage
 
-`greenfield/` contains the new control-plane/runtime split implementation
-described in `docs/greenfield-sofarpc-cli-design.md`.
+Detailed build, command, manifest, runtime-source, and diagnostics reference.
+Design notes live in [sofarpc-cli-design.md](./sofarpc-cli-design.md).
 
-The current architecture is:
+Architecture:
 
 - Go CLI for config resolution, runtime selection, daemon management, and UX
 - Java worker runtime for real SOFARPC invocation
 - Local runtime cache and daemon pool keyed by runtime version, runtime digest,
   classpath digest, and Java major version
-
-This README documents how to build and use the current implementation.
 
 ## What Exists Today
 
@@ -35,7 +33,7 @@ Current runtime features:
 
 ## Repo Layout
 
-- `cmd/rpc`: Go CLI entrypoint
+- `cmd/sofarpc`: Go CLI entrypoint
 - `internal/cli`: CLI command handlers
 - `internal/config`: local config and manifest persistence
 - `internal/runtime`: runtime selection, daemon pool, source resolution, diagnostics
@@ -52,22 +50,14 @@ Current runtime features:
 From the repo root:
 
 ```powershell
-mvn -f greenfield/runtime-worker-java/pom.xml package
-go build -o greenfield/bin/rpc ./greenfield/cmd/rpc
-```
-
-From the `greenfield/` directory:
-
-```powershell
 mvn -f runtime-worker-java/pom.xml package
-go build -o bin/rpc ./cmd/rpc
+go build -o bin/sofarpc ./cmd/sofarpc
 ```
 
 You can also run the CLI without building a binary:
 
 ```powershell
-cd greenfield
-go run ./cmd/rpc help
+go run ./cmd/sofarpc help
 ```
 
 ## Quick Start
@@ -77,7 +67,7 @@ go run ./cmd/rpc help
 Direct target:
 
 ```powershell
-go run ./cmd/rpc context set dev-direct `
+go run ./cmd/sofarpc context set dev-direct `
   --direct-url bolt://127.0.0.1:12200 `
   --protocol bolt `
   --serialization hessian2 `
@@ -88,7 +78,7 @@ go run ./cmd/rpc context set dev-direct `
 Registry target:
 
 ```powershell
-go run ./cmd/rpc context set dev-zk `
+go run ./cmd/sofarpc context set dev-zk `
   --registry-address zookeeper://127.0.0.1:2181 `
   --registry-protocol zookeeper `
   --protocol bolt `
@@ -98,21 +88,21 @@ go run ./cmd/rpc context set dev-zk `
 Switch active context:
 
 ```powershell
-go run ./cmd/rpc context use dev-direct
+go run ./cmd/sofarpc context use dev-direct
 ```
 
 Inspect contexts:
 
 ```powershell
-go run ./cmd/rpc context list
-go run ./cmd/rpc context show
-go run ./cmd/rpc context show dev-direct
+go run ./cmd/sofarpc context list
+go run ./cmd/sofarpc context show
+go run ./cmd/sofarpc context show dev-direct
 ```
 
 ### 2. Verify target reachability and runtime resolution
 
 ```powershell
-go run ./cmd/rpc doctor --context dev-direct
+go run ./cmd/sofarpc doctor --context dev-direct
 ```
 
 `doctor` reports:
@@ -130,7 +120,7 @@ go run ./cmd/rpc doctor --context dev-direct
 Explicit flag form:
 
 ```powershell
-go run ./cmd/rpc call `
+go run ./cmd/sofarpc call `
   --context dev-direct `
   --service com.example.UserService `
   --method getUser `
@@ -141,13 +131,13 @@ go run ./cmd/rpc call `
 Positional shorthand:
 
 ```powershell
-go run ./cmd/rpc call com.example.UserService/getUser "[123]"
+go run ./cmd/sofarpc call com.example.UserService/getUser "[123]"
 ```
 
 Print the full structured response:
 
 ```powershell
-go run ./cmd/rpc call `
+go run ./cmd/sofarpc call `
   --context dev-direct `
   --service com.example.UserService `
   --method getUser `
@@ -226,7 +216,7 @@ Use this for:
 Example:
 
 ```powershell
-go run ./cmd/rpc call `
+go run ./cmd/sofarpc call `
   --context dev-direct `
   --service com.example.UserService `
   --method updateUser `
@@ -257,7 +247,7 @@ Default manifest path:
 Create a starter manifest:
 
 ```powershell
-go run ./cmd/rpc manifest init `
+go run ./cmd/sofarpc manifest init `
   --output sofarpc.manifest.json `
   --service com.example.UserService `
   --method getUser `
@@ -269,7 +259,7 @@ go run ./cmd/rpc manifest init `
 Generate a manifest from an existing context:
 
 ```powershell
-go run ./cmd/rpc manifest generate `
+go run ./cmd/sofarpc manifest generate `
   --context dev-direct `
   --output sofarpc.manifest.json `
   --service com.example.UserService `
@@ -317,31 +307,31 @@ Example manifest:
 List installed runtimes:
 
 ```powershell
-go run ./cmd/rpc runtime list
+go run ./cmd/sofarpc runtime list
 ```
 
 Show one runtime:
 
 ```powershell
-go run ./cmd/rpc runtime show 5.7.6
+go run ./cmd/sofarpc runtime show 5.7.6
 ```
 
 Install from an explicit jar:
 
 ```powershell
-go run ./cmd/rpc runtime install --version 5.7.6 --jar C:\path\to\sofarpc-worker-5.7.6.jar
+go run ./cmd/sofarpc runtime install --version 5.7.6 --jar C:\path\to\sofarpc-worker-5.7.6.jar
 ```
 
 Install from the active runtime source or bundled workspace artifact:
 
 ```powershell
-go run ./cmd/rpc runtime install --version 5.7.6
+go run ./cmd/sofarpc runtime install --version 5.7.6
 ```
 
 Install from a named runtime source:
 
 ```powershell
-go run ./cmd/rpc runtime install --version 5.7.6 --source local-cache
+go run ./cmd/sofarpc runtime install --version 5.7.6 --source local-cache
 ```
 
 ## Runtime Sources
@@ -358,7 +348,7 @@ Supported kinds:
 ### Local file source
 
 ```powershell
-go run ./cmd/rpc runtime source set `
+go run ./cmd/sofarpc runtime source set `
   --kind file `
   --path C:\artifacts\sofarpc-worker-5.7.6.jar `
   local-file
@@ -371,12 +361,11 @@ The directory source looks for these candidate paths:
 - `<base>/sofarpc-worker-<version>.jar`
 - `<base>/<version>/sofarpc-worker-<version>.jar`
 - `<base>/runtime-worker-java/target/sofarpc-worker-<version>.jar`
-- `<base>/greenfield/runtime-worker-java/target/sofarpc-worker-<version>.jar`
 
 Example:
 
 ```powershell
-go run ./cmd/rpc runtime source set `
+go run ./cmd/sofarpc runtime source set `
   --kind directory `
   --path C:\artifacts\sofa-runtimes `
   local-dir
@@ -385,7 +374,7 @@ go run ./cmd/rpc runtime source set `
 ### URL template source
 
 ```powershell
-go run ./cmd/rpc runtime source set `
+go run ./cmd/sofarpc runtime source set `
   --kind url-template `
   --path https://artifacts.example.com/sofa/{version}/sofarpc-worker-{version}.jar `
   --sha256-url https://artifacts.example.com/sofa/{version}/sofarpc-worker-{version}.jar.sha256 `
@@ -397,7 +386,7 @@ go run ./cmd/rpc runtime source set `
 ### Manifest URL source
 
 ```powershell
-go run ./cmd/rpc runtime source set `
+go run ./cmd/sofarpc runtime source set `
   --kind manifest-url `
   --path https://artifacts.example.com/sofa/runtime-manifest.json `
   remote-catalog
@@ -424,11 +413,11 @@ Example runtime source manifest:
 ### Inspect and switch sources
 
 ```powershell
-go run ./cmd/rpc runtime source list
-go run ./cmd/rpc runtime source show
-go run ./cmd/rpc runtime source show remote-template
-go run ./cmd/rpc runtime source use remote-template
-go run ./cmd/rpc runtime source delete remote-template
+go run ./cmd/sofarpc runtime source list
+go run ./cmd/sofarpc runtime source show
+go run ./cmd/sofarpc runtime source show remote-template
+go run ./cmd/sofarpc runtime source use remote-template
+go run ./cmd/sofarpc runtime source delete remote-template
 ```
 
 ### Validate sources without installation
@@ -436,19 +425,19 @@ go run ./cmd/rpc runtime source delete remote-template
 Validate one source:
 
 ```powershell
-go run ./cmd/rpc runtime source validate remote-template --version 5.7.6
+go run ./cmd/sofarpc runtime source validate remote-template --version 5.7.6
 ```
 
 Validate the active source:
 
 ```powershell
-go run ./cmd/rpc runtime source validate --version 5.7.6
+go run ./cmd/sofarpc runtime source validate --version 5.7.6
 ```
 
 Summarize all configured sources for a version:
 
 ```powershell
-go run ./cmd/rpc runtime source list --version 5.7.6
+go run ./cmd/sofarpc runtime source list --version 5.7.6
 ```
 
 Validation reports include:
@@ -465,25 +454,25 @@ Validation reports include:
 List daemons:
 
 ```powershell
-go run ./cmd/rpc daemon list
+go run ./cmd/sofarpc daemon list
 ```
 
 Show one daemon:
 
 ```powershell
-go run ./cmd/rpc daemon show <daemon-key>
+go run ./cmd/sofarpc daemon show <daemon-key>
 ```
 
 Stop one daemon:
 
 ```powershell
-go run ./cmd/rpc daemon stop <daemon-key>
+go run ./cmd/sofarpc daemon stop <daemon-key>
 ```
 
 Remove stale daemon metadata and logs:
 
 ```powershell
-go run ./cmd/rpc daemon prune
+go run ./cmd/sofarpc daemon prune
 ```
 
 ## Local Files and Directories
@@ -493,20 +482,20 @@ The CLI stores local state outside the repo using `os.UserConfigDir()` and
 
 Config files:
 
-- `<configDir>/rpcctl-greenfield/contexts.json`
-- `<configDir>/rpcctl-greenfield/runtime-sources.json`
+- `<configDir>/sofarpc-cli/contexts.json`
+- `<configDir>/sofarpc-cli/runtime-sources.json`
 
 Cache files:
 
-- `<cacheDir>/rpcctl-greenfield/runtimes/<version>/`
-- `<cacheDir>/rpcctl-greenfield/daemons/`
+- `<cacheDir>/sofarpc-cli/runtimes/<version>/`
+- `<cacheDir>/sofarpc-cli/daemons/`
 
 Typical Windows locations:
 
-- `%AppData%\rpcctl-greenfield\contexts.json`
-- `%AppData%\rpcctl-greenfield\runtime-sources.json`
-- `%LocalAppData%\rpcctl-greenfield\runtimes\`
-- `%LocalAppData%\rpcctl-greenfield\daemons\`
+- `%AppData%\sofarpc-cli\contexts.json`
+- `%AppData%\sofarpc-cli\runtime-sources.json`
+- `%LocalAppData%\sofarpc-cli\runtimes\`
+- `%LocalAppData%\sofarpc-cli\daemons\`
 
 ## Notes and Limitations
 
