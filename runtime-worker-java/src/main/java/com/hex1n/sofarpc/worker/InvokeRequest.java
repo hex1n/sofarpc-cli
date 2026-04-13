@@ -1,4 +1,4 @@
-package com.hex1n.rpcctl.greenfield.worker;
+package com.hex1n.sofarpc.worker;
 
 import com.fasterxml.jackson.databind.JsonNode;
 

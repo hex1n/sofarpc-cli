@@ -27,7 +27,7 @@ const (
 	defaultRuntimeVersion = "5.7.6"
 	defaultTimeoutMS      = 3000
 	defaultConnectMS      = 1000
-	mainClass             = "com.hex1n.rpcctl.greenfield.worker.WorkerMain"
+	mainClass             = "com.hex1n.sofarpc.worker.WorkerMain"
 )
 
 type Manager struct {
@@ -460,7 +460,7 @@ func (m *Manager) runtimeVersionDir(version string) string {
 }
 
 func (m *Manager) installedRuntimeJar(version string) string {
-	return filepath.Join(m.runtimeVersionDir(version), "rpc-runtime-worker-sofa-"+version+".jar")
+	return filepath.Join(m.runtimeVersionDir(version), "sofarpc-worker-"+version+".jar")
 }
 
 func (m *Manager) runtimeMetadataFile(version string) string {
@@ -692,12 +692,11 @@ func (m *Manager) bundledRuntimeJarCandidates(version string) []string {
 }
 
 func runtimeJarCandidatesForBase(basePath, version string) []string {
-	jarName := "rpc-runtime-worker-sofa-" + version + ".jar"
+	jarName := "sofarpc-worker-" + version + ".jar"
 	return []string{
 		filepath.Join(basePath, jarName),
 		filepath.Join(basePath, version, jarName),
 		filepath.Join(basePath, "runtime-worker-java", "target", jarName),
-		filepath.Join(basePath, "greenfield", "runtime-worker-java", "target", jarName),
 	}
 }
 
