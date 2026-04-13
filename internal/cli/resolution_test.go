@@ -39,7 +39,7 @@ func TestResolveInvocationPrefersFlagsOverContextAndManifest(t *testing.T) {
 			DirectURL: "bolt://127.0.0.1:12201",
 		},
 	}
-	manifestPath := filepath.Join(cwd, "rpcctl.manifest.json")
+	manifestPath := filepath.Join(cwd, "sofarpc.manifest.json")
 	if err := config.SaveManifest(manifestPath, manifest); err != nil {
 		t.Fatalf("SaveManifest() error = %v", err)
 	}

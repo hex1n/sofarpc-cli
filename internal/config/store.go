@@ -10,7 +10,7 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/model"
 )
 
-const appName = "rpcctl-greenfield"
+const appName = "sofarpc-cli"
 
 type Paths struct {
 	ConfigDir          string
