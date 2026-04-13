@@ -42,6 +42,62 @@ func TestRunCallRejectsMalformedPositionalServiceMethod(t *testing.T) {
 	}
 }
 
+func TestParseServiceMethodDotForm(t *testing.T) {
+	service, method, err := parseServiceMethod("com.example.UserService.getUser")
+	if err != nil {
+		t.Fatalf("parseServiceMethod error = %v", err)
+	}
+	if service != "com.example.UserService" || method != "getUser" {
+		t.Fatalf("got service=%q method=%q", service, method)
+	}
+}
+
+func TestParseServiceMethodSlashFormStillWorks(t *testing.T) {
+	service, method, err := parseServiceMethod("com.example.UserService/getUser")
+	if err != nil {
+		t.Fatalf("parseServiceMethod error = %v", err)
+	}
+	if service != "com.example.UserService" || method != "getUser" {
+		t.Fatalf("got service=%q method=%q", service, method)
+	}
+}
+
+func TestParseServiceMethodRejectsBareToken(t *testing.T) {
+	if _, _, err := parseServiceMethod("Service"); err == nil {
+		t.Fatal("expected error for bare token without dot or slash")
+	}
+}
+
+func TestParseServiceMethodRejectsTrailingSeparator(t *testing.T) {
+	if _, _, err := parseServiceMethod("Service."); err == nil {
+		t.Fatal("expected error for trailing dot")
+	}
+	if _, _, err := parseServiceMethod("Service/"); err == nil {
+		t.Fatal("expected error for trailing slash")
+	}
+}
+
+func TestParseServiceMethodRejectsLeadingSeparator(t *testing.T) {
+	if _, _, err := parseServiceMethod(".getUser"); err == nil {
+		t.Fatal("expected error for leading dot")
+	}
+	if _, _, err := parseServiceMethod("/getUser"); err == nil {
+		t.Fatal("expected error for leading slash")
+	}
+}
+
+func TestRunCallAcceptsDotPositional(t *testing.T) {
+	app := newCallTestApp(t)
+	err := app.runCall([]string{
+		"--direct-url", "bolt://127.0.0.1:12200",
+		"com.example.Svc.ping",
+		"still-not-json",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--args must be valid JSON") {
+		t.Fatalf("expected dot-form positional to flow through args validation, got %v", err)
+	}
+}
+
 func TestRunCallRejectsInvalidArgsJSON(t *testing.T) {
 	app := newCallTestApp(t)
 	err := app.runCall([]string{

@@ -170,10 +170,10 @@ go run ./cmd/sofarpc call `
   --args "[123]"
 ```
 
-位置参数简写：
+位置参数简写（`<fqcn>.<method>`；旧的 `Service/method` 斜杠形式仍兼容）：
 
 ```powershell
-go run ./cmd/sofarpc call com.example.UserService/getUser "[123]"
+go run ./cmd/sofarpc call com.example.UserService.getUser "[123]"
 ```
 
 打印完整结构化响应：
@@ -206,7 +206,7 @@ go run ./cmd/sofarpc call `
 一个 `Long` 入参，位置参数形式：
 
 ```powershell
-sofarpc call com.example.UserService/getUser "[123]"
+sofarpc call com.example.UserService.getUser "[123]"
 ```
 
 显式 flag 等价写法 — 当 paramType 不能从 JSON 推断出来时更稳：
