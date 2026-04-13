@@ -165,23 +165,9 @@ type RuntimeSource struct {
 	Path string `json:"path,omitempty"`
 }
 
-type RuntimeSourceValidation struct {
-	Name              string `json:"name"`
-	Kind              string `json:"kind"`
-	Version           string `json:"version"`
-	Active            bool   `json:"active"`
-	OK                bool   `json:"ok"`
-	VersionDefined    bool   `json:"versionDefined"`
-	ArtifactReachable bool   `json:"artifactReachable"`
-	ResolvedPath      string `json:"resolvedPath,omitempty"`
-	Error             string `json:"error,omitempty"`
-}
-
 type RuntimeSourceListReport struct {
-	Active      string                    `json:"active,omitempty"`
-	Version     string                    `json:"version,omitempty"`
-	Sources     map[string]RuntimeSource  `json:"sources,omitempty"`
-	Validations []RuntimeSourceValidation `json:"validations,omitempty"`
+	Active  string                   `json:"active,omitempty"`
+	Sources map[string]RuntimeSource `json:"sources,omitempty"`
 }
 
 type DoctorReport struct {

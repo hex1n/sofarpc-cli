@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
@@ -70,7 +69,7 @@ func (a *App) runRuntimeInstall(args []string) error {
 
 func (a *App) runRuntimeSource(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("runtime source subcommand required: list, show, set, validate, use, delete")
+		return fmt.Errorf("runtime source subcommand required: list, show, set, use, delete")
 	}
 	switch args[0] {
 	case "list":
@@ -79,8 +78,6 @@ func (a *App) runRuntimeSource(args []string) error {
 		return a.runRuntimeSourceShow(args[1:])
 	case "set":
 		return a.runRuntimeSourceSet(args[1:])
-	case "validate":
-		return a.runRuntimeSourceValidate(args[1:])
 	case "use":
 		return a.runRuntimeSourceUse(args[1:])
 	case "delete":
@@ -92,8 +89,6 @@ func (a *App) runRuntimeSource(args []string) error {
 
 func (a *App) runRuntimeSourceList(args []string) error {
 	flags := failFlagSet("runtime source list")
-	version := ""
-	flags.StringVar(&version, "version", "", "optional SOFARPC runtime version to validate all sources against")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -101,32 +96,10 @@ func (a *App) runRuntimeSourceList(args []string) error {
 	if err != nil {
 		return err
 	}
-	report := model.RuntimeSourceListReport{
+	return printJSON(a.Stdout, model.RuntimeSourceListReport{
 		Active:  store.Active,
-		Version: version,
 		Sources: store.Sources,
-	}
-	if strings.TrimSpace(version) != "" {
-		names := make([]string, 0, len(store.Sources))
-		for name := range store.Sources {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		report.Validations = make([]model.RuntimeSourceValidation, 0, len(names))
-		for _, name := range names {
-			validation, err := a.Runtime.ValidateRuntimeSource(version, name)
-			if err != nil {
-				validation = model.RuntimeSourceValidation{
-					Name:    name,
-					Version: version,
-					OK:      false,
-					Error:   err.Error(),
-				}
-			}
-			report.Validations = append(report.Validations, validation)
-		}
-	}
-	return printJSON(a.Stdout, report)
+	})
 }
 
 func (a *App) runRuntimeSourceShow(args []string) error {
@@ -188,43 +161,6 @@ func (a *App) runRuntimeSourceSet(args []string) error {
 		return err
 	}
 	return printJSON(a.Stdout, store.Sources[name])
-}
-
-func (a *App) runRuntimeSourceValidate(args []string) error {
-	flags := failFlagSet("runtime source validate")
-	version := defaultSofaRPCVersion
-	flags.StringVar(&version, "version", version, "SOFARPC runtime version")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	positionals := flags.Args()
-	if len(positionals) > 1 {
-		return fmt.Errorf("runtime source validate accepts at most one source name")
-	}
-	sourceName := ""
-	if len(positionals) == 1 {
-		sourceName = positionals[0]
-	} else {
-		store, err := config.LoadRuntimeSourceStore(a.Paths)
-		if err != nil {
-			return err
-		}
-		sourceName = store.Active
-		if strings.TrimSpace(sourceName) == "" {
-			return fmt.Errorf("runtime source validate requires a source name when no active source is set")
-		}
-	}
-	validation, err := a.Runtime.ValidateRuntimeSource(version, sourceName)
-	if err != nil {
-		return err
-	}
-	if err := printJSON(a.Stdout, validation); err != nil {
-		return err
-	}
-	if validation.OK {
-		return nil
-	}
-	return &exitError{silent: true}
 }
 
 func (a *App) runRuntimeSourceUse(args []string) error {

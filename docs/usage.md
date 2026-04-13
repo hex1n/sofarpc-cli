@@ -28,7 +28,6 @@ Current runtime features:
 - target modes: `direct`, `registry`
 - local runtime install and cache
 - runtime sources: `file`, `directory`
-- runtime source validation without installation
 - local daemon inspection and cleanup
 
 ## Repo Layout
@@ -379,33 +378,6 @@ go run ./cmd/sofarpc runtime source use local-dir
 go run ./cmd/sofarpc runtime source delete local-dir
 ```
 
-### Validate sources without installation
-
-Validate one source:
-
-```powershell
-go run ./cmd/sofarpc runtime source validate local-dir --version 5.7.6
-```
-
-Validate the active source:
-
-```powershell
-go run ./cmd/sofarpc runtime source validate --version 5.7.6
-```
-
-Summarize all configured sources for a version:
-
-```powershell
-go run ./cmd/sofarpc runtime source list --version 5.7.6
-```
-
-Validation reports include:
-
-- whether the source defines the requested version
-- whether the artifact is reachable on disk
-
-`runtime source validate` exits `0` on success and `1` on validation failure after printing the JSON report.
-
 ## Daemon Management
 
 List daemons:
@@ -459,5 +431,4 @@ Typical Windows locations:
 - The current default runtime version is `5.7.6`
 - `doctor` validates target and runtime reachability; it does not invoke your real business method
 - `call` defaults to printing only the decoded `result`; use `--full-response` for diagnostics
-- runtime source validation is read-only; it does not populate the runtime cache
 - no release packaging is documented here yet; current usage is source build plus `go run` or a locally built binary

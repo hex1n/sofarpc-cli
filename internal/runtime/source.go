@@ -72,35 +72,6 @@ func (m *Manager) resolveNamedRuntimeSource(version, sourceName string) (install
 	return m.resolveSourceRecord(version, sourceName, source, false)
 }
 
-func (m *Manager) ValidateRuntimeSource(version, sourceName string) (model.RuntimeSourceValidation, error) {
-	store, err := config.LoadRuntimeSourceStore(m.Paths)
-	if err != nil {
-		return model.RuntimeSourceValidation{}, err
-	}
-	source, ok := store.Sources[sourceName]
-	if !ok {
-		return model.RuntimeSourceValidation{}, fmt.Errorf("runtime source %q does not exist", sourceName)
-	}
-	if source.Name == "" {
-		source.Name = sourceName
-	}
-	validation := model.RuntimeSourceValidation{
-		Name:    source.Name,
-		Kind:    source.Kind,
-		Version: version,
-		Active:  sourceName == store.Active,
-	}
-	switch source.Kind {
-	case "file":
-		return m.validateFileRuntimeSource(source, validation), nil
-	case "directory":
-		return m.validateDirectoryRuntimeSource(version, source, validation), nil
-	default:
-		validation.Error = fmt.Sprintf("runtime source %q uses unsupported kind %q", source.Name, source.Kind)
-		return validation, nil
-	}
-}
-
 func (m *Manager) resolveSourceRecord(version, sourceName string, source model.RuntimeSource, active bool) (installSource, error) {
 	if source.Name == "" {
 		source.Name = sourceName
@@ -134,38 +105,3 @@ func (m *Manager) resolveSourceRecord(version, sourceName string, source model.R
 	}
 }
 
-func (m *Manager) validateFileRuntimeSource(source model.RuntimeSource, validation model.RuntimeSourceValidation) model.RuntimeSourceValidation {
-	jarPath, err := filepath.Abs(source.Path)
-	if err != nil {
-		validation.Error = err.Error()
-		return validation
-	}
-	validation.ResolvedPath = jarPath
-	validation.VersionDefined = true
-	if _, err := os.Stat(jarPath); err != nil {
-		validation.Error = err.Error()
-		return validation
-	}
-	validation.ArtifactReachable = true
-	validation.OK = true
-	return validation
-}
-
-func (m *Manager) validateDirectoryRuntimeSource(version string, source model.RuntimeSource, validation model.RuntimeSourceValidation) model.RuntimeSourceValidation {
-	basePath, err := filepath.Abs(source.Path)
-	if err != nil {
-		validation.Error = err.Error()
-		return validation
-	}
-	for _, candidate := range runtimeJarCandidatesForBase(basePath, version) {
-		if _, err := os.Stat(candidate); err == nil {
-			validation.VersionDefined = true
-			validation.ArtifactReachable = true
-			validation.ResolvedPath = candidate
-			validation.OK = true
-			return validation
-		}
-	}
-	validation.Error = fmt.Sprintf("runtime source %q does not provide runtime %q", source.Name, version)
-	return validation
-}
