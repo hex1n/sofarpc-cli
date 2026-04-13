@@ -27,11 +27,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: greenfield/go.mod
+          go-version-file: go.mod
 
       - name: Test Go CLI
-        working-directory: greenfield
         run: go test ./...
 
       - name: Test Java worker
-        run: mvn -B -f greenfield/runtime-worker-java/pom.xml test
+        run: mvn -B -f runtime-worker-java/pom.xml test
