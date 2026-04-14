@@ -6,7 +6,7 @@
 
 - **Go** —— CLI 控制面、daemon 生命周期、runtime 缓存。冷启动快、
   Windows 子进程语义干净、单文件二进制分发。
-- **Java** —— 随目标版本对齐的 SOFARPC worker runtime，以及基于 Spoon 的 facade 语义索引器。
+- **Java** —— 随目标版本对齐的 SOFARPC worker runtime，以及基于 Spoon 的 facade 索引器。
 
 入口文档：
 
