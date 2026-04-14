@@ -46,6 +46,7 @@ type Context struct {
 	UniqueID         string `json:"uniqueId,omitempty"`
 	TimeoutMS        int    `json:"timeoutMs,omitempty"`
 	ConnectTimeoutMS int    `json:"connectTimeoutMs,omitempty"`
+	ProjectRoot      string `json:"projectRoot,omitempty"`
 }
 
 type TargetConfig struct {

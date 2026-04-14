@@ -1,6 +1,8 @@
 package config
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -68,5 +70,30 @@ func TestSaveAndLoadRuntimeSourceStore(t *testing.T) {
 	}
 	if loaded.Sources["workspace"].Path != "C:\\work\\runtimes" {
 		t.Fatalf("unexpected source path %q", loaded.Sources["workspace"].Path)
+	}
+}
+
+func TestEnsureContextTemplateCreatesDefaultTemplate(t *testing.T) {
+	tempDir := t.TempDir()
+	paths := Paths{
+		ConfigDir:           tempDir,
+		CacheDir:            t.TempDir(),
+		ContextsFile:        filepath.Join(tempDir, "contexts.json"),
+		RuntimeSourcesFile:  filepath.Join(tempDir, "runtime-sources.json"),
+		ContextTemplateFile: filepath.Join(tempDir, "contexts.template.json"),
+	}
+	if err := EnsureContextTemplate(paths); err != nil {
+		t.Fatalf("EnsureContextTemplate() error = %v", err)
+	}
+	body, err := os.ReadFile(paths.ContextTemplateFile)
+	if err != nil {
+		t.Fatalf("read context template: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal template JSON: %v", err)
+	}
+	if _, ok := payload["contexts"]; !ok {
+		t.Fatalf("expected contexts key in template")
 	}
 }

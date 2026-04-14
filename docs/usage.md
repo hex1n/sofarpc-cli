@@ -184,6 +184,15 @@ go run ./cmd/sofarpc context set dev-zk `
   --serialization hessian2
 ```
 
+Project-scoped context (automatic selection when calling from that project):
+
+```powershell
+go run ./cmd/sofarpc context set project-a `
+  --project-root C:\code\project-a `
+  --direct-url bolt://127.0.0.1:12200 `
+  --protocol bolt
+```
+
 Switch active context:
 
 ```powershell
@@ -363,6 +372,7 @@ Built-in defaults:
 
 - `--context`
 - `manifest.defaultContext`
+- project-scoped context matched by current project root (when neither flag nor manifest context is set)
 - active local context
 
 ### SOFARPC runtime version precedence
@@ -375,6 +385,7 @@ Built-in defaults:
 
 - `--stub-path`
 - `manifest.stubPaths`
+- auto-discovered jars from `<project>/.sofarpc/config.json` (`jarGlob` and `depsDir`)
 
 ### Method metadata precedence
 
@@ -621,7 +632,13 @@ The CLI stores local state outside the repo using `os.UserConfigDir()` and
 Config files:
 
 - `<configDir>/sofarpc-cli/contexts.json`
+- `<configDir>/sofarpc-cli/contexts.template.json`
 - `<configDir>/sofarpc-cli/runtime-sources.json`
+
+Quick bootstrap:
+
+- `sofarpc skills install` prints `contexts.template.json` path.
+- copy the template to `contexts.json`, fill your project entries, and keep multiple contexts in one file (with optional `projectRoot`).
 
 Cache files:
 
@@ -632,6 +649,7 @@ Cache files:
 Typical Windows locations:
 
 - `%AppData%\sofarpc-cli\contexts.json`
+- `%AppData%\sofarpc-cli\contexts.template.json`
 - `%AppData%\sofarpc-cli\runtime-sources.json`
 - `%LocalAppData%\sofarpc-cli\runtimes\`
 - `%LocalAppData%\sofarpc-cli\daemons\`

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
 	"github.com/hex1n/sofarpc-cli/internal/model"
@@ -36,6 +37,7 @@ func (a *App) runContextSet(args []string) error {
 	flags.StringVar(&contextValue.Protocol, "protocol", "bolt", "SOFARPC protocol")
 	flags.StringVar(&contextValue.Serialization, "serialization", "hessian2", "serialization")
 	flags.StringVar(&contextValue.UniqueID, "unique-id", "", "service uniqueId")
+	flags.StringVar(&contextValue.ProjectRoot, "project-root", "", "optional project root for automatic context matching")
 	flags.IntVar(&contextValue.TimeoutMS, "timeout-ms", 3000, "invoke timeout in milliseconds")
 	flags.IntVar(&contextValue.ConnectTimeoutMS, "connect-timeout-ms", 1000, "connect timeout in milliseconds")
 	if err := flags.Parse(args); err != nil {
@@ -46,6 +48,11 @@ func (a *App) runContextSet(args []string) error {
 		return fmt.Errorf("context set requires a single context name")
 	}
 	contextValue.Name = positionals[0]
+	if contextValue.ProjectRoot != "" {
+		if abs, err := filepath.Abs(contextValue.ProjectRoot); err == nil {
+			contextValue.ProjectRoot = abs
+		}
+	}
 	switch {
 	case contextValue.DirectURL != "":
 		contextValue.Mode = model.ModeDirect
