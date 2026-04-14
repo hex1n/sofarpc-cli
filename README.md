@@ -6,10 +6,7 @@ Architecture (deliberately polyglot, each language kept to what it does best):
 
 - **Go** — CLI control plane, daemon lifecycle, runtime cache. Fast cold
   start, clean Windows subprocess semantics, single-binary distribution.
-- **Java** — SOFARPC worker runtime, version-matched to the target.
-- **`sofarpc_cli` Python package** — shared helpers for the bundled
-  Claude Code skills and user-written scripts. Not a planned replacement
-  for the Go CLI.
+- **Java** — SOFARPC worker runtime plus the Spoon-based facade indexer.
 
 Start here:
 
@@ -41,11 +38,9 @@ sofarpc skills install          # copies skills/call-rpc -> ~/.claude/skills/
 sofarpc skills where            # show source / target paths
 ```
 
-Per-project state lives primarily at `<project>/.sofarpc/`; legacy projects may
-still resolve to `<project>/.claude/rpc-test/`. The Python helpers under the
-skill import from the `sofarpc_cli` package — the shared Python library; when
-the CLI is on `PATH` or `SOFARPC_HOME` is set, the install automatically writes
-a pointer so no extra pip step is required.
+Per-project state lives at `<project>/.sofarpc/` only.
+`detect-config`, `build-index`, `schema`, and `run-cases` execute directly in the
+Go CLI; no Python runtime is required.
 
 For full usage, examples, manifest format, runtime source management, and
 diagnostics, see [docs/usage.md](./docs/usage.md).

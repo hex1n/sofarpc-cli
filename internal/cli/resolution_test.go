@@ -87,3 +87,130 @@ func TestResolveSofaRPCVersionAttribution(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveInvocationPrefersServiceUniqueIDOverContextAndManifestDefault(t *testing.T) {
+	cwd := t.TempDir()
+	configDir := t.TempDir()
+	paths := config.Paths{
+		ConfigDir:          configDir,
+		CacheDir:           t.TempDir(),
+		ContextsFile:       filepath.Join(configDir, "contexts.json"),
+		RuntimeSourcesFile: filepath.Join(configDir, "runtime-sources.json"),
+	}
+	store := model.ContextStore{
+		Active: "dev",
+		Contexts: map[string]model.Context{
+			"dev": {
+				Name:      "dev",
+				Mode:      model.ModeDirect,
+				DirectURL: "bolt://127.0.0.1:12200",
+				UniqueID:  "context-uid",
+			},
+		},
+	}
+	if err := config.SaveContextStore(paths, store); err != nil {
+		t.Fatalf("SaveContextStore() error = %v", err)
+	}
+	manifest := model.Manifest{
+		SchemaVersion:  "v1alpha1",
+		SofaRPCVersion: defaultSofaRPCVersion,
+		DefaultTarget: model.TargetConfig{
+			Mode:      model.ModeDirect,
+			DirectURL: "bolt://127.0.0.1:12201",
+			UniqueID:  "manifest-uid",
+		},
+		Services: map[string]model.ServiceConfig{
+			"com.example.UserService": {
+				UniqueID: "service-uid",
+				Methods: map[string]model.MethodConfig{
+					"getUser": {},
+				},
+			},
+		},
+	}
+	manifestPath := filepath.Join(cwd, "sofarpc.manifest.json")
+	if err := config.SaveManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("SaveManifest() error = %v", err)
+	}
+	app := &App{
+		Cwd:     cwd,
+		Paths:   paths,
+		Runtime: runtime.NewManager(paths, cwd),
+	}
+	resolved, err := app.resolveInvocation(invocationInputs{
+		ManifestPath: manifestPath,
+		Service:      "com.example.UserService",
+		Method:       "getUser",
+		ArgsJSON:     "[]",
+	})
+	if err != nil {
+		t.Fatalf("resolveInvocation() error = %v", err)
+	}
+	if got := resolved.Request.Target.UniqueID; got != "service-uid" {
+		t.Fatalf("expected service uniqueId to win, got %q", got)
+	}
+}
+
+func TestResolveInvocationPrefersFlagUniqueIDOverServiceUniqueID(t *testing.T) {
+	cwd := t.TempDir()
+	configDir := t.TempDir()
+	paths := config.Paths{
+		ConfigDir:          configDir,
+		CacheDir:           t.TempDir(),
+		ContextsFile:       filepath.Join(configDir, "contexts.json"),
+		RuntimeSourcesFile: filepath.Join(configDir, "runtime-sources.json"),
+	}
+	store := model.ContextStore{
+		Active: "dev",
+		Contexts: map[string]model.Context{
+			"dev": {
+				Name:      "dev",
+				Mode:      model.ModeDirect,
+				DirectURL: "bolt://127.0.0.1:12200",
+				UniqueID:  "context-uid",
+			},
+		},
+	}
+	if err := config.SaveContextStore(paths, store); err != nil {
+		t.Fatalf("SaveContextStore() error = %v", err)
+	}
+	manifest := model.Manifest{
+		SchemaVersion:  "v1alpha1",
+		SofaRPCVersion: defaultSofaRPCVersion,
+		DefaultTarget: model.TargetConfig{
+			Mode:      model.ModeDirect,
+			DirectURL: "bolt://127.0.0.1:12201",
+			UniqueID:  "manifest-uid",
+		},
+		Services: map[string]model.ServiceConfig{
+			"com.example.UserService": {
+				UniqueID: "service-uid",
+				Methods: map[string]model.MethodConfig{
+					"getUser": {},
+				},
+			},
+		},
+	}
+	manifestPath := filepath.Join(cwd, "sofarpc.manifest.json")
+	if err := config.SaveManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("SaveManifest() error = %v", err)
+	}
+	app := &App{
+		Cwd:     cwd,
+		Paths:   paths,
+		Runtime: runtime.NewManager(paths, cwd),
+	}
+	resolved, err := app.resolveInvocation(invocationInputs{
+		ManifestPath: manifestPath,
+		Service:      "com.example.UserService",
+		Method:       "getUser",
+		ArgsJSON:     "[]",
+		UniqueID:     "flag-uid",
+	})
+	if err != nil {
+		t.Fatalf("resolveInvocation() error = %v", err)
+	}
+	if got := resolved.Request.Target.UniqueID; got != "flag-uid" {
+		t.Fatalf("expected flag uniqueId to win, got %q", got)
+	}
+}

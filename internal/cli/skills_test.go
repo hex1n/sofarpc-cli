@@ -13,9 +13,6 @@ func TestCanonicalBundledSkillName(t *testing.T) {
 	}{
 		{"", callRPCSkillName, false},
 		{callRPCSkillName, callRPCSkillName, false},
-		{callFacadeSkillAlias, callRPCSkillName, true},
-		{invokeFacadeSkillAlias, callRPCSkillName, true},
-		{rpcTestSkillAlias, callRPCSkillName, true},
 		{"custom-skill", "custom-skill", false},
 	}
 	for _, tc := range tests {
@@ -27,7 +24,7 @@ func TestCanonicalBundledSkillName(t *testing.T) {
 }
 
 func TestBundledSkillNameCandidates(t *testing.T) {
-	if got := bundledSkillNameCandidates(rpcTestSkillAlias); !reflect.DeepEqual(got, []string{callRPCSkillName, callFacadeSkillAlias, invokeFacadeSkillAlias, rpcTestSkillAlias}) {
+	if got := bundledSkillNameCandidates(callRPCSkillName); !reflect.DeepEqual(got, []string{callRPCSkillName}) {
 		t.Fatalf("unexpected alias candidates: %v", got)
 	}
 	if got := bundledSkillNameCandidates("custom-skill"); !reflect.DeepEqual(got, []string{"custom-skill"}) {
@@ -36,15 +33,6 @@ func TestBundledSkillNameCandidates(t *testing.T) {
 }
 
 func TestShouldListBundledSkillDir(t *testing.T) {
-	if shouldListBundledSkillDir(rpcTestSkillAlias) {
-		t.Fatal("legacy alias dir should be hidden from `skills list`")
-	}
-	if shouldListBundledSkillDir(callFacadeSkillAlias) {
-		t.Fatal("deprecated alias dir should be hidden from `skills list`")
-	}
-	if shouldListBundledSkillDir(invokeFacadeSkillAlias) {
-		t.Fatal("deprecated alias dir should be hidden from `skills list`")
-	}
 	if !shouldListBundledSkillDir(callRPCSkillName) {
 		t.Fatal("canonical skill dir should be listed")
 	}

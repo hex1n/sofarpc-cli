@@ -38,19 +38,19 @@ allowed-tools: Read Grep Glob Bash Write Agent
 先跑：
 
 ```bash
-sofarpc rpc-test where [--project <path>]
+sofarpc facade where [--project <path>]
 ```
 
 这一步用来确认：
-- tools / python 是否可用
+- `call-rpc` skill 与 `sofarpc facade` 是否可用
 - 当前 project root 是什么
-- 当前生效的 state layout 是 `.sofarpc` 还是 legacy
+- 当前生效的 state layout 是 `.sofarpc`
 - `config.json` / `index/` / `cases/` 实际落在哪
 
 如果项目还没接入，再跑：
 
 ```bash
-sofarpc rpc-test init [--project <path>]
+sofarpc facade init [--project <path>]
 ```
 
 ## 默认工作流

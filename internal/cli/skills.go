@@ -6,17 +6,13 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 )
 
 const (
-	callRPCSkillName       = "call-rpc"
-	callFacadeSkillAlias   = "call-facade"
-	invokeFacadeSkillAlias = "invoke-facade"
-	rpcTestSkillAlias      = "rpc-test"
+	callRPCSkillName = "call-rpc"
 )
 
 // runSkills dispatches `sofarpc skills <sub>`.
@@ -57,10 +53,9 @@ func (a *App) runSkillsInstall(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	requestedName := strings.TrimSpace(name)
-	name, aliased := canonicalBundledSkillName(name)
-	if aliased {
-		fmt.Fprintf(a.Stdout, "note: %q is a deprecated alias; installing %q\n", requestedName, name)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = callRPCSkillName
 	}
 
 	src, err := skillsSourceDir()
@@ -113,10 +108,6 @@ func (a *App) runSkillsInstall(args []string) error {
 		if err != nil {
 			return err
 		}
-		marker := filepath.Join(t.dest, "tools", ".sofarpc_install_root")
-		if err := os.WriteFile(marker, []byte(installRoot+"\n"), 0o644); err != nil {
-			return fmt.Errorf("write install-root marker at %s: %w", marker, err)
-		}
 		fmt.Fprintf(a.Stdout, "installed %d files -> %s\n", copied, t.dest)
 	}
 	if !skipShim {
@@ -124,7 +115,7 @@ func (a *App) runSkillsInstall(args []string) error {
 			fmt.Fprintf(a.Stdout, "warning: failed to write user shim: %v\n", err)
 		}
 	}
-	fmt.Fprintf(a.Stdout, "next: sofarpc rpc-test init   (run from your project root)\n")
+	fmt.Fprintf(a.Stdout, "next: sofarpc facade init   (run from your project root)\n")
 	return nil
 }
 
@@ -258,10 +249,9 @@ func (a *App) runSkillsInit(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	requestedName := strings.TrimSpace(name)
-	name, aliased := canonicalBundledSkillName(name)
-	if aliased {
-		fmt.Fprintf(a.Stdout, "note: %q is a deprecated alias; using %q\n", requestedName, name)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = callRPCSkillName
 	}
 
 	if project == "" {
@@ -291,21 +281,11 @@ func (a *App) runSkillsInit(args []string) error {
 	}
 	fmt.Fprintf(a.Stdout, "skill present: %s (%s)\n", dstSkill, foundLabel)
 
-	python, err := findPython()
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(a.Stdout, "python: %s\n", python)
-
 	if skipDetect {
 		fmt.Fprintln(a.Stdout, "\n[1/2] detect_config — skipped (--skip-detect-config)")
 	} else {
-		detect := filepath.Join(dstSkill, "tools", "detect_config.py")
-		if _, err := os.Stat(detect); err != nil {
-			return fmt.Errorf("detect_config.py not found at %s", detect)
-		}
 		fmt.Fprintln(a.Stdout, "\n[1/2] detect_config --write")
-		if err := a.runPython(python, detect, []string{"--write"}, project); err != nil {
+		if err := a.runRPCTestDetectConfig([]string{"--project", project, "--write"}); err != nil {
 			return fmt.Errorf("detect_config: %w", err)
 		}
 	}
@@ -318,59 +298,21 @@ func (a *App) runSkillsInit(args []string) error {
 		return nil
 	}
 
-	build := filepath.Join(dstSkill, "tools", "build_index.py")
-	if _, err := os.Stat(build); err != nil {
-		return fmt.Errorf("build_index.py not found at %s", build)
-	}
 	fmt.Fprintln(a.Stdout, "\n[2/2] build_index")
-	if err := a.runPython(python, build, nil, project); err != nil {
+	if err := a.runRPCTestBuildIndex([]string{"--project", project}); err != nil {
 		return fmt.Errorf("build_index: %w", err)
 	}
 	fmt.Fprintln(a.Stdout, "\ndone.")
 	return nil
 }
 
-func (a *App) runPython(python, script string, args []string, cwd string) error {
-	fullArgs := append([]string{script}, args...)
-	cmd := exec.Command(python, fullArgs...)
-	cmd.Dir = cwd
-	cmd.Stdout = a.Stdout
-	cmd.Stderr = a.Stderr
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, entry := range os.Environ() {
-		parts := strings.SplitN(entry, "=", 2)
-		if len(parts) > 0 && strings.EqualFold(parts[0], "SOFARPC_PROJECT_ROOT") {
-			continue
-		}
-		env = append(env, entry)
-	}
-	env = append(env, "SOFARPC_PROJECT_ROOT="+cwd)
-	cmd.Env = env
-	return cmd.Run()
-}
-
-func findPython() (string, error) {
-	candidates := []string{"python3", "python"}
-	if runtime.GOOS == "windows" {
-		candidates = []string{"python", "python3", "py"}
-	}
-	for _, cand := range candidates {
-		if p, err := exec.LookPath(cand); err == nil {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("no python interpreter found on PATH (tried: %s)", strings.Join(candidates, ", "))
-}
-
-// preflightFacadeArtifacts reads the project's config.json (primary or legacy
-// location) and warns about facade modules whose jar or depsDir is missing.
+// preflightFacadeArtifacts reads the project's primary config.json and warns about
+// facade modules whose jar or depsDir is missing.
 // Non-fatal: build_index tolerates missing jars (it uses sourceRoot), but
 // invoke-time will need them.
 func preflightFacadeArtifacts(stdout io.Writer, project string) {
 	candidates := []string{
 		filepath.Join(project, ".sofarpc", "config.json"),
-		filepath.Join(project, ".claude", "rpc-test", "config.json"),
-		filepath.Join(project, ".claude", "skills", "rpc-test", "config.json"),
 	}
 	var raw []byte
 	var err error
@@ -460,9 +402,7 @@ func (a *App) runSkillsWhere(args []string) error {
 	return nil
 }
 
-// locateInstalledSkill returns the directory + label of whichever layout has
-// the named skill installed, preferring Claude (legacy default) for backward
-// compatibility with existing users.
+// locateInstalledSkill returns the directory + label of the installed skill.
 func locateInstalledSkill(name string) (string, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -519,38 +459,27 @@ func (a *App) runSkillsList(args []string) error {
 
 func canonicalBundledSkillName(name string) (string, bool) {
 	trimmed := strings.TrimSpace(name)
-	switch strings.ToLower(trimmed) {
-	case "", callRPCSkillName:
+	if trimmed == "" {
 		return callRPCSkillName, false
-	case callFacadeSkillAlias, invokeFacadeSkillAlias, rpcTestSkillAlias:
-		return callRPCSkillName, true
-	default:
-		return trimmed, false
 	}
+	return trimmed, false
 }
 
 func bundledSkillNameCandidates(name string) []string {
 	canonical, _ := canonicalBundledSkillName(name)
-	if canonical == callRPCSkillName {
-		return []string{callRPCSkillName, callFacadeSkillAlias, invokeFacadeSkillAlias, rpcTestSkillAlias}
-	}
 	return []string{canonical}
 }
 
 func shouldListBundledSkillDir(name string) bool {
-	switch name {
-	case callFacadeSkillAlias, invokeFacadeSkillAlias, rpcTestSkillAlias:
-		return false
-	default:
-		return true
-	}
+	return !strings.HasPrefix(name, ".")
 }
 
 // skillsSourceDir returns the `<install_root>/skills` directory that ships
 // with the CLI. Resolution order:
 //  1. env SOFARPC_HOME/skills
 //  2. <dir-of-executable>/../skills
-//  3. error
+//  3. walk up from cwd (source checkout)
+//  4. error
 func skillsSourceDir() (string, error) {
 	if home := strings.TrimSpace(os.Getenv("SOFARPC_HOME")); home != "" {
 		cand := filepath.Join(home, "skills")
@@ -565,6 +494,20 @@ func skillsSourceDir() (string, error) {
 		cand := filepath.Join(installRoot, "skills")
 		if info, err := os.Stat(cand); err == nil && info.IsDir() {
 			return cand, nil
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		cur := filepath.Clean(cwd)
+		for {
+			cand := filepath.Join(cur, "skills")
+			if info, err := os.Stat(cand); err == nil && info.IsDir() {
+				return cand, nil
+			}
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
 		}
 	}
 	return "", fmt.Errorf("cannot locate bundled skills/ directory — set SOFARPC_HOME to the CLI install root")

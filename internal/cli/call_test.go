@@ -37,9 +37,9 @@ func TestRunCallRejectsMalformedPositionalServiceMethod(t *testing.T) {
 	app := newCallTestApp(t)
 	err := app.runCall([]string{"not-a-service", "[]"})
 	if err == nil {
-		t.Fatal("expected error for positional without service/method slash")
+		t.Fatal("expected error for positional without service.method")
 	}
-	if !strings.Contains(err.Error(), "service/method") {
+	if !strings.Contains(err.Error(), "service.method") {
 		t.Fatalf("expected parseServiceMethod error, got %v", err)
 	}
 }
@@ -54,19 +54,15 @@ func TestParseServiceMethodDotForm(t *testing.T) {
 	}
 }
 
-func TestParseServiceMethodSlashFormStillWorks(t *testing.T) {
-	service, method, err := parseServiceMethod("com.example.UserService/getUser")
-	if err != nil {
-		t.Fatalf("parseServiceMethod error = %v", err)
-	}
-	if service != "com.example.UserService" || method != "getUser" {
-		t.Fatalf("got service=%q method=%q", service, method)
+func TestParseServiceMethodSlashFormRejected(t *testing.T) {
+	if _, _, err := parseServiceMethod("com.example.UserService/getUser"); err == nil {
+		t.Fatal("expected slash form to be rejected")
 	}
 }
 
 func TestParseServiceMethodRejectsBareToken(t *testing.T) {
 	if _, _, err := parseServiceMethod("Service"); err == nil {
-		t.Fatal("expected error for bare token without dot or slash")
+		t.Fatal("expected error for bare token without dot")
 	}
 }
 
@@ -75,7 +71,7 @@ func TestParseServiceMethodRejectsTrailingSeparator(t *testing.T) {
 		t.Fatal("expected error for trailing dot")
 	}
 	if _, _, err := parseServiceMethod("Service/"); err == nil {
-		t.Fatal("expected error for trailing slash")
+		t.Fatal("expected error for invalid slash separator")
 	}
 }
 
@@ -84,7 +80,7 @@ func TestParseServiceMethodRejectsLeadingSeparator(t *testing.T) {
 		t.Fatal("expected error for leading dot")
 	}
 	if _, _, err := parseServiceMethod("/getUser"); err == nil {
-		t.Fatal("expected error for leading slash")
+		t.Fatal("expected error for leading separator")
 	}
 }
 
@@ -128,7 +124,7 @@ func TestRunCallUsesPositionalArgsJSON(t *testing.T) {
 	app := newCallTestApp(t)
 	err := app.runCall([]string{
 		"--direct-url", "bolt://127.0.0.1:12200",
-		"com.example.Svc/ping",
+		"com.example.Svc.ping",
 		"still-not-json",
 	})
 	if err == nil || !strings.Contains(err.Error(), "--args must be valid JSON") {

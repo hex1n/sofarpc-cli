@@ -152,8 +152,8 @@ sofarpc call -context <ctx> -payload-mode schema -data @.rpc-tmp-demo.json <FQN>
 批量回放：
 
 ```bash
-sofarpc rpc-test run-cases
-sofarpc rpc-test run-cases --filter <substr>
-sofarpc rpc-test run-cases --dry-run
-sofarpc rpc-test run-cases --save
+sofarpc facade run-cases
+sofarpc facade run-cases --filter <substr>
+sofarpc facade run-cases --dry-run
+sofarpc facade run-cases --save
 ```

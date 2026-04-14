@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public final class WorkerMain {
-    private static final String RUNTIME_VERSION = "5.7.6";
+    private static final String RUNTIME_VERSION = RuntimeMetadata.runtimeVersion();
     private static final String PROTOCOL_VERSION = "v1";
     private final ObjectMapper mapper = WorkerMappers.create();
     private final SofaInvokeService invokeService = new SofaInvokeService(mapper);

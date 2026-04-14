@@ -39,7 +39,8 @@ Current runtime features:
 - `internal/config`: local config and manifest persistence
 - `internal/runtime`: runtime selection, daemon pool, source resolution, diagnostics
 - `runtime-worker-java`: Java worker runtime
-- `sofarpc_cli/`: Python library shared by the bundled skills and user scripts (`pyproject.toml`, `tests/`). Not a replacement for the Go CLI — scope is the per-project data layout (config, index, cases).
+- `internal/rpctest`: Go implementation of detect-config, schema/index generation, and case replay
+- `skills/call-rpc/indexer-java`: Spoon-based facade semantic indexer
 - `skills/`: Claude Code skills bundled with the CLI (currently `call-rpc`)
 
 ## Prerequisites
@@ -122,76 +123,41 @@ sofarpc skills where                    # show source / target paths
 sofarpc skills list                     # list bundled skills
 ```
 
-`install` also writes a `tools/.sofarpc_install_root` marker alongside the
-copied files. The skill's Python bootstrap reads it to locate the
-`sofarpc_cli` package; the fallback chain is pip install →
-`$SOFARPC_HOME` → marker file → walk-up → `sofarpc` on `PATH`.
-
-`sofarpc rpc-test ...` remains the CLI entrypoint for these helpers, so older
-shell habits and docs continue to work while the skill itself uses the clearer
-`call-rpc` name.
+`sofarpc facade ...` is the CLI entrypoint for these helpers.
 
 ### Per-project state
 
 Each SOFABoot project stores its own config, generated index, and test cases
-primarily under `<project>/.sofarpc/`; older projects may still resolve to a
-legacy state dir:
+under `<project>/.sofarpc/`:
 
 ```
 .sofarpc/
   config.json              # facade modules, mvn command, default context, ...
-  index/<FQN>.json         # generated facade skeletons (rebuilt by build_index.py)
+  index/<FQN>.json         # generated facade skeletons
   cases/<Service>_<method>.json  # hand-written cases
   cases/_runs/             # optional per-case run logs
 ```
 
-The compatibility read order is `.sofarpc/` → `.claude/rpc-test/` →
-`.claude/skills/rpc-test/`. `detect-config --write` and `sofarpc rpc-test init`
-write the primary layout; `build-index` / `run-cases` continue operating on the
-currently effective layout. To inspect what a project resolves to:
+To inspect what a project resolves to:
 
 ```powershell
-sofarpc rpc-test where
-sofarpc rpc-test where --project C:\path\to\project
+sofarpc facade where
+sofarpc facade where --project C:\path\to\project
 ```
 
 Bootstrap a project:
 
 ```powershell
 # 1. detect facades and write config.json
-sofarpc rpc-test detect-config --write
+sofarpc facade detect-config --write
 
 # 2. build facade index
-sofarpc rpc-test build-index
+sofarpc facade build-index
 
 # 3. batch-invoke cases
-sofarpc rpc-test run-cases --dry-run
-sofarpc rpc-test run-cases --save
+sofarpc facade run-cases --dry-run
+sofarpc facade run-cases --save
 ```
-
-Legacy `<project>/.claude/rpc-test/config.json` and
-`<project>/.claude/skills/rpc-test/config.json` are still read automatically if
-the primary path is absent; `detect_config.py --write` migrates the content on
-first run.
-
-### `sofarpc_cli` Python package (optional pip install)
-
-`sofarpc_cli` is a **shared Python library** for the bundled skills and
-any user script that wants to read the same per-project layout. It is
-**not** a staging ground for replacing the Go CLI — the Go binary keeps
-the control plane (fast cold start, clean Windows subprocess semantics,
-single-binary distribution).
-
-The package ships with the repo and is editable-installable:
-
-```powershell
-pip install -e .
-pytest tests/
-```
-
-Only needed if you want `from sofarpc_cli import ...` to resolve without
-the marker-file fallback (e.g. for IDE autocomplete or writing your own
-scripts). The bundled skill works without it.
 
 ## Quick Start
 
@@ -262,7 +228,7 @@ go run ./cmd/sofarpc call `
   --args "[123]"
 ```
 
-Positional shorthand (`<fqcn>.<method>`; legacy `Service/method` slash form still works):
+Positional shorthand (`<fqcn>.<method>`):
 
 ```powershell
 go run ./cmd/sofarpc call com.example.UserService.getUser "[123]"
