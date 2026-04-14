@@ -8,7 +8,7 @@ Architecture:
 - Go CLI for config resolution, runtime selection, daemon management, and UX
 - Java worker runtime for real SOFARPC invocation
 - Local runtime cache and daemon pool keyed by runtime version, runtime digest,
-  classpath digest, and Java major version
+  stub content digest, and Java major version
 
 ## What Exists Today
 
@@ -322,6 +322,7 @@ sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderSer
 ```
 
 Schemas live in `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`; `classpathDigest` changes whenever a stub jar's content changes, so rebuilt jars invalidate automatically.
+Daemon keys use the same stub-content digest, so changing stub byte content changes the `daemon-key` and forces a fresh worker lifecycle.
 
 ## How Resolution Works
 

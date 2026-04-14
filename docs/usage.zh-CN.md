@@ -7,7 +7,7 @@
 
 - Go CLI 负责配置解析、runtime 选择、daemon 管理与交互体验
 - Java worker runtime 负责真正的 SOFARPC 调用
-- 本地 runtime 缓存与 daemon 池按 runtime 版本、runtime 摘要、classpath 摘要、Java 主版本号分片
+- 本地 runtime 缓存与 daemon 池按 runtime 版本、runtime 摘要、stub 内容摘要、Java 主版本号分片
 
 ## 当前能力
 
@@ -319,6 +319,7 @@ sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderSer
 ```
 
 schema 存在 `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`；`classpathDigest` 随 stub jar 内容变化，重新构建过的 jar 会自动让旧缓存失效。
+daemon key 也使用同一份 stub 内容摘要；stub jar 内容变化会触发新的 `daemon-key`，自动拉起新 worker，避免复用旧进程。
 
 ## 解析顺序
 

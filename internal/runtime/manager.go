@@ -78,7 +78,10 @@ func (m *Manager) ResolveSpec(javaBin, runtimeJar, version string, stubPaths []s
 	if err != nil {
 		return Spec{}, err
 	}
-	classpathHash := hashStrings(normalized)
+	classpathHash, err := classpathContentKeyWithPolicy(normalized, true)
+	if err != nil {
+		return Spec{}, err
+	}
 	key := hashStrings([]string{version, digest, classpathHash, javaMajor})
 	daemonDir := m.DaemonDir()
 	return Spec{

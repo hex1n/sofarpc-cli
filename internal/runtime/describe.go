@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/model"
@@ -51,6 +50,10 @@ func (m *Manager) schemaCachePath(classpathKey, service string) string {
 	return filepath.Join(m.SchemaDir(), schemaCacheFormatVersion, classpathKey, service+".json")
 }
 
+func classpathContentKey(stubPaths []string) (string, error) {
+	return classpathContentKeyWithPolicy(stubPaths, false)
+}
+
 func (m *Manager) describeViaWorker(ctx context.Context, spec Spec, service string) (model.ServiceSchema, error) {
 	classpath := buildClasspath(spec.RuntimeJar, spec.StubPaths)
 	cmd := exec.CommandContext(ctx, spec.JavaBin, "-cp", classpath, mainClass, "describe", "--service", service)
@@ -84,23 +87,6 @@ func readSchemaCache(path string) (model.ServiceSchema, bool, error) {
 		return model.ServiceSchema{}, false, fmt.Errorf("read schema cache %s: %w", path, err)
 	}
 	return schema, true, nil
-}
-
-func classpathContentKey(stubs []string) (string, error) {
-	if len(stubs) == 0 {
-		return hashStrings(nil), nil
-	}
-	sorted := append([]string{}, stubs...)
-	sort.Strings(sorted)
-	parts := make([]string, 0, len(sorted)*2)
-	for _, path := range sorted {
-		digest, err := fileDigest(path)
-		if err != nil {
-			return "", fmt.Errorf("digest stub %s: %w", path, err)
-		}
-		parts = append(parts, path, digest)
-	}
-	return hashStrings(parts), nil
 }
 
 func buildClasspath(runtimeJar string, stubs []string) string {
