@@ -8,8 +8,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/model"
 )
@@ -19,42 +20,59 @@ type DescribeOptions struct {
 	NoCache bool
 }
 
-type schemaCacheKey struct {
-	Profile string
-	Service string
-}
-
-var (
-	schemaCacheMu    sync.RWMutex
-	schemaCacheStore = map[schemaCacheKey]model.ServiceSchema{}
-)
-
 var describeWorker = func(m *Manager, ctx context.Context, spec Spec, service string) (model.ServiceSchema, error) {
 	return m.describeViaWorker(ctx, spec, service)
+}
+
+var describeViaDaemonRequest = func(ctx context.Context, m *Manager, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
+	return m.describeViaDaemon(ctx, spec, service, opts)
 }
 
 func (m *Manager) DescribeService(ctx context.Context, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
 	if strings.TrimSpace(service) == "" {
 		return model.ServiceSchema{}, errors.New("service is required")
 	}
-	classpathKey, err := classpathContentKey(spec.StubPaths)
-	if err != nil {
-		return model.ServiceSchema{}, err
-	}
-	cacheKey := schemaCacheKey{Profile: classpathKey, Service: service}
-	if !opts.Refresh && !opts.NoCache {
-		if schema, ok := loadSchema(cacheKey); ok {
-			return schema, nil
-		}
-	}
-	schema, err := describeWorker(m, ctx, spec, service)
-	if err != nil {
-		return model.ServiceSchema{}, err
-	}
-	if opts.NoCache {
+
+	schema, err := describeViaDaemonRequest(ctx, m, spec, service, opts)
+	if err == nil {
 		return schema, nil
 	}
-	storeSchema(cacheKey, schema)
+
+	// Keep direct worker call as a compatibility fallback.
+	return describeWorker(m, ctx, spec, service)
+}
+
+func (m *Manager) describeViaDaemon(ctx context.Context, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
+	metadata, err := m.EnsureDaemon(ctx, spec)
+	if err != nil {
+		return model.ServiceSchema{}, err
+	}
+	request := model.InvocationRequest{
+		RequestID:   requestID(),
+		Action:      "describe",
+		Service:     service,
+		PayloadMode: model.PayloadRaw,
+		Refresh:     opts.Refresh || opts.NoCache,
+	}
+	response, err := m.Invoke(ctx, metadata, request)
+	if err != nil {
+		return model.ServiceSchema{}, err
+	}
+	if !response.OK {
+		if response.Error != nil {
+			if strings.TrimSpace(response.Error.Message) != "" {
+				return model.ServiceSchema{}, errors.New(response.Error.Message)
+			}
+			if response.Error.Code != "" {
+				return model.ServiceSchema{}, errors.New(response.Error.Code)
+			}
+		}
+		return model.ServiceSchema{}, errors.New("worker describe failed")
+	}
+	var schema model.ServiceSchema
+	if err := json.Unmarshal(bytes.TrimSpace(response.Result), &schema); err != nil {
+		return model.ServiceSchema{}, fmt.Errorf("parse describe response: %w", err)
+	}
 	return schema, nil
 }
 
@@ -85,27 +103,6 @@ func (m *Manager) describeViaWorker(ctx context.Context, spec Spec, service stri
 	return schema, nil
 }
 
-func loadSchema(key schemaCacheKey) (model.ServiceSchema, bool) {
-	schemaCacheMu.RLock()
-	defer schemaCacheMu.RUnlock()
-	schema, ok := schemaCacheStore[key]
-	return schema, ok
-}
-
-func storeSchema(key schemaCacheKey, schema model.ServiceSchema) {
-	schemaCacheMu.Lock()
-	defer schemaCacheMu.Unlock()
-	schemaCacheStore[key] = schema
-}
-
-func clearSchemaCache() {
-	schemaCacheMu.Lock()
-	defer schemaCacheMu.Unlock()
-	for key := range schemaCacheStore {
-		delete(schemaCacheStore, key)
-	}
-}
-
 func buildClasspath(runtimeJar string, stubs []string) string {
 	entries := make([]string, 0, 1+len(stubs))
 	if runtimeJar != "" {
@@ -113,4 +110,8 @@ func buildClasspath(runtimeJar string, stubs []string) string {
 	}
 	entries = append(entries, stubs...)
 	return strings.Join(entries, string(os.PathListSeparator))
+}
+
+func requestID() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 10)
 }

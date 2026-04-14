@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,113 +82,116 @@ func TestClasspathContentKeyChangesOnContentChange(t *testing.T) {
 	}
 }
 
-func TestDescribeServiceCachesInMemory(t *testing.T) {
+func TestDescribeServiceUsesDaemonPathByDefault(t *testing.T) {
 	manager := testManager(t)
-	oldWorker := describeWorker
+	oldDescribe := describeViaDaemonRequest
+	oldDescribeWorker := describeWorker
 	defer func() {
-		describeWorker = oldWorker
-		clearSchemaCache()
+		describeViaDaemonRequest = oldDescribe
+		describeWorker = oldDescribeWorker
 	}()
-	clearSchemaCache()
-
-	callCount := 0
-	describeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
-		callCount++
+	spec := Spec{
+		RuntimeJar: "/tmp/runtime.jar",
+		JavaBin:    "java",
+	}
+	describeCallCount := 0
+	requestedService := ""
+	requestedRefresh := false
+	describeViaDaemonRequest = func(_ context.Context, _ *Manager, _ Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
+		describeCallCount++
+		requestedService = service
+		requestedRefresh = opts.Refresh || opts.NoCache
 		return model.ServiceSchema{
 			Service: service,
 			Methods: []model.MethodSchema{{Name: "foo"}},
 		}, nil
 	}
-
-	spec := Spec{
-		RuntimeJar: "/tmp/runtime.jar",
-		JavaBin:    "java",
+	describeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
+		t.Fatalf("describe worker fallback should not run when daemon describe succeeds")
+		return model.ServiceSchema{}, errors.New("should not run")
 	}
-	schema, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
+
+	schema, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{Refresh: true})
 	if err != nil {
 		t.Fatalf("DescribeService() error = %v", err)
 	}
 	if schema.Service != "com.example.Service" {
 		t.Fatalf("unexpected schema: %+v", schema)
 	}
-	if callCount != 1 {
-		t.Fatalf("expected first call to hit worker, got %d", callCount)
+	if describeCallCount != 1 {
+		t.Fatalf("expected daemon request once, got %d", describeCallCount)
 	}
-
-	_, err = manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
-	if err != nil {
-		t.Fatalf("DescribeService() error = %v", err)
+	if requestedService != "com.example.Service" {
+		t.Fatalf("expected requested service com.example.Service, got %q", requestedService)
 	}
-	if callCount != 1 {
-		t.Fatalf("expected second call with same classpath/service to use cache, got %d", callCount)
+	if !requestedRefresh {
+		t.Fatalf("expected refresh/force flag to be forwarded")
 	}
 }
 
-func TestDescribeServiceRefreshesWithRefreshFlag(t *testing.T) {
+func TestDescribeServiceFallsBackToWorkerWhenDaemonPathFails(t *testing.T) {
 	manager := testManager(t)
-	oldWorker := describeWorker
+	oldDescribe := describeViaDaemonRequest
+	oldDescribeWorker := describeWorker
 	defer func() {
-		describeWorker = oldWorker
-		clearSchemaCache()
+		describeViaDaemonRequest = oldDescribe
+		describeWorker = oldDescribeWorker
 	}()
-	clearSchemaCache()
-
-	callCount := 0
+	var fallbackCalled bool
+	describeViaDaemonRequest = func(_ context.Context, _ *Manager, _ Spec, _ string, _ DescribeOptions) (model.ServiceSchema, error) {
+		return model.ServiceSchema{}, errors.New("daemon unavailable")
+	}
 	describeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
-		callCount++
+		fallbackCalled = true
 		return model.ServiceSchema{
 			Service: service,
-			Methods: []model.MethodSchema{{Name: "bar", ParamTypes: []string{string(rune('0' + callCount))}}},
+			Methods: []model.MethodSchema{{Name: "fallback"}},
 		}, nil
 	}
 	spec := Spec{
 		RuntimeJar: "/tmp/runtime.jar",
 		JavaBin:    "java",
 	}
-	_, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
+
+	schema, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
 	if err != nil {
 		t.Fatalf("DescribeService() error = %v", err)
 	}
-	_, err = manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{Refresh: true})
-	if err != nil {
-		t.Fatalf("DescribeService() error = %v", err)
+	if !fallbackCalled {
+		t.Fatal("expected fallback worker path to be used when daemon request fails")
 	}
-	if callCount != 2 {
-		t.Fatalf("expected refresh to bypass cache, got %d", callCount)
+	if got := schema.Methods[0].Name; got != "fallback" {
+		t.Fatalf("expected fallback result, got %q", got)
 	}
 }
 
-func TestDescribeServiceRefreshesWithNoCacheFlag(t *testing.T) {
+func TestDescribeServiceRefreshesWithNoCache(t *testing.T) {
 	manager := testManager(t)
-	oldWorker := describeWorker
+	oldDescribe := describeViaDaemonRequest
 	defer func() {
-		describeWorker = oldWorker
-		clearSchemaCache()
+		describeViaDaemonRequest = oldDescribe
 	}()
-	clearSchemaCache()
 
-	callCount := 0
-	describeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
-		callCount++
+	describeCalls := 0
+	describeViaDaemonRequest = func(_ context.Context, _ *Manager, _ Spec, _ string, opts DescribeOptions) (model.ServiceSchema, error) {
+		describeCalls++
+		if !opts.NoCache {
+			t.Fatalf("expected NoCache flag to be forwarded")
+		}
 		return model.ServiceSchema{
-			Service: service,
-			Methods: []model.MethodSchema{{Name: "baz"}},
+			Service: "com.example.Service",
 		}, nil
 	}
 	spec := Spec{
 		RuntimeJar: "/tmp/runtime.jar",
 		JavaBin:    "java",
 	}
-	_, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
+	_, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{NoCache: true})
 	if err != nil {
 		t.Fatalf("DescribeService() error = %v", err)
 	}
-	_, err = manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{NoCache: true})
-	if err != nil {
-		t.Fatalf("DescribeService() error = %v", err)
-	}
-	if callCount != 2 {
-		t.Fatalf("expected no-cache to bypass cache, got %d", callCount)
+	if describeCalls != 1 {
+		t.Fatalf("expected one daemon request, got %d", describeCalls)
 	}
 }
 

@@ -21,6 +21,7 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -33,6 +34,7 @@ public final class WorkerMain {
     private static final String PROTOCOL_VERSION = "v1";
     private final ObjectMapper mapper = WorkerMappers.create();
     private final SofaInvokeService invokeService = new SofaInvokeService(mapper);
+    private final Map<String, ServiceSchema> describeCache = new ConcurrentHashMap<String, ServiceSchema>();
 
     public static void main(String[] args) throws Exception {
         new WorkerMain().run(args);
@@ -57,25 +59,7 @@ public final class WorkerMain {
 
     private void describe(Map<String, String> options) throws Exception {
         String serviceName = require(options, "--service");
-        Class<?> clazz = Class.forName(serviceName, false, Thread.currentThread().getContextClassLoader());
-        ServiceSchema schema = new ServiceSchema();
-        schema.service = serviceName;
-        for (Method method : clazz.getMethods()) {
-            if (method.getDeclaringClass() == Object.class) {
-                continue;
-            }
-            MethodSchema ms = new MethodSchema();
-            ms.name = method.getName();
-            Type[] genericParamTypes = method.getGenericParameterTypes();
-            for (Class<?> paramType : method.getParameterTypes()) {
-                ms.paramTypes.add(paramType.getName());
-            }
-            for (Type genericParamType : genericParamTypes) {
-                ms.paramTypeSignatures.add(genericParamType.getTypeName());
-            }
-            ms.returnType = method.getReturnType().getName();
-            schema.methods.add(ms);
-        }
+        ServiceSchema schema = buildSchema(serviceName);
         System.out.println(mapper.writeValueAsString(schema));
     }
 
@@ -125,7 +109,12 @@ public final class WorkerMain {
                 return;
             }
             InvokeRequest request = mapper.readValue(line, InvokeRequest.class);
-            InvokeResponse response = invokeWithBudget(request, invokeExecutor);
+            InvokeResponse response;
+            if (request != null && "describe".equalsIgnoreCase(request.action)) {
+                response = describeWithCache(request);
+            } else {
+                response = invokeWithBudget(request, invokeExecutor);
+            }
             writer.write(mapper.writeValueAsString(response));
             writer.newLine();
             writer.flush();
@@ -212,6 +201,67 @@ public final class WorkerMain {
         }
     }
 
+    private InvokeResponse describeWithCache(InvokeRequest request) {
+        String service = request != null ? request.service : null;
+        if (service == null || service.trim().isEmpty()) {
+            RuntimeError error = new RuntimeError();
+            error.code = "DESCRIBE_INVALID_REQUEST";
+            error.message = "service is required for describe requests";
+            error.phase = "describe";
+            error.payloadMode = defaultValue(request != null ? request.payloadMode : null, "raw");
+            error.hint = "Pass --service for the legacy CLI command and `service` in the request payload for daemon action.";
+            return InvokeResponse.failure(request != null ? request.requestId : null, error, describeDiagnostics(request));
+        }
+        String serviceName = service.trim();
+        if (request != null && request.refresh) {
+            describeCache.remove(serviceName);
+        }
+        ServiceSchema schema = describeCache.get(serviceName);
+        if (schema == null) {
+            try {
+                schema = buildSchema(serviceName);
+                describeCache.put(serviceName, schema);
+            } catch (Exception ex) {
+                RuntimeError error = new RuntimeError();
+                error.code = ex instanceof ClassNotFoundException ? "DESCRIBE_SERVICE_NOT_FOUND" : "DESCRIBE_FAILURE";
+                error.message = ex != null ? ex.getMessage() : "failed to build service schema";
+                error.phase = "describe";
+                error.payloadMode = defaultValue(request != null ? request.payloadMode : null, "raw");
+                error.retriable = !(ex instanceof ClassNotFoundException);
+                if (ex instanceof ClassNotFoundException) {
+                    error.hint = "Verify that stub paths include the service interface jar and service name is correct.";
+                } else {
+                    error.hint = "Check worker logs; retry with --refresh if schema cache needs to be rebuilt.";
+                }
+                return InvokeResponse.failure(request != null ? request.requestId : null, error, describeDiagnostics(request));
+            }
+        }
+        return InvokeResponse.success(request != null ? request.requestId : null, mapper.valueToTree(schema), describeDiagnostics(request));
+    }
+
+    private ServiceSchema buildSchema(String serviceName) throws Exception {
+        Class<?> clazz = Class.forName(serviceName, false, Thread.currentThread().getContextClassLoader());
+        ServiceSchema schema = new ServiceSchema();
+        schema.service = serviceName;
+        for (Method method : clazz.getMethods()) {
+            if (method.getDeclaringClass() == Object.class) {
+                continue;
+            }
+            MethodSchema ms = new MethodSchema();
+            ms.name = method.getName();
+            Type[] genericParamTypes = method.getGenericParameterTypes();
+            for (Class<?> paramType : method.getParameterTypes()) {
+                ms.paramTypes.add(paramType.getName());
+            }
+            for (Type genericParamType : genericParamTypes) {
+                ms.paramTypeSignatures.add(genericParamType.getTypeName());
+            }
+            ms.returnType = method.getReturnType().getName();
+            schema.methods.add(ms);
+        }
+        return schema;
+    }
+
     private long invokeBudgetMs(InvokeRequest request) {
         int invokeMs = 3000;
         int connectMs = 1000;
@@ -274,12 +324,24 @@ public final class WorkerMain {
 
     private DiagnosticInfo diagnostics(InvokeRequest request) {
         DiagnosticInfo diagnostics = new DiagnosticInfo();
+        String payloadMode = request != null ? request.payloadMode : null;
         diagnostics.phase = "invoke";
         diagnostics.targetMode = request != null && request.target != null ? request.target.mode : null;
         diagnostics.configuredTarget = configuredTarget(request);
         diagnostics.resolvedTarget = diagnostics.configuredTarget;
-        diagnostics.invokeStyle = "generic".equalsIgnoreCase(request.payloadMode) ? "$genericInvoke" : "$invoke";
-        diagnostics.payloadMode = request.payloadMode;
+        diagnostics.invokeStyle = "generic".equalsIgnoreCase(payloadMode) ? "$genericInvoke" : "$invoke";
+        diagnostics.payloadMode = defaultValue(payloadMode, "raw");
+        return diagnostics;
+    }
+
+    private DiagnosticInfo describeDiagnostics(InvokeRequest request) {
+        DiagnosticInfo diagnostics = diagnostics(request);
+        diagnostics.phase = "describe";
+        diagnostics.invokeStyle = "$describe";
+        diagnostics.targetMode = "";
+        diagnostics.configuredTarget = "";
+        diagnostics.resolvedTarget = "";
+        diagnostics.payloadMode = defaultValue(request != null ? request.payloadMode : null, "raw");
         return diagnostics;
     }
 
