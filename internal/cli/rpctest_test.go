@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hex1n/sofarpc-cli/internal/rpctest"
 )
 
 func TestSplitRPCTestProjectArg(t *testing.T) {
@@ -35,26 +37,26 @@ func TestSplitRPCTestProjectArgRejectsMissingValue(t *testing.T) {
 
 func TestInspectRPCTestStatePrefersExistingConfigLayout(t *testing.T) {
 	root := t.TempDir()
-	legacy := filepath.Join(root, ".claude", "rpc-test")
-	if err := os.MkdirAll(legacy, 0o755); err != nil {
+	stateDir := filepath.Join(root, ".sofarpc")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(legacy, "config.json"), []byte("{}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, "config.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	state := inspectRPCTestState(root)
-	if state.LayoutLabel != "legacy claude (.claude/rpc-test)" {
-		t.Fatalf("expected claude fallback, got %q", state.LayoutLabel)
+	state := rpctest.InspectState(root)
+	if state.Layout.Label() != "primary (.sofarpc)" {
+		t.Fatalf("expected primary layout, got %q", state.Layout.Label())
 	}
-	if !strings.Contains(state.ConfigPath, filepath.Join(".claude", "rpc-test", "config.json")) {
+	if !strings.Contains(state.ConfigPath, filepath.Join(".sofarpc", "config.json")) {
 		t.Fatalf("unexpected config path %q", state.ConfigPath)
 	}
 }
 
 func TestResolveRPCTestProjectRootWalksUpFromNestedDir(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".claude", "rpc-test"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "pom.xml"), []byte("<project><modelVersion>4.0.0</modelVersion></project>"), 0o644); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 	nested := filepath.Join(root, "svc", "impl")
@@ -73,7 +75,7 @@ func TestResolveRPCTestProjectRootWalksUpFromNestedDir(t *testing.T) {
 
 func TestRunRPCTestWherePrintsResolvedProjectState(t *testing.T) {
 	root := t.TempDir()
-	stateDir := filepath.Join(root, ".claude", "rpc-test")
+	stateDir := filepath.Join(root, ".sofarpc")
 	if err := os.MkdirAll(filepath.Join(stateDir, "index"), 0o755); err != nil {
 		t.Fatalf("MkdirAll(index) error = %v", err)
 	}
@@ -115,10 +117,10 @@ func TestRunRPCTestWherePrintsResolvedProjectState(t *testing.T) {
 
 	out := stdout.String()
 	for _, want := range []string{
-		"state layout:   legacy claude (.claude/rpc-test)",
-		"config path:    " + filepath.Join(root, ".claude", "rpc-test", "config.json"),
-		"index dir:      " + filepath.Join(root, ".claude", "rpc-test", "index"),
-		"cases dir:      " + filepath.Join(root, ".claude", "rpc-test", "cases"),
+		"state layout:   primary (.sofarpc)",
+		"config path:    " + filepath.Join(root, ".sofarpc", "config.json"),
+		"index dir:      " + filepath.Join(root, ".sofarpc", "index"),
+		"cases dir:      " + filepath.Join(root, ".sofarpc", "cases"),
 		"sofarpcBin:     C:/Users/demo/bin/sofarpc.exe",
 		"defaultContext: test-direct",
 	} {

@@ -38,7 +38,8 @@
 - `internal/config`：本地配置与 manifest 持久化
 - `internal/runtime`：runtime 选择、daemon 池、source 解析、诊断
 - `runtime-worker-java`：Java worker runtime
-- `sofarpc_cli/`：给内置 skill 和用户脚本共享的 Python 库（`pyproject.toml`、`tests/`）。**不**是用来替代 Go CLI 的——职责范围限于每项目的数据布局（config / index / cases）。
+- `internal/rpctest`：Go 版 detect-config、schema/index 生成与 case 回放实现
+- `skills/call-rpc/indexer-java`：基于 Spoon 的 facade 语义索引器
 - `skills/`：随 CLI 一起分发的 Claude Code skills（当前是 `call-rpc`）
 
 ## 前置依赖
@@ -121,66 +122,42 @@ sofarpc skills where                    # 查看源/目标路径
 sofarpc skills list                     # 列出仓库内 skill
 ```
 
-`install` 会额外在目标目录写 `tools/.sofarpc_install_root` 指针文件。
-skill 的 Python bootstrap 通过它定位 `sofarpc_cli` 包，回退顺序：
-pip install → `$SOFARPC_HOME` → 指针文件 → 向上找 → `PATH` 上的 `sofarpc`。
-
-这些 helper 的 CLI 入口仍然是 `sofarpc rpc-test ...`，所以旧命令和已有习惯
-不用一起改；变化只在 skill 的对外名字。
+这些 helper 的 CLI 入口是 `sofarpc facade ...`。
 
 ### 每项目状态
 
 每个 SOFABoot 项目的 config、生成的 index、用例主位置都在
-`<project>/.sofarpc/` 下；老项目可能仍在 legacy 目录：
+`<project>/.sofarpc/` 下：
 
 ```
 .sofarpc/
   config.json              # facade 模块、mvn 命令、默认 context ...
-  index/<FQN>.json         # build_index.py 生成的骨架
+  index/<FQN>.json         # 生成的 facade 骨架
   cases/<Service>_<method>.json  # 手写用例
   cases/_runs/             # 可选的每次运行记录
 ```
 
-兼容读取顺序是 `.sofarpc/` → `.claude/rpc-test/` → `.claude/skills/rpc-test/`。`detect_config.py --write` 和 `sofarpc rpc-test init` 会写主位置；`build-index` / `run-cases` 会继续使用当前生效的 layout。想确认当前项目到底落在哪套目录，跑：
+`sofarpc facade detect-config --write` 和 `sofarpc facade init` 会写主位置。
+`build-index` / `run-cases` 使用主状态目录。想确认当前项目使用什么目录，跑：
 
 ```powershell
-sofarpc rpc-test where
-sofarpc rpc-test where --project C:\path\to\project
+sofarpc facade where
+sofarpc facade where --project C:\path\to\project
 ```
 
 初始化一个项目：
 
 ```powershell
 # 1. 探测 facade 模块并写出 config.json
-sofarpc rpc-test detect-config --write
+sofarpc facade detect-config --write
 
 # 2. 生成 facade 骨架索引
-sofarpc rpc-test build-index
+sofarpc facade build-index
 
 # 3. 批量执行用例
-sofarpc rpc-test run-cases --dry-run
-sofarpc rpc-test run-cases --save
+sofarpc facade run-cases --dry-run
+sofarpc facade run-cases --save
 ```
-
-遗留路径 `<project>/.claude/rpc-test/config.json` 和
-`<project>/.claude/skills/rpc-test/config.json` 仍会被自动读取；
-首次 `detect_config.py --write` 会把内容合并到新位置。
-
-### `sofarpc_cli` Python 包（可选 pip 安装）
-
-`sofarpc_cli` 是**共享 Python 库**，给内置 skill 和用户自写脚本读取同一份
-每项目布局用。它**不是**用来替代 Go CLI 的过渡产物——Go 二进制保留控制
-面（冷启动快、Windows 子进程语义干净、单文件分发）。
-
-包随仓库一起分发，可以 editable 安装：
-
-```powershell
-pip install -e .
-pytest tests/
-```
-
-只有在希望不靠指针文件回退，直接 `from sofarpc_cli import ...`（比如 IDE
-自动补全或写自己的脚本）时才需要，bundle 的 skill 不依赖它。
 
 ## 快速上手
 
@@ -251,7 +228,7 @@ go run ./cmd/sofarpc call `
   --args "[123]"
 ```
 
-位置参数简写（`<fqcn>.<method>`；旧的 `Service/method` 斜杠形式仍兼容）：
+位置参数简写（`<fqcn>.<method>`）：
 
 ```powershell
 go run ./cmd/sofarpc call com.example.UserService.getUser "[123]"

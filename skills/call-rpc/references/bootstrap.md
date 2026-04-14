@@ -14,40 +14,40 @@
 - `~/.claude/skills/call-rpc/`
 - `~/.agents/skills/call-rpc/`
 
-项目状态目录按优先级解析：
-1. `<project>/.sofarpc/`
-2. `<project>/.claude/rpc-test/`
-3. `<project>/.claude/skills/rpc-test/`
+项目状态目录：
+`<project>/.sofarpc/`
 
 `where` 会直接打印当前项目实际生效的是哪一套。
 
 注意：
 - `detect-config --write` / `init` 写主位置 `.sofarpc/`
-- `build-index` / `run-cases` 跟随当前生效的 layout
-- legacy 项目不会被静默迁移
+- `build-index` / `run-cases` 使用当前 state layout（`.sofarpc/`）
 
 ## 最短接入路径
 
 ```bash
 cd <project>
-pip install javalang
-sofarpc rpc-test init
+sofarpc facade init
 ```
+
+`build-index` 首次运行会自动构建本地 Spoon 索引器，所以机器上还需要：
+- `java`
+- `mvn`
 
 如果不是在项目根跑：
 
 ```bash
-sofarpc rpc-test init --project <path>
+sofarpc facade init --project <path>
 ```
 
 ## 常用命令
 
 ```bash
-sofarpc rpc-test where [--project <path>]
-sofarpc rpc-test init [--project <path>] [--skip-index]
-sofarpc rpc-test detect-config --write [--project <path>]
-sofarpc rpc-test build-index [--project <path>]
-sofarpc rpc-test run-cases [--project <path>] [--filter <sub>] [--dry-run] [--save] [--context <ctx>]
+sofarpc facade where [--project <path>]
+sofarpc facade init [--project <path>] [--skip-index]
+sofarpc facade detect-config --write [--project <path>]
+sofarpc facade build-index [--project <path>]
+sofarpc facade run-cases [--project <path>] [--filter <sub>] [--dry-run] [--save] [--context <ctx>]
 ```
 
 ## `where` 该怎么看

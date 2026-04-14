@@ -77,7 +77,7 @@ func (a *App) Run(args []string) error {
 		return a.runManifest(args[1:])
 	case "skills":
 		return a.runSkills(args[1:])
-	case "rpc-test":
+	case "facade":
 		return a.runRPCTest(args[1:])
 	case "help":
 		a.printUsage()
@@ -100,7 +100,7 @@ Commands:
   context   manage reusable target contexts
   manifest  initialize or generate a project manifest
   skills    install or inspect bundled agent skills (call-rpc, ...)
-  rpc-test  bootstrap + drive facade invocation helpers (init/detect-config/build-index/run-cases)
+	  facade   bootstrap + drive facade invocation helpers (init/detect-config/build-index/schema/run-cases)
 `))
 }
 
@@ -171,15 +171,11 @@ func firstPositive(values ...int) int {
 
 func parseServiceMethod(token string) (string, string, error) {
 	if strings.Contains(token, "/") {
-		parts := strings.Split(token, "/")
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return "", "", fmt.Errorf("positional form must be %q or %q, got %q", "service.method", "service/method", token)
-		}
-		return parts[0], parts[1], nil
+		return "", "", fmt.Errorf("positional form must be %q, got %q", "service.method", token)
 	}
 	idx := strings.LastIndex(token, ".")
 	if idx <= 0 || idx == len(token)-1 {
-		return "", "", fmt.Errorf("positional form must be %q or %q, got %q", "service.method", "service/method", token)
+		return "", "", fmt.Errorf("positional form must be %q, got %q", "service.method", token)
 	}
 	return token[:idx], token[idx+1:], nil
 }

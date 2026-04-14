@@ -63,6 +63,8 @@ func (a *App) resolveInvocation(input invocationInputs) (resolvedInvocation, err
 		}
 		activeContext = contextValue
 	}
+	serviceName := input.Service
+	serviceConfig := manifest.Services[serviceName]
 	manifestTarget := manifest.DefaultTarget
 	defaults := defaultsTarget()
 	target := model.TargetConfig{
@@ -72,7 +74,7 @@ func (a *App) resolveInvocation(input invocationInputs) (resolvedInvocation, err
 		RegistryProtocol: firstNonEmpty(input.RegistryProtocol, activeContext.RegistryProtocol, manifestTarget.RegistryProtocol),
 		Protocol:         firstNonEmpty(input.Protocol, activeContext.Protocol, manifestTarget.Protocol, defaults.Protocol),
 		Serialization:    firstNonEmpty(input.Serialization, activeContext.Serialization, manifestTarget.Serialization, defaults.Serialization),
-		UniqueID:         firstNonEmpty(input.UniqueID, activeContext.UniqueID, manifestTarget.UniqueID),
+		UniqueID:         firstNonEmpty(input.UniqueID, serviceConfig.UniqueID, activeContext.UniqueID, manifestTarget.UniqueID),
 		TimeoutMS:        firstPositive(input.TimeoutMS, activeContext.TimeoutMS, manifestTarget.TimeoutMS, defaults.TimeoutMS),
 		ConnectTimeoutMS: firstPositive(input.ConnectTimeoutMS, activeContext.ConnectTimeoutMS, manifestTarget.ConnectTimeoutMS, defaults.ConnectTimeoutMS),
 	}
@@ -84,9 +86,7 @@ func (a *App) resolveInvocation(input invocationInputs) (resolvedInvocation, err
 			target.Mode = model.ModeRegistry
 		}
 	}
-	serviceName := input.Service
 	methodName := input.Method
-	serviceConfig := manifest.Services[serviceName]
 	methodConfig := serviceConfig.Methods[methodName]
 	paramTypes := parseCSV(input.TypesCSV)
 	if len(paramTypes) == 0 {

@@ -38,7 +38,7 @@ the agent (or human) can replay. Layout:
   scenario must pin it.
 * `params` is always a JSON array matching the method's formal parameter
   arity. It goes straight into `sofarpc call -data ...`.
-* Run all cases: `sofarpc rpc-test run-cases`
-  Run a subset: `sofarpc rpc-test run-cases --filter <ServiceShortName>`
-  Point at another project: `sofarpc rpc-test run-cases --project <root>`
-  Save results: `sofarpc rpc-test run-cases --save` → writes `_runs/<case>-<name>.json`
+* Run all cases: `sofarpc facade run-cases`
+  Run a subset: `sofarpc facade run-cases --filter <ServiceShortName>`
+  Point at another project: `sofarpc facade run-cases --project <root>`
+  Save results: `sofarpc facade run-cases --save` → writes `_runs/<case>-<name>.json`

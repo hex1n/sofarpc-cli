@@ -1,72 +1,50 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/hex1n/sofarpc-cli/internal/rpctest"
 )
 
-var rpcTestRootMarkers = []string{".sofarpc", ".claude", ".agents", "pom.xml", ".git"}
-
-// runRPCTest dispatches `sofarpc rpc-test <sub>`. It fronts the bundled
-// call-rpc Python tools so agents (and humans) can invoke them without
-// hunting down a SKILL path or worrying about PYTHONPATH.
+// runRPCTest dispatches `sofarpc facade <sub>`.
+// facade-testing workflow from the Go CLI, while delegating only Java source
+// semantics to the Spoon indexer.
 //
 // Subcommands:
 //
 //	init            alias for `sofarpc skills init`
 //	detect-config   writes <project>/.sofarpc/config.json
 //	build-index     refreshes facade index/
+//	schema          prints generated DTO schema for a facade method
 //	run-cases       replays saved cases under cases/
 //	where           prints resolved tools dir + project state paths
 func (a *App) runRPCTest(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("rpc-test subcommand required: init, detect-config, build-index, run-cases, where")
+		return fmt.Errorf("facade subcommand required: init, detect-config, build-index, schema, run-cases, where")
 	}
-	switch args[0] {
+	switch normalizeRPCTestSubcommand(args[0]) {
 	case "init":
 		return a.runSkillsInit(args[1:])
 	case "detect-config":
-		return a.runRPCTestScript("detect_config.py", args[1:])
+		return a.runRPCTestDetectConfig(args[1:])
 	case "build-index":
-		return a.runRPCTestScript("build_index.py", args[1:])
+		return a.runRPCTestBuildIndex(args[1:])
+	case "schema":
+		return a.runRPCTestSchema(args[1:])
 	case "run-cases":
-		return a.runRPCTestScript("run_cases.py", args[1:])
+		return a.runRPCTestRunCases(args[1:])
 	case "where":
 		return a.runRPCTestWhere(args[1:])
 	default:
-		return fmt.Errorf("unknown rpc-test subcommand %q", args[0])
+		return fmt.Errorf("unknown facade subcommand %q", args[0])
 	}
 }
 
-// runRPCTestScript resolves the bundled Python script and runs it in the
-// selected project root. `--project` is handled by the Go wrapper; remaining
-// args are passed through verbatim, so flags like --filter / --save / --context
-// flow to the underlying tool.
-func (a *App) runRPCTestScript(script string, args []string) error {
-	project, passthrough, err := splitRPCTestProjectArg(args)
-	if err != nil {
-		return err
-	}
-	toolsDir, err := rpcTestToolsDir()
-	if err != nil {
-		return err
-	}
-	scriptPath := filepath.Join(toolsDir, script)
-	if _, err := os.Stat(scriptPath); err != nil {
-		return fmt.Errorf("%s not found at %s", script, scriptPath)
-	}
-	python, err := findPython()
-	if err != nil {
-		return err
-	}
-	projectRoot, err := a.resolveRPCTestProjectRoot(project)
-	if err != nil {
-		return err
-	}
-	return a.runPython(python, scriptPath, passthrough, projectRoot)
+func normalizeRPCTestSubcommand(command string) string {
+	return strings.ToLower(strings.TrimSpace(command))
 }
 
 func (a *App) runRPCTestWhere(args []string) error {
@@ -75,51 +53,31 @@ func (a *App) runRPCTestWhere(args []string) error {
 		return err
 	}
 	if len(passthrough) > 0 {
-		return fmt.Errorf("unknown rpc-test where args: %s", strings.Join(passthrough, " "))
+		return fmt.Errorf("unknown facade where args: %s", strings.Join(passthrough, " "))
 	}
-	toolsDir, err := rpcTestToolsDir()
+	skillDir, err := rpcTestSkillDir()
 	projectRoot, errProject := a.resolveRPCTestProjectRoot(project)
 	if errProject != nil {
 		return errProject
 	}
-	state := inspectRPCTestState(projectRoot)
-	cfg, cfgErr := loadRPCTestConfigSummary(state.ConfigPath)
+	state := rpctest.InspectState(projectRoot)
+	cfg, cfgErr := rpctest.LoadConfig(projectRoot, true)
 
-	fmt.Fprintf(a.Stdout, "tools dir:      %s\n", fmtPathOrErr(toolsDir, err))
-	if python, err := findPython(); err == nil {
-		fmt.Fprintf(a.Stdout, "python:         %s\n", python)
-	} else {
-		fmt.Fprintf(a.Stdout, "python:         (not found) %v\n", err)
-	}
+	fmt.Fprintf(a.Stdout, "skill dir:      %s\n", fmtPathOrErr(skillDir, err))
 	fmt.Fprintf(a.Stdout, "project root:   %s\n", fmtPathOrErr(projectRoot, errProject))
-	fmt.Fprintf(a.Stdout, "state layout:   %s\n", state.LayoutLabel)
+	fmt.Fprintf(a.Stdout, "state layout:   %s\n", state.Layout.Label())
 	fmt.Fprintf(a.Stdout, "state dir:      %s\n", state.StateDir)
-	fmt.Fprintf(a.Stdout, "config path:    %s\n", state.ConfigPathStatus)
-	fmt.Fprintf(a.Stdout, "index dir:      %s\n", state.IndexDirStatus)
-	fmt.Fprintf(a.Stdout, "cases dir:      %s\n", state.CasesDirStatus)
+	fmt.Fprintf(a.Stdout, "config path:    %s\n", formatPathStatus(state.ConfigPath))
+	fmt.Fprintf(a.Stdout, "index dir:      %s\n", formatPathStatus(state.IndexDir))
+	fmt.Fprintf(a.Stdout, "cases dir:      %s\n", formatPathStatus(state.CasesDir))
 	if cfgErr == nil {
 		fmt.Fprintf(a.Stdout, "sofarpcBin:     %s\n", emptyFallback(cfg.SofaRPCBin, "(not set)"))
 		fmt.Fprintf(a.Stdout, "defaultContext: %s\n", emptyFallback(cfg.DefaultContext, "(not set)"))
 		fmt.Fprintf(a.Stdout, "manifestPath:   %s\n", emptyFallback(cfg.ManifestPath, "(not set)"))
-	} else if !os.IsNotExist(cfgErr) {
+	} else if !os.IsNotExist(cfgErr) && !strings.Contains(cfgErr.Error(), "no config found") {
 		fmt.Fprintf(a.Stdout, "config parse:   (unavailable: %v)\n", cfgErr)
 	}
 	return nil
-}
-
-type rpcTestStateInfo struct {
-	LayoutLabel      string
-	StateDir         string
-	ConfigPath       string
-	ConfigPathStatus string
-	IndexDirStatus   string
-	CasesDirStatus   string
-}
-
-type rpcTestConfigSummary struct {
-	SofaRPCBin     string `json:"sofarpcBin"`
-	DefaultContext string `json:"defaultContext"`
-	ManifestPath   string `json:"manifestPath"`
 }
 
 func splitRPCTestProjectArg(args []string) (string, []string, error) {
@@ -160,112 +118,9 @@ func splitRPCTestProjectArg(args []string) (string, []string, error) {
 func (a *App) resolveRPCTestProjectRoot(project string) (string, error) {
 	root := strings.TrimSpace(project)
 	if root != "" {
-		return validateRPCTestProjectDir(root)
+		return rpctest.ValidateProjectDir(root)
 	}
-	start := strings.TrimSpace(a.Cwd)
-	if start == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		start = cwd
-	}
-	absStart, err := filepath.Abs(start)
-	if err != nil {
-		return "", err
-	}
-	if found := walkUpRPCTestRoot(absStart); found != "" {
-		return found, nil
-	}
-	return validateRPCTestProjectDir(absStart)
-}
-
-func validateRPCTestProjectDir(root string) (string, error) {
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return "", err
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", abs)
-	}
-	return abs, nil
-}
-
-func walkUpRPCTestRoot(start string) string {
-	cur := filepath.Clean(start)
-	for {
-		for _, marker := range rpcTestRootMarkers {
-			if _, err := os.Stat(filepath.Join(cur, marker)); err == nil {
-				return cur
-			}
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return ""
-		}
-		cur = parent
-	}
-}
-
-func inspectRPCTestState(projectRoot string) rpcTestStateInfo {
-	type candidate struct {
-		name      string
-		label     string
-		stateDir  string
-		configRel string
-	}
-	candidates := []candidate{
-		{
-			name:      "primary",
-			label:     "primary (.sofarpc)",
-			stateDir:  filepath.Join(projectRoot, ".sofarpc"),
-			configRel: filepath.Join(projectRoot, ".sofarpc", "config.json"),
-		},
-		{
-			name:      "claude",
-			label:     "legacy claude (.claude/rpc-test)",
-			stateDir:  filepath.Join(projectRoot, ".claude", "rpc-test"),
-			configRel: filepath.Join(projectRoot, ".claude", "rpc-test", "config.json"),
-		},
-		{
-			name:      "legacy",
-			label:     "legacy skill (.claude/skills/rpc-test)",
-			stateDir:  filepath.Join(projectRoot, ".claude", "skills", "rpc-test"),
-			configRel: filepath.Join(projectRoot, ".claude", "skills", "rpc-test", "config.json"),
-		},
-	}
-
-	selected := candidates[0]
-	for _, cand := range candidates {
-		if _, err := os.Stat(cand.configRel); err == nil {
-			selected = cand
-			break
-		}
-	}
-	return rpcTestStateInfo{
-		LayoutLabel:      selected.label,
-		StateDir:         selected.stateDir,
-		ConfigPath:       selected.configRel,
-		ConfigPathStatus: formatPathStatus(selected.configRel),
-		IndexDirStatus:   formatPathStatus(filepath.Join(selected.stateDir, "index")),
-		CasesDirStatus:   formatPathStatus(filepath.Join(selected.stateDir, "cases")),
-	}
-}
-
-func loadRPCTestConfigSummary(path string) (rpcTestConfigSummary, error) {
-	var summary rpcTestConfigSummary
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return summary, err
-	}
-	if err := json.Unmarshal(body, &summary); err != nil {
-		return summary, err
-	}
-	return summary, nil
+	return rpctest.ResolveProjectRoot(a.Cwd, a.Stderr)
 }
 
 func formatPathStatus(path string) string {
@@ -286,27 +141,144 @@ func emptyFallback(value, fallback string) string {
 	return value
 }
 
-// rpcTestToolsDir returns the tools directory to use. Resolution order:
-//  1. ~/.claude/skills/call-rpc/tools/          (current Claude install)
-//  2. ~/.claude/skills/call-facade/tools/       (deprecated Claude alias)
-//  3. ~/.claude/skills/invoke-facade/tools/     (deprecated Claude alias)
-//  4. ~/.claude/skills/rpc-test/tools/          (legacy Claude alias)
-//  5. ~/.agents/skills/call-rpc/tools/          (current Codex install)
-//  6. ~/.agents/skills/call-facade/tools/       (deprecated Codex alias)
-//  7. ~/.agents/skills/invoke-facade/tools/     (deprecated Codex alias)
-//  8. ~/.agents/skills/rpc-test/tools/          (legacy Codex alias)
-//  9. <cli-install-root>/skills/call-rpc/tools/ (bundled source fallback)
-func rpcTestToolsDir() (string, error) {
+func (a *App) runRPCTestDetectConfig(args []string) error {
+	flags := failFlagSet("facade detect-config")
+	var (
+		project string
+		write   bool
+	)
+	flags.StringVar(&project, "project", "", "project root (default: current working directory)")
+	flags.BoolVar(&write, "write", false, "write config.json instead of printing a dry-run")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if len(flags.Args()) > 0 {
+		return fmt.Errorf("unknown facade detect-config args: %s", strings.Join(flags.Args(), " "))
+	}
+	projectRoot, err := a.resolveRPCTestProjectRoot(project)
+	if err != nil {
+		return err
+	}
+	return rpctest.DetectConfig(projectRoot, write, a.Stdout, a.Stderr)
+}
+
+func (a *App) runRPCTestSchema(args []string) error {
+	flags := failFlagSet("facade schema")
+	var (
+		project string
+		types   string
+		asJSON  bool
+	)
+	flags.StringVar(&project, "project", "", "project root (default: current working directory)")
+	flags.StringVar(&types, "types", "", "comma-separated param types to disambiguate overloads")
+	flags.BoolVar(&asJSON, "json", false, "print JSON output")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	rest := flags.Args()
+	if len(rest) != 1 {
+		return fmt.Errorf("usage: sofarpc facade schema [--project <path>] [--types <csv>] [--json] <service.method>")
+	}
+	service, method, err := parseServiceMethod(rest[0])
+	if err != nil {
+		return err
+	}
+	projectRoot, err := a.resolveRPCTestProjectRoot(project)
+	if err != nil {
+		return err
+	}
+	cfg, err := rpctest.LoadConfig(projectRoot, false)
+	if err != nil {
+		return err
+	}
+	sourceRoots := rpctest.IterSourceRoots(cfg, projectRoot)
+	if len(sourceRoots) == 0 {
+		return fmt.Errorf("config has no facade source roots")
+	}
+	registry, err := rpctest.LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
+	if err != nil {
+		return err
+	}
+	schema, err := rpctest.BuildMethodSchema(registry, service, method, parseCSV(types), cfg.RequiredMarkers)
+	if err != nil {
+		return err
+	}
+	_ = asJSON
+	return printJSON(a.Stdout, schema)
+}
+
+func (a *App) runRPCTestBuildIndex(args []string) error {
+	project, passthrough, err := splitRPCTestProjectArg(args)
+	if err != nil {
+		return err
+	}
+	if len(passthrough) > 0 {
+		return fmt.Errorf("unknown facade build-index args: %s", strings.Join(passthrough, " "))
+	}
+	projectRoot, err := a.resolveRPCTestProjectRoot(project)
+	if err != nil {
+		return err
+	}
+	cfg, err := rpctest.LoadConfig(projectRoot, false)
+	if err != nil {
+		return err
+	}
+	return rpctest.RefreshIndex(projectRoot, cfg, a.Stdout, a.Stderr)
+}
+
+func (a *App) runRPCTestRunCases(args []string) error {
+	flags := failFlagSet("facade run-cases")
+	var (
+		project      string
+		filter       string
+		onlyNamesCSV string
+		contextName  string
+		sofarpcBin   string
+		dryRun       bool
+		save         bool
+	)
+	flags.StringVar(&project, "project", "", "project root (default: current working directory)")
+	flags.StringVar(&filter, "filter", "", "substring match against service or method")
+	flags.StringVar(&onlyNamesCSV, "only-names", "", "comma-separated case names to include")
+	flags.StringVar(&contextName, "context", "", "override sofarpc context for every case")
+	flags.StringVar(&sofarpcBin, "sofarpc", "", "override sofarpc binary (else from config.json)")
+	flags.BoolVar(&dryRun, "dry-run", false, "print commands, do not execute")
+	flags.BoolVar(&save, "save", false, "save per-case results under cases/_runs/")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if len(flags.Args()) > 0 {
+		return fmt.Errorf("unknown facade run-cases args: %s", strings.Join(flags.Args(), " "))
+	}
+	projectRoot, err := a.resolveRPCTestProjectRoot(project)
+	if err != nil {
+		return err
+	}
+	return rpctest.RunCases(projectRoot, rpctest.RunCasesOptions{
+		Filter:          filter,
+		OnlyNames:       parseCSV(onlyNamesCSV),
+		ContextOverride: contextName,
+		DryRun:          dryRun,
+		Save:            save,
+		SofaRPCBin:      sofarpcBin,
+	}, a.Stdout, a.Stderr)
+}
+
+// rpcTestSkillDir returns the installed call-rpc skill directory. Resolution order:
+//  1. ~/.claude/skills/call-rpc/     (current Claude install)
+//  2. ~/.agents/skills/call-rpc/     (current Codex install)
+//  3. <cli-install-root>/skills/call-rpc/ (bundled source fallback)
+func rpcTestSkillDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err == nil {
-		names := bundledSkillNameCandidates(rpcTestSkillAlias)
+		names := bundledSkillNameCandidates(callRPCSkillName)
 		candidates := make([]string, 0, len(names)*2)
 		for _, base := range []string{
 			filepath.Join(home, ".claude", "skills"),
 			filepath.Join(home, ".agents", "skills"),
 		} {
 			for _, name := range names {
-				candidates = append(candidates, filepath.Join(base, name, "tools"))
+				candidates = append(candidates, filepath.Join(base, name))
 			}
 		}
 		for _, cand := range candidates {
@@ -317,11 +289,11 @@ func rpcTestToolsDir() (string, error) {
 	}
 	src, err := skillsSourceDir()
 	if err != nil {
-		return "", fmt.Errorf("cannot locate call-rpc tools: %w", err)
+		return "", fmt.Errorf("cannot locate call-rpc skill: %w", err)
 	}
-	cand := filepath.Join(src, callRPCSkillName, "tools")
+	cand := filepath.Join(src, callRPCSkillName)
 	if info, err := os.Stat(cand); err == nil && info.IsDir() {
 		return cand, nil
 	}
-	return "", fmt.Errorf("call-rpc tools not found under %s (run `sofarpc skills install`)", src)
+	return "", fmt.Errorf("call-rpc skill not found under %s (run `sofarpc skills install`)", src)
 }
