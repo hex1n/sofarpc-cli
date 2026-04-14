@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,7 +205,72 @@ func (a *App) runRPCTestSchema(args []string) error {
 		return err
 	}
 	_ = asJSON
-	return printJSON(a.Stdout, schema)
+	if asJSON {
+		return printJSON(a.Stdout, schema)
+	}
+	return printRPCTestingSchema(a.Stdout, schema)
+}
+
+func printRPCTestingSchema(out io.Writer, schema rpctest.MethodSchemaEnvelope) error {
+	method := schema.Method
+	if _, err := fmt.Fprintf(out, "service: %s\n", schema.Service); err != nil {
+		return err
+	}
+	if strings.TrimSpace(schema.File) != "" {
+		if _, err := fmt.Fprintf(out, "file:    %s\n", schema.File); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(out, "method:  %s\n", method.Name); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "return:  %s\n", method.ReturnType); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "params:  %d\n", len(method.ParamsFieldInfo)); err != nil {
+		return err
+	}
+	if method.ResponseWarning != "" {
+		if _, err := fmt.Fprintf(out, "warning: %s\n", method.ResponseWarning); err != nil {
+			return err
+		}
+		if strings.TrimSpace(method.ResponseWarningReason) != "" {
+			if _, err := fmt.Fprintf(out, "reason:  %s\n", method.ResponseWarningReason); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, param := range method.ParamsFieldInfo {
+		label := "optional"
+		if strings.TrimSpace(param.RequiredHint) != "" {
+			label = "required: " + param.RequiredHint
+		}
+		if _, err := fmt.Fprintf(out, "- %s: %s (%s)\n", param.Name, param.Type, label); err != nil {
+			return err
+		}
+		if len(param.Fields) == 0 {
+			continue
+		}
+		for _, field := range param.Fields {
+			comment := strings.TrimSpace(field.Comment)
+			if comment == "" {
+				comment = ""
+			} else {
+				comment = " # " + comment
+			}
+			if _, err := fmt.Fprintf(
+				out,
+				"  - %s: %s%s\n",
+				field.Name,
+				field.Type,
+				comment,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (a *App) runRPCTestBuildIndex(args []string) error {

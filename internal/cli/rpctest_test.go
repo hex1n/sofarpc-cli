@@ -73,6 +73,41 @@ func TestResolveRPCTestProjectRootWalksUpFromNestedDir(t *testing.T) {
 	}
 }
 
+func TestPrintRPCTestingSchemaText(t *testing.T) {
+	var stdout bytes.Buffer
+	schema := rpctest.MethodSchemaEnvelope{
+		Service: "com.example.UserFacade",
+		File:    "src/main/java/com/example/UserFacade.java",
+		Method: rpctest.MethodSchemaResult{
+			Name:                  "getUser",
+			ReturnType:            "com.example.UserVO",
+			ParamTypes:            []string{"com.example.UserRequest"},
+			ParamsFieldInfo:       []rpctest.ParameterSchema{{Name: "request", Type: "com.example.UserRequest", RequiredHint: "required", Fields: []rpctest.FieldSchema{{Name: "tenantId", Type: "java.lang.String", Comment: "tenant id"}}}},
+			ResponseWarning:       "response wrapper exposes Optional/helper getters; prefer raw mode when stub jars are complete, generic mode may lose nested DTO types",
+			ResponseWarningReason: "Optional getter found on return type",
+		},
+	}
+
+	if err := printRPCTestingSchema(&stdout, schema); err != nil {
+		t.Fatalf("printRPCTestingSchema() error = %v", err)
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"service: com.example.UserFacade",
+		"file:    src/main/java/com/example/UserFacade.java",
+		"method:  getUser",
+		"return:  com.example.UserVO",
+		"warning: response wrapper",
+		"- request: com.example.UserRequest",
+		"  - tenantId: java.lang.String # tenant id",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
 func TestRunRPCTestWherePrintsResolvedProjectState(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, ".sofarpc")
