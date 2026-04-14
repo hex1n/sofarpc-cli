@@ -271,7 +271,7 @@ func TestPickMethodTypesSingleMatch(t *testing.T) {
 	schema := model.ServiceSchema{
 		Service: "com.example.Svc",
 		Methods: []model.MethodSchema{
-			{Name: "ping", ParamTypes: []string{"java.lang.Long"}},
+			{Name: "ping", ParamTypes: []string{"java.lang.Long"}, ParamTypeSignatures: []string{"java.lang.Long"}},
 		},
 	}
 	types, err := pickMethodTypes(schema, "ping", nil)
@@ -322,6 +322,36 @@ func TestPickMethodTypesOverloadAmbiguous(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--types") {
 		t.Fatalf("expected hint pointing at --types, got %v", err)
+	}
+}
+
+func TestPickMethodSchemaUsesPreferredParamTypes(t *testing.T) {
+	schema := model.ServiceSchema{
+		Service: "com.example.Svc",
+		Methods: []model.MethodSchema{
+			{
+				Name:                "importAsset",
+				ParamTypes:          []string{"com.example.BaseRequest"},
+				ParamTypeSignatures: []string{"com.example.BaseRequest"},
+			},
+			{
+				Name:                "importAsset",
+				ParamTypes:          []string{"com.example.PortfolioAssetImportRequest"},
+				ParamTypeSignatures: []string{"com.example.PortfolioAssetImportRequest"},
+			},
+		},
+	}
+	got, err := pickMethodSchema(
+		schema,
+		"importAsset",
+		json.RawMessage(`[{"fundItems":[]}]`),
+		[]string{"com.example.PortfolioAssetImportRequest"},
+	)
+	if err != nil {
+		t.Fatalf("pickMethodSchema error = %v", err)
+	}
+	if len(got.ParamTypeSignatures) != 1 || got.ParamTypeSignatures[0] != "com.example.PortfolioAssetImportRequest" {
+		t.Fatalf("unexpected method schema: %+v", got)
 	}
 }
 

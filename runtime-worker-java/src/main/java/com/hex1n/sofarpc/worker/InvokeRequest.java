@@ -10,6 +10,7 @@ public class InvokeRequest {
     public String service;
     public String method;
     public List<String> paramTypes = new ArrayList<String>();
+    public List<String> paramTypeSignatures = new ArrayList<String>();
     public JsonNode args;
     public String payloadMode = "raw";
     public TargetConfig target = new TargetConfig();
