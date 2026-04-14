@@ -5,3 +5,9 @@ dist/
 e2e/fixtures/target/
 bin/
 sofarpc.exe
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.pytest-tmp/
+.pytest_tmp/
+pytest_tmp/

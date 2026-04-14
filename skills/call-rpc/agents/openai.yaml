@@ -1,0 +1,3 @@
+interface:
+  display_name: "Call RPC"
+  short_description: "Call and validate SOFARPC facade methods in any SOFABoot project"

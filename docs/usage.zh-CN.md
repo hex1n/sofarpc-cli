@@ -38,6 +38,8 @@
 - `internal/config`：本地配置与 manifest 持久化
 - `internal/runtime`：runtime 选择、daemon 池、source 解析、诊断
 - `runtime-worker-java`：Java worker runtime
+- `sofarpc_cli/`：给内置 skill 和用户脚本共享的 Python 库（`pyproject.toml`、`tests/`）。**不**是用来替代 Go CLI 的——职责范围限于每项目的数据布局（config / index / cases）。
+- `skills/`：随 CLI 一起分发的 Claude Code skills（当前是 `call-rpc`）
 
 ## 前置依赖
 
@@ -102,6 +104,83 @@ go run ./cmd/sofarpc help
 ```
 
 日常使用建议把构建好的二进制放到 `PATH`，更快也免去重复编译。
+
+## Claude Code Skill
+
+仓库 `skills/call-rpc/` 下是 `call-rpc` skill，能在任意 SOFABoot
+项目里驱动 facade 实际调用与结果验证。安装后会复制到 `~/.claude/skills/`，
+Claude Code 全局可见。
+
+### 安装
+
+```powershell
+sofarpc skills install                  # 默认安装 call-rpc
+sofarpc skills install --force          # 覆盖已有安装
+sofarpc skills install --dry-run        # 预览拷贝
+sofarpc skills where                    # 查看源/目标路径
+sofarpc skills list                     # 列出仓库内 skill
+```
+
+`install` 会额外在目标目录写 `tools/.sofarpc_install_root` 指针文件。
+skill 的 Python bootstrap 通过它定位 `sofarpc_cli` 包，回退顺序：
+pip install → `$SOFARPC_HOME` → 指针文件 → 向上找 → `PATH` 上的 `sofarpc`。
+
+这些 helper 的 CLI 入口仍然是 `sofarpc rpc-test ...`，所以旧命令和已有习惯
+不用一起改；变化只在 skill 的对外名字。
+
+### 每项目状态
+
+每个 SOFABoot 项目的 config、生成的 index、用例主位置都在
+`<project>/.sofarpc/` 下；老项目可能仍在 legacy 目录：
+
+```
+.sofarpc/
+  config.json              # facade 模块、mvn 命令、默认 context ...
+  index/<FQN>.json         # build_index.py 生成的骨架
+  cases/<Service>_<method>.json  # 手写用例
+  cases/_runs/             # 可选的每次运行记录
+```
+
+兼容读取顺序是 `.sofarpc/` → `.claude/rpc-test/` → `.claude/skills/rpc-test/`。`detect_config.py --write` 和 `sofarpc rpc-test init` 会写主位置；`build-index` / `run-cases` 会继续使用当前生效的 layout。想确认当前项目到底落在哪套目录，跑：
+
+```powershell
+sofarpc rpc-test where
+sofarpc rpc-test where --project C:\path\to\project
+```
+
+初始化一个项目：
+
+```powershell
+# 1. 探测 facade 模块并写出 config.json
+sofarpc rpc-test detect-config --write
+
+# 2. 生成 facade 骨架索引
+sofarpc rpc-test build-index
+
+# 3. 批量执行用例
+sofarpc rpc-test run-cases --dry-run
+sofarpc rpc-test run-cases --save
+```
+
+遗留路径 `<project>/.claude/rpc-test/config.json` 和
+`<project>/.claude/skills/rpc-test/config.json` 仍会被自动读取；
+首次 `detect_config.py --write` 会把内容合并到新位置。
+
+### `sofarpc_cli` Python 包（可选 pip 安装）
+
+`sofarpc_cli` 是**共享 Python 库**，给内置 skill 和用户自写脚本读取同一份
+每项目布局用。它**不是**用来替代 Go CLI 的过渡产物——Go 二进制保留控制
+面（冷启动快、Windows 子进程语义干净、单文件分发）。
+
+包随仓库一起分发，可以 editable 安装：
+
+```powershell
+pip install -e .
+pytest tests/
+```
+
+只有在希望不靠指针文件回退，直接 `from sofarpc_cli import ...`（比如 IDE
+自动补全或写自己的脚本）时才需要，bundle 的 skill 不依赖它。
 
 ## 快速上手
 
@@ -344,6 +423,13 @@ schema 存在 `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`；`
 - 普通 JSON 对象
 - `Map` / `List` 类型 payload
 - 通用冒烟测试
+- stub jar 齐全时的 `OperationResult<T>` 这类返回壳
+
+说明：
+
+- 只要 worker classpath 能拿到 DTO，优先走 `raw`
+- 如果顶层参数本身就是声明好的 DTO 类，`raw` 现在会直接按该类反序列化，所以 `List<FundAssetItem>` 这类嵌套字段也能正确还原
+- 如果 Jackson 在响应侧内省 `dataOptional()` / `dataOrThrow()` 这类 helper getter 时炸掉，worker 会自动回退到 field-based 序列化
 
 示例：
 
@@ -364,11 +450,24 @@ go run ./cmd/sofarpc call `
 - worker classpath 没有 DTO
 - 想显式走 generic 调用路径
 
+限制：
+
+- SOFARPC 侧只拿到顶层 `paramTypes`
+- `List<FundAssetItem>` 这类嵌套自定义集合元素，provider 侧仍可能被还原成 `LinkedHashMap`
+- 不要因为返回壳暴露了 `Optional/helper getter` 就直接切 `generic`，优先试 `raw`
+
 ### `schema`
 
 适用场景：
 
 - 入参希望按 worker 侧已有的类型元数据来解释
+
+当前边界：
+
+- 有接口元数据时，`describe` 会保留完整泛型参数签名
+- `schema` 会按这些签名还原嵌套集合 / Map 的元素类型
+- `schema` 主要用于顶层参数本身就是 `List<CustomDTO>`、`Map<String, CustomDTO>` 这类泛型容器
+- 如果完全不给 stub jar，`schema` 只能退回你显式传入的顶层类型
 
 ## Manifest
 
