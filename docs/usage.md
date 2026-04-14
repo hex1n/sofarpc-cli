@@ -40,7 +40,7 @@ Current runtime features:
 - `internal/runtime`: runtime selection, daemon pool, source resolution, diagnostics
 - `runtime-worker-java`: Java worker runtime
 - `internal/rpctest`: Go implementation of detect-config, schema/index generation, and case replay
-- `spoon-indexer-java`: Spoon-based facade semantic indexer
+- `spoon-indexer-java`: Spoon-based facade indexer
 - `skills/`: Claude Code skills bundled with the CLI (currently `call-rpc`)
 
 ## Prerequisites

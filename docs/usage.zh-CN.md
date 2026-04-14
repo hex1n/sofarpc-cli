@@ -39,7 +39,7 @@
 - `internal/runtime`：runtime 选择、daemon 池、source 解析、诊断
 - `runtime-worker-java`：Java worker runtime
 - `internal/rpctest`：Go 版 detect-config、schema/index 生成与 case 回放实现
-- `spoon-indexer-java`：基于 Spoon 的 facade 语义索引器
+- `spoon-indexer-java`：基于 Spoon 的 facade 索引器
 - `skills/`：随 CLI 一起分发的 Claude Code skills（当前是 `call-rpc`）
 
 ## 前置依赖
