@@ -24,6 +24,7 @@ type Spec struct {
 	JavaMajor      string
 	RuntimeJar     string
 	RuntimeDigest  string
+	DaemonProfile  string
 	StubPaths      []string
 	ClasspathHash  string
 	DaemonKey      string
@@ -74,6 +75,7 @@ func (m *Manager) ResolveSpec(javaBin, runtimeJar, version string, stubPaths []s
 	if err != nil {
 		return Spec{}, err
 	}
+	profile := daemonProfile(version, digest, javaMajor)
 	normalized, err := normalizePaths(stubPaths)
 	if err != nil {
 		return Spec{}, err
@@ -82,7 +84,7 @@ func (m *Manager) ResolveSpec(javaBin, runtimeJar, version string, stubPaths []s
 	if err != nil {
 		return Spec{}, err
 	}
-	key := hashStrings([]string{version, digest, classpathHash, javaMajor})
+	key := hashStrings([]string{profile, classpathHash})
 	daemonDir := m.DaemonDir()
 	return Spec{
 		SofaRPCVersion: version,
@@ -90,6 +92,7 @@ func (m *Manager) ResolveSpec(javaBin, runtimeJar, version string, stubPaths []s
 		JavaMajor:      javaMajor,
 		RuntimeJar:     runtimeJar,
 		RuntimeDigest:  digest,
+		DaemonProfile:  profile,
 		StubPaths:      normalized,
 		ClasspathHash:  classpathHash,
 		DaemonKey:      key,
@@ -97,4 +100,8 @@ func (m *Manager) ResolveSpec(javaBin, runtimeJar, version string, stubPaths []s
 		StdoutLog:      filepath.Join(daemonDir, key+".stdout.log"),
 		StderrLog:      filepath.Join(daemonDir, key+".stderr.log"),
 	}, nil
+}
+
+func daemonProfile(version, runtimeDigest, javaMajor string) string {
+	return hashStrings([]string{version, runtimeDigest, javaMajor})
 }

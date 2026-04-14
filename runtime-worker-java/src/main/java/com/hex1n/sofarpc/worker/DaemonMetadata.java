@@ -5,6 +5,9 @@ public class DaemonMetadata {
     public String host;
     public int port;
     public String startedAt;
+    public String runtimeDigest;
+    public String javaMajor;
+    public String daemonProfile;
     public String runtimeVersion;
     public String protocolVersion;
 }

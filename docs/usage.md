@@ -323,6 +323,7 @@ sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderSer
 
 Schemas live in `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`; `classpathDigest` changes whenever a stub jar's content changes, so rebuilt jars invalidate automatically.
 Daemon keys use the same stub-content digest, so changing stub byte content changes the `daemon-key` and forces a fresh worker lifecycle.
+When this happens, older loopback daemons for the same runtime profile are stopped automatically so stale worker processes are replaced cleanly.
 
 ## How Resolution Works
 

@@ -125,6 +125,10 @@ func (m *Manager) EnsureDaemon(ctx context.Context, spec Spec) (model.DaemonMeta
 		default:
 		}
 		if metadata, ok := m.loadMetadata(spec.MetadataFile); ok && daemonReachable(metadata) {
+			if _, err := m.retireProfileDaemons(spec); err != nil {
+				// Keep daemon startup as success even if retirement of old workers fails.
+				// Best-effort cleanup keeps current invocation available.
+			}
 			return metadata, nil
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -192,6 +196,46 @@ func (m *Manager) daemonRecordFromFile(path string) model.DaemonRecord {
 	record.Ready = daemonReachable(metadata)
 	record.Stale = !record.Ready
 	return record
+}
+
+func (m *Manager) retireProfileDaemons(spec Spec) ([]model.DaemonAction, error) {
+	records, err := m.ListDaemons()
+	if err != nil {
+		return nil, err
+	}
+	actions := make([]model.DaemonAction, 0, len(records))
+	for _, record := range records {
+		if !daemonMatchesProfile(record, spec) {
+			continue
+		}
+		action, err := m.StopDaemon(record.Key)
+		if err != nil {
+			return nil, err
+		}
+		actions = append(actions, action)
+	}
+	return actions, nil
+}
+
+func daemonMatchesProfile(record model.DaemonRecord, spec Spec) bool {
+	if record.Key == "" || record.Metadata == nil {
+		return false
+	}
+	if record.Key == spec.DaemonKey {
+		return false
+	}
+	if !isLoopbackHost(record.Metadata.Host) {
+		return false
+	}
+	if record.Metadata.DaemonProfile != "" {
+		return record.Metadata.DaemonProfile == spec.DaemonProfile
+	}
+	if record.Metadata.RuntimeVersion == spec.SofaRPCVersion &&
+		record.Metadata.RuntimeDigest == "" &&
+		record.Metadata.JavaMajor == "" {
+		return true
+	}
+	return false
 }
 
 func daemonReachable(metadata model.DaemonMetadata) bool {
@@ -285,6 +329,12 @@ func (m *Manager) startDaemon(spec Spec, address string) error {
 		address,
 		"--metadata-file",
 		spec.MetadataFile,
+		"--runtime-profile",
+		spec.DaemonProfile,
+		"--runtime-digest",
+		spec.RuntimeDigest,
+		"--java-major",
+		spec.JavaMajor,
 	)
 	command.Stdout = stdoutFile
 	command.Stderr = stderrFile

@@ -182,6 +182,103 @@ func TestStopDaemonKillsReachableLoopbackProcess(t *testing.T) {
 	}
 }
 
+func TestRetireProfileDaemonsStopsMatchingProfile(t *testing.T) {
+	manager := testManager(t)
+	spec := Spec{
+		SofaRPCVersion: "5.7.6",
+		RuntimeDigest:  "runtime-digest",
+		JavaMajor:      "17",
+		DaemonProfile:  daemonProfile("5.7.6", "runtime-digest", "17"),
+		DaemonKey:      "current-key",
+	}
+
+	match1 := model.DaemonMetadata{
+		RuntimeVersion: "5.7.6",
+		RuntimeDigest:  "runtime-digest",
+		JavaMajor:      "17",
+		DaemonProfile:  daemonProfile("5.7.6", "runtime-digest", "17"),
+	}
+	match2 := model.DaemonMetadata{
+		RuntimeVersion: "5.7.6",
+		RuntimeDigest:  "runtime-digest",
+		JavaMajor:      "17",
+		DaemonProfile:  daemonProfile("5.7.6", "runtime-digest", "17"),
+	}
+	legacy := model.DaemonMetadata{
+		RuntimeVersion: "5.7.6",
+	}
+	keep := model.DaemonMetadata{
+		RuntimeVersion: "5.7.7",
+		RuntimeDigest:  "other-digest",
+		JavaMajor:      "17",
+		DaemonProfile:  daemonProfile("5.7.7", "other-digest", "17"),
+	}
+
+	matchCmd1 := spawnLoopbackDaemonProcess(t, manager, "match-1", &match1)
+	matchCmd2 := spawnLoopbackDaemonProcess(t, manager, "match-2", &match2)
+	legacyCmd := spawnLoopbackDaemonProcess(t, manager, "legacy", &legacy)
+	spawnLoopbackDaemonProcess(t, manager, "keep", &keep)
+
+	actions, err := manager.retireProfileDaemons(spec)
+	if err != nil {
+		t.Fatalf("retireProfileDaemons() error = %v", err)
+	}
+	if len(actions) != 3 {
+		t.Fatalf("expected 3 retired daemons, got %d", len(actions))
+	}
+
+	assertMissing(t, filepath.Join(manager.DaemonDir(), "match-1.json"))
+	assertMissing(t, filepath.Join(manager.DaemonDir(), "match-2.json"))
+	assertMissing(t, filepath.Join(manager.DaemonDir(), "legacy.json"))
+	assertExists(t, filepath.Join(manager.DaemonDir(), "keep.json"))
+	waitForReachable(t, keep.Host, keep.Port)
+
+	waitForProcessExit(t, matchCmd1)
+	waitForProcessExit(t, matchCmd2)
+	waitForProcessExit(t, legacyCmd)
+}
+
+func waitForProcessExit(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("expected process %d to exit after stop", cmd.Process.Pid)
+	}
+}
+
+func spawnLoopbackDaemonProcess(t *testing.T, manager *Manager, key string, metadata *model.DaemonMetadata) *exec.Cmd {
+	t.Helper()
+	if metadata == nil {
+		metadata = &model.DaemonMetadata{}
+	}
+	addressFile := filepath.Join(t.TempDir(), key+".txt")
+	cmd := exec.Command(os.Args[0], "-test.run=TestHelperLoopbackDaemonProcess", "--", addressFile)
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_DAEMON=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	address := waitForAddressFile(t, addressFile)
+	metadata.Host, metadata.Port = splitListenerAddress(t, address)
+	metadata.PID = cmd.Process.Pid
+	if metadata.StartedAt == "" {
+		metadata.StartedAt = "2026-01-01T00:00:00Z"
+	}
+	writeDaemonMetadata(t, manager, key, *metadata)
+	return cmd
+}
+
 func TestInstallRuntimeCopiesJarAndWritesMetadata(t *testing.T) {
 	manager := testManager(t)
 	sourceJar := filepath.Join(t.TempDir(), "worker.jar")
