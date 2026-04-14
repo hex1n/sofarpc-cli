@@ -63,12 +63,14 @@ type TargetConfig struct {
 
 type InvocationRequest struct {
 	RequestID           string          `json:"requestId"`
+	Action              string          `json:"action,omitempty"`
 	Service             string          `json:"service"`
 	Method              string          `json:"method"`
 	ParamTypes          []string        `json:"paramTypes,omitempty"`
 	ParamTypeSignatures []string        `json:"paramTypeSignatures,omitempty"`
 	Args                json.RawMessage `json:"args"`
 	PayloadMode         string          `json:"payloadMode"`
+	Refresh             bool            `json:"refresh,omitempty"`
 	Target              TargetConfig    `json:"target"`
 }
 

@@ -29,7 +29,7 @@
 - 本地 runtime 安装与缓存
 - runtime source：`file`、`directory`
 - 本地 daemon 查看与清理
-- interface 反射与进程内 schema 缓存
+- 接口反射由 daemon 进程内存缓存
 
 ## 仓库结构
 
@@ -304,7 +304,7 @@ sofarpc call `
 
 ## Describe
 
-反射 stub jar 里的接口，打印方法签名。结果在单次 `sofarpc` 进程内缓存（按 stub jar 内容 key），便于同一进程内重复 `describe` 时加速。
+反射 stub jar 里的接口，打印方法签名。schema 结果由 runtime daemon 进程内存缓存，共享给使用同一 `daemon-key` 的 CLI 进程（按 service 与 classpath digest 缓存）。
 
 ```powershell
 sofarpc describe --stub-path target\order-api.jar com.example.OrderService
@@ -318,7 +318,7 @@ flag 必须放在位置参数 FQCN 前面（Go 的 flag 解析器遇到第一个
 sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderService
 ```
 
-schema 结果不会落盘存储在本地文件，只保留在当前 `sofarpc` 进程内存中。
+schema 结果不会落盘，不写本地文件，只保留在 daemon 进程内存中；daemon 退出即失效。
 daemon key 也使用同一份 stub 内容摘要；stub jar 内容变化会触发新的 `daemon-key`，自动拉起新 worker，避免复用旧进程。新 worker 启动后，同一 runtime profile 下的历史 loopback worker 会被自动停止，减少旧进程留存。
 
 ## 解析顺序

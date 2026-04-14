@@ -30,7 +30,7 @@ Current runtime features:
 - local runtime install and cache
 - runtime sources: `file`, `directory`
 - local daemon inspection and cleanup
-- interface reflection with in-process schema cache
+- interface reflection with daemon in-memory schema cache
 
 ## Repo Layout
 
@@ -307,7 +307,7 @@ Use `@file` or stdin to dodge PowerShell / bash JSON escaping.
 
 ## Describe
 
-Reflect an interface from its stub jar and print the method signatures. Result is cached in process memory for each `sofarpc` process invocation (keyed by stub-jar content), so repeated `describe` calls in one process are fast.
+Reflect an interface from its stub jar and print the method signatures. The schema is cached in-memory by the runtime daemon (shared by CLI processes using the same daemon key), keyed by stub classpath and service.
 
 ```powershell
 sofarpc describe --stub-path target\order-api.jar com.example.OrderService
@@ -321,7 +321,7 @@ Bypass the cache and re-run the worker:
 sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderService
 ```
 
-Schema results are not persisted to disk by `sofarpc` CLI; they are cached only in memory of the current process.
+Schema results are not persisted to disk by `sofarpc` CLI. Cache is process-memory only in each runtime daemon and disappears when that daemon exits.
 Daemon keys use the same stub-content digest, so changing stub byte content changes the `daemon-key` and forces a fresh worker lifecycle.
 When this happens, older loopback daemons for the same runtime profile are stopped automatically so stale worker processes are replaced cleanly.
 
