@@ -3,11 +3,14 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
 	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/rpctest"
 )
 
 type invocationInputs struct {
@@ -54,14 +57,9 @@ func (a *App) resolveInvocation(input invocationInputs) (resolvedInvocation, err
 	if err != nil {
 		return resolvedInvocation{}, err
 	}
-	activeName := firstNonEmpty(input.ContextName, manifest.DefaultContext, store.Active)
-	activeContext := model.Context{}
-	if activeName != "" {
-		contextValue, ok := store.Contexts[activeName]
-		if !ok {
-			return resolvedInvocation{}, fmt.Errorf("context %q does not exist", activeName)
-		}
-		activeContext = contextValue
+	activeName, activeContext := resolveActiveContext(store, input.ContextName, manifest.DefaultContext, a.Cwd, manifestPath)
+	if activeName != "" && activeContext.Name == "" {
+		return resolvedInvocation{}, fmt.Errorf("context %q does not exist", activeName)
 	}
 	serviceName := input.Service
 	serviceConfig := manifest.Services[serviceName]
@@ -156,6 +154,29 @@ func inputMode(input invocationInputs) string {
 	}
 }
 
+func resolveActiveContext(store model.ContextStore, explicitContextName, manifestContextName, cwd, manifestPath string) (string, model.Context) {
+	contextName := firstNonEmpty(explicitContextName, manifestContextName)
+	if contextName != "" {
+		ctx, ok := store.Contexts[contextName]
+		if ok {
+			return contextName, ctx
+		}
+		return contextName, model.Context{}
+	}
+	projectMatchedName, projectMatchedContext := resolveProjectContext(store.Contexts, projectAwareRoot(cwd, manifestPath))
+	if projectMatchedName != "" {
+		return projectMatchedName, projectMatchedContext
+	}
+	if store.Active != "" {
+		activeContext, ok := store.Contexts[store.Active]
+		if !ok {
+			return store.Active, model.Context{}
+		}
+		return store.Active, activeContext
+	}
+	return "", model.Context{}
+}
+
 func resolveStubPaths(cwd, manifestPath string, manifestPaths []string, rawCSV string) ([]string, error) {
 	var candidates []string
 	switch {
@@ -165,7 +186,11 @@ func resolveStubPaths(cwd, manifestPath string, manifestPaths []string, rawCSV s
 		candidates = manifestPaths
 	}
 	if len(candidates) == 0 {
-		return nil, nil
+		autoCandidates, err := autoResolveStubPaths(cwd, manifestPath)
+		if err != nil {
+			return nil, nil
+		}
+		return autoCandidates, nil
 	}
 	baseDir := cwd
 	if manifestPath != "" {
@@ -184,4 +209,151 @@ func resolveStubPaths(cwd, manifestPath string, manifestPaths []string, rawCSV s
 		normalized = append(normalized, filepath.Clean(absolute))
 	}
 	return normalized, nil
+}
+
+func projectAwareRoot(cwd, manifestPath string) string {
+	if strings.TrimSpace(manifestPath) != "" {
+		manifestDir := filepath.Dir(manifestPath)
+		if manifestDir != "" {
+			if abs, err := filepath.Abs(manifestDir); err == nil {
+				return abs
+			}
+		}
+	}
+	if abs, err := filepath.Abs(cwd); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(cwd)
+}
+
+func resolveProjectContext(contexts map[string]model.Context, projectRoot string) (string, model.Context) {
+	projectRoot, err := filepath.Abs(projectRoot)
+	if err != nil {
+		projectRoot = filepath.Clean(projectRoot)
+	}
+	bestName := ""
+	bestContext := model.Context{}
+	bestWeight := -1
+	for name, contextValue := range contexts {
+		if strings.TrimSpace(contextValue.ProjectRoot) == "" {
+			continue
+		}
+		rawRoot, err := filepath.Abs(contextValue.ProjectRoot)
+		if err != nil {
+			continue
+		}
+		rawRoot = filepath.Clean(rawRoot)
+		if !isUnderPath(projectRoot, rawRoot) {
+			continue
+		}
+		weight := strings.Count(rawRoot, string(filepath.Separator))
+		if weight > bestWeight || (weight == bestWeight && name < bestName) {
+			bestWeight = weight
+			bestName = name
+			bestContext = contextValue
+		}
+	}
+	return bestName, bestContext
+}
+
+func isUnderPath(path, root string) bool {
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return relative == "." || (!strings.HasPrefix(relative, "..") && relative != "")
+}
+
+func autoResolveStubPaths(cwd, manifestPath string) ([]string, error) {
+	projectRoot := resolveProjectRootForAutoStub(cwd, manifestPath)
+	cfg, err := rpctest.LoadConfig(projectRoot, true)
+	if err != nil {
+		return nil, nil
+	}
+	paths := discoverStubPathsFromConfig(projectRoot, cfg)
+	return normalizeStubPaths(paths)
+}
+
+func resolveProjectRootForAutoStub(cwd, manifestPath string) string {
+	base := filepath.Dir(manifestPath)
+	if manifestPath == "" || base == "." || base == "" || base == string(filepath.Separator) {
+		return cwd
+	}
+	return base
+}
+
+func discoverStubPathsFromConfig(projectRoot string, cfg rpctest.Config) []string {
+	seen := map[string]struct{}{}
+	for _, module := range cfg.FacadeModules {
+		if module.JarGlob != "" {
+			for _, path := range resolveFacadeGlob(projectRoot, module.JarGlob) {
+				seen[filepath.Clean(path)] = struct{}{}
+			}
+		}
+		if module.DepsDir != "" {
+			for _, path := range resolveFacadeDeps(projectRoot, module.DepsDir) {
+				seen[filepath.Clean(path)] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for item := range seen {
+		out = append(out, item)
+	}
+	return out
+}
+
+func normalizeStubPaths(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	normalized := make([]string, 0, len(paths))
+	seen := map[string]struct{}{}
+	for _, item := range paths {
+		clean := filepath.Clean(item)
+		if _, err := os.Stat(clean); err != nil {
+			continue
+		}
+		if _, exists := seen[clean]; exists {
+			continue
+		}
+		seen[clean] = struct{}{}
+		normalized = append(normalized, clean)
+	}
+	sort.Strings(normalized)
+	return normalized, nil
+}
+
+func resolveFacadeGlob(projectRoot, pattern string) []string {
+	patternPath := pattern
+	if !filepath.IsAbs(patternPath) {
+		patternPath = filepath.Join(projectRoot, patternPath)
+	}
+	matches, err := filepath.Glob(patternPath)
+	if err != nil {
+		return nil
+	}
+	return matches
+}
+
+func resolveFacadeDeps(projectRoot, depsDir string) []string {
+	root := depsDir
+	if !filepath.IsAbs(root) {
+		root = filepath.Join(projectRoot, depsDir)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var jarFiles []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(entry.Name()), ".jar") {
+			continue
+		}
+		jarFiles = append(jarFiles, filepath.Join(root, entry.Name()))
+	}
+	return jarFiles
 }

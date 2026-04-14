@@ -45,6 +45,9 @@ func New(stdin io.Reader, stdout, stderr io.Writer, cwd string) (*App, error) {
 	if err := paths.Ensure(); err != nil {
 		return nil, err
 	}
+	if err := config.EnsureContextTemplate(paths); err != nil {
+		return nil, err
+	}
 	return &App{
 		Stdin:   stdin,
 		Stdout:  stdout,

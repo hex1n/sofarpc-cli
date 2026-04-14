@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -212,5 +214,98 @@ func TestResolveInvocationPrefersFlagUniqueIDOverServiceUniqueID(t *testing.T) {
 	}
 	if got := resolved.Request.Target.UniqueID; got != "flag-uid" {
 		t.Fatalf("expected flag uniqueId to win, got %q", got)
+	}
+}
+
+func TestResolveActiveContextSelectsProjectContextBeforeActive(t *testing.T) {
+	cwd := t.TempDir()
+	repoRoot := filepath.Join(cwd, "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("create repo root: %v", err)
+	}
+	store := model.ContextStore{
+		Active: "global",
+		Contexts: map[string]model.Context{
+			"global": {
+				Name:        "global",
+				Mode:        model.ModeDirect,
+				DirectURL:   "bolt://127.0.0.1:12200",
+				ProjectRoot: "",
+			},
+			"project-a": {
+				Name:        "project-a",
+				Mode:        model.ModeDirect,
+				DirectURL:   "bolt://127.0.0.1:12201",
+				ProjectRoot: repoRoot,
+			},
+		},
+	}
+	name, ctx := resolveActiveContext(store, "", "", repoRoot, filepath.Join(repoRoot, "sofarpc.manifest.json"))
+	if name != "project-a" {
+		t.Fatalf("expected project context name, got %q", name)
+	}
+	if ctx.DirectURL != "bolt://127.0.0.1:12201" {
+		t.Fatalf("expected project context direct URL, got %q", ctx.DirectURL)
+	}
+}
+
+func TestAutoResolveStubPathsFromFacadeConfig(t *testing.T) {
+	project := t.TempDir()
+	cfgDir := filepath.Join(project, ".sofarpc")
+	modDir := filepath.Join(project, "api", "build", "libs")
+	depsDir := filepath.Join(project, "api", "target", "facade-deps")
+	if err := os.MkdirAll(modDir, 0o755); err != nil {
+		t.Fatalf("create module dir: %v", err)
+	}
+	if err := os.MkdirAll(depsDir, 0o755); err != nil {
+		t.Fatalf("create deps dir: %v", err)
+	}
+
+	jarFile := filepath.Join(modDir, "order-facade-1.0.0.jar")
+	if err := os.WriteFile(jarFile, []byte("fake"), 0o644); err != nil {
+		t.Fatalf("write jar file: %v", err)
+	}
+	depFile := filepath.Join(depsDir, "dep-1.0.0.jar")
+	if err := os.WriteFile(depFile, []byte("fake"), 0o644); err != nil {
+		t.Fatalf("write dep file: %v", err)
+	}
+
+	cfgPath := filepath.Join(cfgDir, "config.json")
+	cfg := struct {
+		FacadeModules []struct {
+			Name    string `json:"name"`
+			JarGlob string `json:"jarGlob"`
+			DepsDir string `json:"depsDir"`
+		} `json:"facadeModules"`
+	}{
+		FacadeModules: []struct {
+			Name    string `json:"name"`
+			JarGlob string `json:"jarGlob"`
+			DepsDir string `json:"depsDir"`
+		}{
+			{
+				Name:    "order",
+				JarGlob: "api/build/libs/*-facade-*.jar",
+				DepsDir: "api/target/facade-deps",
+			},
+		},
+	}
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("create .sofarpc dir: %v", err)
+	}
+	if body, err := json.Marshal(cfg); err == nil {
+		if err := os.WriteFile(cfgPath, append(body, '\n'), 0o644); err != nil {
+			t.Fatalf("write facade config: %v", err)
+		}
+	} else {
+		t.Fatalf("marshal facade config: %v", err)
+	}
+
+	paths, err := resolveStubPaths(project, filepath.Join(project, "sofarpc.manifest.json"), nil, "")
+	if err != nil {
+		t.Fatalf("resolveStubPaths() error = %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("expected 2 stub paths, got %d", len(paths))
 	}
 }

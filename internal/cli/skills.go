@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/hex1n/sofarpc-cli/internal/config"
 )
 
 const (
@@ -114,6 +116,12 @@ func (a *App) runSkillsInstall(args []string) error {
 		if err := a.writeUserShim(installRoot, shimDir); err != nil {
 			fmt.Fprintf(a.Stdout, "warning: failed to write user shim: %v\n", err)
 		}
+	}
+	if err := config.EnsureContextTemplate(a.Paths); err != nil {
+		fmt.Fprintf(a.Stdout, "warning: context template not initialized: %v\n", err)
+	} else {
+		fmt.Fprintf(a.Stdout, "context template: %s\n", a.Paths.ContextTemplateFile)
+		fmt.Fprintln(a.Stdout, "fill and copy it to contexts.json when ready.")
 	}
 	fmt.Fprintf(a.Stdout, "next: sofarpc facade init   (run from your project root)\n")
 	return nil

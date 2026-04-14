@@ -13,10 +13,11 @@ import (
 const appName = "sofarpc-cli"
 
 type Paths struct {
-	ConfigDir          string
-	CacheDir           string
-	ContextsFile       string
-	RuntimeSourcesFile string
+	ConfigDir           string
+	CacheDir            string
+	ContextsFile        string
+	RuntimeSourcesFile  string
+	ContextTemplateFile string
 }
 
 func ResolvePaths() (Paths, error) {
@@ -30,10 +31,11 @@ func ResolvePaths() (Paths, error) {
 	}
 	configDir := filepath.Join(configRoot, appName)
 	return Paths{
-		ConfigDir:          configDir,
-		CacheDir:           filepath.Join(cacheRoot, appName),
-		ContextsFile:       filepath.Join(configDir, "contexts.json"),
-		RuntimeSourcesFile: filepath.Join(configDir, "runtime-sources.json"),
+		ConfigDir:           configDir,
+		CacheDir:            filepath.Join(cacheRoot, appName),
+		ContextsFile:        filepath.Join(configDir, "contexts.json"),
+		RuntimeSourcesFile:  filepath.Join(configDir, "runtime-sources.json"),
+		ContextTemplateFile: filepath.Join(configDir, "contexts.template.json"),
 	}, nil
 }
 
@@ -70,6 +72,49 @@ func SaveContextStore(paths Paths, store model.ContextStore) error {
 		store.Contexts = map[string]model.Context{}
 	}
 	return writeJSON(paths.ContextsFile, store)
+}
+
+func defaultContextTemplate() map[string]any {
+	return map[string]any{
+		"_comment": `Copy this file to contexts.json and fill project-specific values.
+projectRoot can be set for per-project auto matching. Leave it empty for global fallback contexts.
+After editing, run: cp <path>/contexts.template.json <path>/contexts.json`,
+		"active": "",
+		"contexts": map[string]any{
+			"local-dev": map[string]any{
+				"_comment":         "Example for local direct mode",
+				"name":             "local-dev",
+				"projectRoot":      "/absolute/path/to/project-a",
+				"mode":             "direct",
+				"directUrl":        "bolt://127.0.0.1:12200",
+				"protocol":         "bolt",
+				"serialization":    "hessian2",
+				"timeoutMs":        3000,
+				"connectTimeoutMs": 1000,
+			},
+			"remote-registry": map[string]any{
+				"_comment":         "Example for registry mode",
+				"name":             "remote-registry",
+				"mode":             "registry",
+				"registryAddress":  "zookeeper://127.0.0.1:2181",
+				"registryProtocol": "zookeeper",
+				"protocol":         "bolt",
+				"serialization":    "hessian2",
+				"timeoutMs":        3000,
+				"connectTimeoutMs": 1000,
+			},
+		},
+	}
+}
+
+func EnsureContextTemplate(paths Paths) error {
+	if _, err := os.Stat(paths.ContextTemplateFile); err == nil {
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	body := defaultContextTemplate()
+	return writeJSON(paths.ContextTemplateFile, body)
 }
 
 func LoadRuntimeSourceStore(paths Paths) (model.RuntimeSourceStore, error) {

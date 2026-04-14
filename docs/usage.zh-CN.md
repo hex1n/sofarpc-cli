@@ -184,6 +184,15 @@ go run ./cmd/sofarpc context set dev-zk `
   --serialization hessian2
 ```
 
+按项目自动选择的 context（同一台机器可维护多个项目）：
+
+```powershell
+go run ./cmd/sofarpc context set project-a `
+  --project-root C:\code\project-a `
+  --direct-url bolt://127.0.0.1:12200 `
+  --protocol bolt
+```
+
 切换激活的 context：
 
 ```powershell
@@ -363,6 +372,7 @@ schema 存在 `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`；`
 
 - `--context`
 - `manifest.defaultContext`
+- `context.set --project-root` 匹配当前项目路径（在没有显式 context 与 manifest defaultContext 时）
 - 当前激活的本地 context
 
 ### SOFARPC runtime 版本优先级
@@ -375,6 +385,7 @@ schema 存在 `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`；`
 
 - `--stub-path`
 - `manifest.stubPaths`
+- 若两者都未配置，自动从 `<project>/.sofarpc/config.json` 的 `jarGlob` / `depsDir` 发现 jar
 
 ### 方法元信息优先级
 
@@ -620,7 +631,13 @@ CLI 通过 `os.UserConfigDir()` 与 `os.UserCacheDir()` 把本地状态存放在
 配置文件：
 
 - `<configDir>/sofarpc-cli/contexts.json`
+- `<configDir>/sofarpc-cli/contexts.template.json`
 - `<configDir>/sofarpc-cli/runtime-sources.json`
+
+初始化方式：
+
+- `sofarpc skills install` 会输出模板文件路径 `contexts.template.json`
+- 将模板复制为 `contexts.json` 后按需填写多个 context（可用 `projectRoot` 做项目映射）
 
 缓存文件：
 
@@ -631,6 +648,7 @@ CLI 通过 `os.UserConfigDir()` 与 `os.UserCacheDir()` 把本地状态存放在
 Windows 上的典型位置：
 
 - `%AppData%\sofarpc-cli\contexts.json`
+- `%AppData%\sofarpc-cli\contexts.template.json`
 - `%AppData%\sofarpc-cli\runtime-sources.json`
 - `%LocalAppData%\sofarpc-cli\runtimes\`
 - `%LocalAppData%\sofarpc-cli\daemons\`
