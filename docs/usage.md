@@ -40,7 +40,7 @@ Current runtime features:
 - `internal/runtime`: runtime selection, daemon pool, source resolution, diagnostics
 - `runtime-worker-java`: Java worker runtime
 - `internal/rpctest`: Go implementation of detect-config, schema/index generation, and case replay
-- `skills/call-rpc/indexer-java`: Spoon-based facade semantic indexer
+- `spoon-indexer-java`: Spoon-based facade semantic indexer
 - `skills/`: Claude Code skills bundled with the CLI (currently `call-rpc`)
 
 ## Prerequisites
@@ -109,9 +109,9 @@ For everyday use, a built binary on `PATH` is faster and avoids recompiling.
 
 ## Claude Code Skills
 
-The CLI ships a `call-rpc` skill at `skills/call-rpc/` that
-automates facade invocation and result validation for any SOFABoot project.
-Installing copies it to `~/.claude/skills/` so Claude Code picks it up globally.
+The CLI ships a `call-rpc` skill at `skills/call-rpc/` that is a thin wrapper
+for `sofarpc call`. Installing copies it to `~/.claude/skills/` so Claude Code
+picks it up globally.
 
 ### Install
 
@@ -123,40 +123,13 @@ sofarpc skills where                    # show source / target paths
 sofarpc skills list                     # list bundled skills
 ```
 
-`sofarpc facade ...` is the CLI entrypoint for these helpers.
+The skill does not bootstrap projects, build indexes, or run cases.
+Use CLI facade subcommands directly when needed.
 
-### Per-project state
-
-Each SOFABoot project stores its own config, generated index, and test cases
-under `<project>/.sofarpc/`:
-
-```
-.sofarpc/
-  config.json              # facade modules, mvn command, default context, ...
-  index/<FQN>.json         # generated facade skeletons
-  cases/<Service>_<method>.json  # hand-written cases
-  cases/_runs/             # optional per-case run logs
-```
-
-To inspect what a project resolves to:
+### Typical invocation
 
 ```powershell
-sofarpc facade where
-sofarpc facade where --project C:\path\to\project
-```
-
-Bootstrap a project:
-
-```powershell
-# 1. detect facades and write config.json
-sofarpc facade detect-config --write
-
-# 2. build facade index
-sofarpc facade build-index
-
-# 3. batch-invoke cases
-sofarpc facade run-cases --dry-run
-sofarpc facade run-cases --save
+sofarpc call --context prod -data '[...]' com.example.OrderFacade.createOrder
 ```
 
 ## Quick Start

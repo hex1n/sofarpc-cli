@@ -39,7 +39,7 @@
 - `internal/runtime`：runtime 选择、daemon 池、source 解析、诊断
 - `runtime-worker-java`：Java worker runtime
 - `internal/rpctest`：Go 版 detect-config、schema/index 生成与 case 回放实现
-- `skills/call-rpc/indexer-java`：基于 Spoon 的 facade 语义索引器
+- `spoon-indexer-java`：基于 Spoon 的 facade 语义索引器
 - `skills/`：随 CLI 一起分发的 Claude Code skills（当前是 `call-rpc`）
 
 ## 前置依赖
@@ -108,9 +108,8 @@ go run ./cmd/sofarpc help
 
 ## Claude Code Skill
 
-仓库 `skills/call-rpc/` 下是 `call-rpc` skill，能在任意 SOFABoot
-项目里驱动 facade 实际调用与结果验证。安装后会复制到 `~/.claude/skills/`，
-Claude Code 全局可见。
+仓库 `skills/call-rpc/` 下是 `call-rpc` skill，安装后会复制到
+`~/.claude/skills/`，本质上是 `sofarpc call` 的薄封装入口。
 
 ### 安装
 
@@ -122,41 +121,12 @@ sofarpc skills where                    # 查看源/目标路径
 sofarpc skills list                     # 列出仓库内 skill
 ```
 
-这些 helper 的 CLI 入口是 `sofarpc facade ...`。
+skill 不做项目接入、索引构建或用例回放；这些仍然是 `sofarpc facade ...` 的范围。
 
-### 每项目状态
-
-每个 SOFABoot 项目的 config、生成的 index、用例主位置都在
-`<project>/.sofarpc/` 下：
-
-```
-.sofarpc/
-  config.json              # facade 模块、mvn 命令、默认 context ...
-  index/<FQN>.json         # 生成的 facade 骨架
-  cases/<Service>_<method>.json  # 手写用例
-  cases/_runs/             # 可选的每次运行记录
-```
-
-`sofarpc facade detect-config --write` 和 `sofarpc facade init` 会写主位置。
-`build-index` / `run-cases` 使用主状态目录。想确认当前项目使用什么目录，跑：
+### 常见调用
 
 ```powershell
-sofarpc facade where
-sofarpc facade where --project C:\path\to\project
-```
-
-初始化一个项目：
-
-```powershell
-# 1. 探测 facade 模块并写出 config.json
-sofarpc facade detect-config --write
-
-# 2. 生成 facade 骨架索引
-sofarpc facade build-index
-
-# 3. 批量执行用例
-sofarpc facade run-cases --dry-run
-sofarpc facade run-cases --save
+sofarpc call --context prod -data '[...]' com.example.OrderFacade.createOrder
 ```
 
 ## 快速上手

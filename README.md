@@ -30,17 +30,17 @@ go run ./cmd/sofarpc help
 
 ## Claude Code skills
 
-The repo ships a `call-rpc` Claude Code skill that drives facade
-invocation and result validation on any SOFABoot project. Install once at user scope:
+The repo ships a `call-rpc` Claude Code skill that triggers `sofarpc call` for
+SOFABoot projects. Install once at user scope:
 
 ```powershell
 sofarpc skills install          # copies skills/call-rpc -> ~/.claude/skills/
 sofarpc skills where            # show source / target paths
 ```
 
-Per-project state lives at `<project>/.sofarpc/` only.
-`detect-config`, `build-index`, `schema`, and `run-cases` execute directly in the
-Go CLI; no Python runtime is required.
+The skill intentionally does not handle project bootstrap, index generation,
+cases, or result interpretation. It is a thin wrapper around the `sofarpc call`
+command.
 
 For full usage, examples, manifest format, runtime source management, and
 diagnostics, see [docs/usage.md](./docs/usage.md).
