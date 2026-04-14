@@ -75,6 +75,10 @@ func (a *App) Run(args []string) error {
 		return a.runContext(args[1:])
 	case "manifest":
 		return a.runManifest(args[1:])
+	case "skills":
+		return a.runSkills(args[1:])
+	case "rpc-test":
+		return a.runRPCTest(args[1:])
 	case "help":
 		a.printUsage()
 		return nil
@@ -95,6 +99,8 @@ Commands:
   runtime   install and inspect locally cached Java worker runtimes
   context   manage reusable target contexts
   manifest  initialize or generate a project manifest
+  skills    install or inspect bundled agent skills (call-rpc, ...)
+  rpc-test  bootstrap + drive facade invocation helpers (init/detect-config/build-index/run-cases)
 `))
 }
 

@@ -39,6 +39,8 @@ Current runtime features:
 - `internal/config`: local config and manifest persistence
 - `internal/runtime`: runtime selection, daemon pool, source resolution, diagnostics
 - `runtime-worker-java`: Java worker runtime
+- `sofarpc_cli/`: Python library shared by the bundled skills and user scripts (`pyproject.toml`, `tests/`). Not a replacement for the Go CLI — scope is the per-project data layout (config, index, cases).
+- `skills/`: Claude Code skills bundled with the CLI (currently `call-rpc`)
 
 ## Prerequisites
 
@@ -103,6 +105,93 @@ go run ./cmd/sofarpc help
 ```
 
 For everyday use, a built binary on `PATH` is faster and avoids recompiling.
+
+## Claude Code Skills
+
+The CLI ships a `call-rpc` skill at `skills/call-rpc/` that
+automates facade invocation and result validation for any SOFABoot project.
+Installing copies it to `~/.claude/skills/` so Claude Code picks it up globally.
+
+### Install
+
+```powershell
+sofarpc skills install                  # default: copies call-rpc
+sofarpc skills install --force          # overwrite existing install
+sofarpc skills install --dry-run        # preview copy
+sofarpc skills where                    # show source / target paths
+sofarpc skills list                     # list bundled skills
+```
+
+`install` also writes a `tools/.sofarpc_install_root` marker alongside the
+copied files. The skill's Python bootstrap reads it to locate the
+`sofarpc_cli` package; the fallback chain is pip install →
+`$SOFARPC_HOME` → marker file → walk-up → `sofarpc` on `PATH`.
+
+`sofarpc rpc-test ...` remains the CLI entrypoint for these helpers, so older
+shell habits and docs continue to work while the skill itself uses the clearer
+`call-rpc` name.
+
+### Per-project state
+
+Each SOFABoot project stores its own config, generated index, and test cases
+primarily under `<project>/.sofarpc/`; older projects may still resolve to a
+legacy state dir:
+
+```
+.sofarpc/
+  config.json              # facade modules, mvn command, default context, ...
+  index/<FQN>.json         # generated facade skeletons (rebuilt by build_index.py)
+  cases/<Service>_<method>.json  # hand-written cases
+  cases/_runs/             # optional per-case run logs
+```
+
+The compatibility read order is `.sofarpc/` → `.claude/rpc-test/` →
+`.claude/skills/rpc-test/`. `detect-config --write` and `sofarpc rpc-test init`
+write the primary layout; `build-index` / `run-cases` continue operating on the
+currently effective layout. To inspect what a project resolves to:
+
+```powershell
+sofarpc rpc-test where
+sofarpc rpc-test where --project C:\path\to\project
+```
+
+Bootstrap a project:
+
+```powershell
+# 1. detect facades and write config.json
+sofarpc rpc-test detect-config --write
+
+# 2. build facade index
+sofarpc rpc-test build-index
+
+# 3. batch-invoke cases
+sofarpc rpc-test run-cases --dry-run
+sofarpc rpc-test run-cases --save
+```
+
+Legacy `<project>/.claude/rpc-test/config.json` and
+`<project>/.claude/skills/rpc-test/config.json` are still read automatically if
+the primary path is absent; `detect_config.py --write` migrates the content on
+first run.
+
+### `sofarpc_cli` Python package (optional pip install)
+
+`sofarpc_cli` is a **shared Python library** for the bundled skills and
+any user script that wants to read the same per-project layout. It is
+**not** a staging ground for replacing the Go CLI — the Go binary keeps
+the control plane (fast cold start, clean Windows subprocess semantics,
+single-binary distribution).
+
+The package ships with the repo and is editable-installable:
+
+```powershell
+pip install -e .
+pytest tests/
+```
+
+Only needed if you want `from sofarpc_cli import ...` to resolve without
+the marker-file fallback (e.g. for IDE autocomplete or writing your own
+scripts). The bundled skill works without it.
 
 ## Quick Start
 
@@ -345,6 +434,13 @@ Use this for:
 - plain JSON objects
 - `Map` / `List` style payloads
 - generic smoke tests
+- wrapper-style responses such as `OperationResult<T>` when stub jars are complete
+
+Notes:
+
+- raw mode is the preferred path when the worker classpath contains the DTO jar
+- when the top-level parameter is a declared DTO class, raw mode now materializes that class directly, so nested fields like `List<FundAssetItem>` are reconstructed correctly
+- the worker now falls back to field-based response serialization if helper getters like `dataOptional()` / `dataOrThrow()` explode during Jackson introspection
 
 Example:
 
@@ -365,11 +461,24 @@ Use this when:
 - worker classpath does not contain the DTO
 - you want to drive the generic path explicitly
 
+Limitations:
+
+- only the top-level `paramTypes` are declared to SOFARPC
+- nested custom collection elements such as `List<FundAssetItem>` can still arrive on the provider side as `LinkedHashMap`
+- do not switch to `generic` just because the response wrapper exposes `Optional` helper getters; prefer `raw` first
+
 ### `schema`
 
 Use this when:
 
 - your input should be interpreted using available type metadata on the worker side
+
+Current boundary:
+
+- when interface metadata is available, `describe` records full generic parameter signatures
+- schema mode can reconstruct nested generic collection/map element types from those signatures
+- schema mode is mainly for top-level generic parameters such as `List<CustomDTO>` or `Map<String, CustomDTO>`
+- if you skip stub jars entirely, schema mode falls back to the top-level types you passed
 
 ## Manifest
 
