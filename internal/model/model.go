@@ -112,8 +112,11 @@ type DaemonMetadata struct {
 	Host            string `json:"host"`
 	Port            int    `json:"port"`
 	StartedAt       string `json:"startedAt"`
+	RuntimeDigest   string `json:"runtimeDigest,omitempty"`
 	RuntimeVersion  string `json:"runtimeVersion,omitempty"`
+	JavaMajor       string `json:"javaMajor,omitempty"`
 	ProtocolVersion string `json:"protocolVersion,omitempty"`
+	DaemonProfile   string `json:"daemonProfile,omitempty"`
 }
 
 type DaemonRecord struct {

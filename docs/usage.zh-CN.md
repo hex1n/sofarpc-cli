@@ -319,7 +319,7 @@ sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderSer
 ```
 
 schema 存在 `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`；`classpathDigest` 随 stub jar 内容变化，重新构建过的 jar 会自动让旧缓存失效。
-daemon key 也使用同一份 stub 内容摘要；stub jar 内容变化会触发新的 `daemon-key`，自动拉起新 worker，避免复用旧进程。
+daemon key 也使用同一份 stub 内容摘要；stub jar 内容变化会触发新的 `daemon-key`，自动拉起新 worker，避免复用旧进程。新 worker 启动后，同一 runtime profile 下的历史 loopback worker 会被自动停止，减少旧进程留存。
 
 ## 解析顺序
 

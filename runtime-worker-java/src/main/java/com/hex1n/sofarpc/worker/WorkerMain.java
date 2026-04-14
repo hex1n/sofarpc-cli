@@ -82,10 +82,13 @@ public final class WorkerMain {
     private void serve(Map<String, String> options) throws Exception {
         String listen = require(options, "--listen");
         String metadataFile = require(options, "--metadata-file");
+        String runtimeProfile = options.get("--runtime-profile");
+        String runtimeDigest = options.get("--runtime-digest");
+        String javaMajor = options.get("--java-major");
         String[] hostPort = splitHostPort(listen);
         ServerSocket server = new ServerSocket();
         server.bind(new InetSocketAddress(InetAddress.getByName(hostPort[0]), Integer.parseInt(hostPort[1])));
-        writeMetadata(server, Paths.get(metadataFile));
+        writeMetadata(server, Paths.get(metadataFile), runtimeProfile, runtimeDigest, javaMajor);
         ExecutorService executor = Executors.newCachedThreadPool();
         ExecutorService invokeExecutor = Executors.newCachedThreadPool();
         Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
@@ -136,13 +139,16 @@ public final class WorkerMain {
         }
     }
 
-    private void writeMetadata(ServerSocket server, Path metadataFile) throws IOException {
+    private void writeMetadata(ServerSocket server, Path metadataFile, String runtimeProfile, String runtimeDigest, String javaMajor) throws IOException {
         DaemonMetadata metadata = new DaemonMetadata();
         metadata.pid = currentPid();
         metadata.host = server.getInetAddress().getHostAddress();
         metadata.port = server.getLocalPort();
         metadata.startedAt = Instant.now().toString();
         metadata.runtimeVersion = RUNTIME_VERSION;
+        metadata.daemonProfile = runtimeProfile;
+        metadata.runtimeDigest = runtimeDigest;
+        metadata.javaMajor = javaMajor;
         metadata.protocolVersion = PROTOCOL_VERSION;
         Files.createDirectories(metadataFile.getParent());
         mapper.writerWithDefaultPrettyPrinter().writeValue(metadataFile.toFile(), metadata);
