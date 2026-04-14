@@ -13,6 +13,37 @@
 - 使用说明和命令参考：[docs/usage.zh-CN.md](./docs/usage.zh-CN.md)
 - 设计文档：[docs/sofarpc-cli-design.md](./docs/sofarpc-cli-design.md)
 
+## 运行流程
+
+```mermaid
+flowchart LR
+    A[执行 `sofarpc <command>`] --> B["`internal/cli`: 解析参数与 manifest/context"]
+    B --> C["`internal/runtime`: ResolveSpec 并生成 daemon key"]
+    C --> D["`Manager.EnsureDaemon`: 启动/复用运行时 daemon"]
+    D --> E["`Manager.Invoke`: 通过 TCP 与 Java runtime 通信"]
+    B -->|`call` 命令| F["组装调用参数（service/method/args/target）"]
+    F --> G{是否需要参数类型推断？}
+    G -->|是| H["`DescribeService`: 走 `action=describe` 请求"]
+    G -->|否| I["直接调用请求"]
+    H --> E
+    I --> E
+    B -->|`describe` 命令| H
+    E --> J{"`request.action`"}
+    J -->|`describe`| K["WorkerMain describe 缓存（JVM 进程内，按 service）"]
+    J -->|其他| L["WorkerMain 常规 invoke 路径"]
+    K --> M["返回 ServiceSchema"]
+    L --> M
+    M --> N{"`response.ok`"}
+    N -->|失败| O[返回结构化错误与诊断]
+    N -->|成功| P[格式化结果输出]
+```
+
+说明：
+
+- schema 缓存放在运行时 daemon 的 JVM 进程内存中，按同一 daemon key 的 CLI 实例共享；
+- daemon 进程退出后缓存失效，不写本地 schema 文件；
+- 可通过 `--refresh` / `--no-cache` 控制 describe 缓存刷新（会透传到 daemon 请求）。
+
 ## 快速开始
 
 构建：

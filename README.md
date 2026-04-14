@@ -13,6 +13,37 @@ Start here:
 - usage and command reference: [docs/usage.md](./docs/usage.md)
 - design notes: [docs/sofarpc-cli-design.md](./docs/sofarpc-cli-design.md)
 
+## Runtime Workflow
+
+```mermaid
+flowchart LR
+    A[Run `sofarpc <command>`] --> B["`internal/cli`: parse command + resolve manifest/context"]
+    B --> C["`internal/runtime`: ResolveSpec and daemon key"]
+    C --> D["`Manager.EnsureDaemon`: start/reuse runtime worker daemon"]
+    D --> E["`Manager.Invoke`: TCP socket to Java runtime"]
+    B -->|`call` command| F["Prepare invocation request (service/method/args/targets)"]
+    F --> G{Need schema inference?}
+    G -->|yes| H["`DescribeService` with `action=describe` over daemon"]
+    G -->|no| I["Direct invoke request"]
+    H --> E
+    I --> E
+    B -->|`describe` command| H
+    E --> J{"`request.action`"}
+    J -->|`describe`| K["WorkerMain describe cache by `service` (in-memory)"]
+    J -->|other| L["WorkerMain invoke path"]
+    K --> M["Return ServiceSchema result"]
+    L --> M
+    M --> N{"`response.ok`"}
+    N -->|error| O[Print structured diagnostics and return error]
+    N -->|success| P[Format output or return result]
+```
+
+Notes:
+
+- schema cache is now kept in the runtime daemon JVM memory, shared by CLI processes using the same daemon key;
+- cache is process-lifetime only: no local schema files are written.
+- schema refresh is supported via `refresh`/`no-cache` (goes into daemon describe request).
+
 ## Quick Start
 
 Build:
