@@ -236,6 +236,49 @@ go run ./cmd/sofarpc call `
 
 ## 调用示例
 
+### `call` 时序
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant C as CLI（Go）
+    participant R as runtime.Manager
+    participant D as 运行时 Daemon（Java TCP）
+    participant W as WorkerMain
+
+    U->>C: sofarpc call ...（service/method/args）
+    C->>R: 解析 manifest/context，构建 Spec
+    R->>R: ResolveSpec（runtime jar、classpath 摘要、daemon key）
+    C->>R: EnsureDaemon
+    alt daemon 已存在且可达
+        R-->>C: 返回 daemon 元信息
+    else 启动新 daemon
+        R->>D: 启动 java WorkerMain serve
+        D-->>R: 写入并返回 metadata
+        R-->>C: 返回 daemon 元信息
+    end
+
+    C->>R: 组装调用请求
+    alt 有 stub 且需要推断类型
+        C->>R: DescribeService(action=describe, Refresh=false)
+        R->>D: Invoke(request)
+        D->>W: handle(action=describe, service)
+        W->>W: 命中内存 cache 则直接返回，否则反射构建 schema
+        W-->>D: 返回 ServiceSchema
+        D-->>R: 响应
+        R-->>C: 获得参数类型推断
+    end
+    C->>R: Invoke(正式 invoke 请求)
+    R->>D: Invoke(request)
+    D->>W: handle(action=invoke)
+    W->>W: invokeService.invoke(...)
+    W-->>D: 返回响应
+    D-->>R: 响应
+    R-->>C: 解析响应
+    C->>U: 打印结果或结构化错误
+```
+
 下面的示例假设 `sofarpc.exe` 已在 `PATH` 中并且激活了名为 `dev-direct` 的 context。从源码运行时把 `sofarpc` 替换成 `go run ./cmd/sofarpc`。
 
 ### 简单请求 — 基础类型参数
@@ -303,6 +346,42 @@ sofarpc call `
 复杂 DTO 一律用 `@file` 或 stdin，能彻底绕开 PowerShell / bash 的 JSON 转义。
 
 ## Describe
+
+### `describe` 时序
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant C as CLI（Go）
+    participant R as runtime.Manager
+    participant D as Runtime Daemon
+    participant W as WorkerMain
+
+    U->>C: sofarpc describe com.example.Service
+    C->>R: 解析 manifest/context，构建 Spec
+    C->>R: EnsureDaemon
+    alt 已有可达 daemon
+        R-->>C: daemon 元信息
+    else 启动新 daemon
+        R->>D: 启动 java WorkerMain serve
+        D-->>R: daemon 元信息
+    end
+    C->>R: DescribeService(action=describe, Refresh 参数)
+    R->>D: Invoke(request)
+    D->>W: handle(action=describe, service)
+    W->>W: refresh 时清理 cache[service]
+    W->>W: 缓存命中则返回；未命中则反射并入缓存
+    W-->>D: ServiceSchema
+    D-->>R: 响应
+    alt response.error
+        R-->>C: 回退执行 java -cp describe
+        C->>C: 执行 JVM describe 子命令
+    else 成功
+        R-->>C: 渲染 schema
+        C-->>U: 打印 method signature
+    end
+```
 
 反射 stub jar 里的接口，打印方法签名。schema 结果由 runtime daemon 进程内存缓存，共享给使用同一 `daemon-key` 的 CLI 进程（按 service 与 classpath digest 缓存）。
 
