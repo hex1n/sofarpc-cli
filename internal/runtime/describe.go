@@ -8,46 +8,54 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/hex1n/sofarpc-cli/internal/model"
 )
 
 type DescribeOptions struct {
 	Refresh bool
+	NoCache bool
 }
 
-const schemaCacheFormatVersion = "v2"
+type schemaCacheKey struct {
+	Profile string
+	Service string
+}
+
+var (
+	schemaCacheMu    sync.RWMutex
+	schemaCacheStore = map[schemaCacheKey]model.ServiceSchema{}
+)
+
+var describeWorker = func(m *Manager, ctx context.Context, spec Spec, service string) (model.ServiceSchema, error) {
+	return m.describeViaWorker(ctx, spec, service)
+}
 
 func (m *Manager) DescribeService(ctx context.Context, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
 	if strings.TrimSpace(service) == "" {
 		return model.ServiceSchema{}, errors.New("service is required")
 	}
-	key, err := classpathContentKey(spec.StubPaths)
+	classpathKey, err := classpathContentKey(spec.StubPaths)
 	if err != nil {
 		return model.ServiceSchema{}, err
 	}
-	cachePath := m.schemaCachePath(key, service)
-	if !opts.Refresh {
-		if schema, ok, err := readSchemaCache(cachePath); err != nil {
-			return model.ServiceSchema{}, err
-		} else if ok {
+	cacheKey := schemaCacheKey{Profile: classpathKey, Service: service}
+	if !opts.Refresh && !opts.NoCache {
+		if schema, ok := loadSchema(cacheKey); ok {
 			return schema, nil
 		}
 	}
-	schema, err := m.describeViaWorker(ctx, spec, service)
+	schema, err := describeWorker(m, ctx, spec, service)
 	if err != nil {
 		return model.ServiceSchema{}, err
 	}
-	if writeErr := writeJSONFile(cachePath, schema); writeErr != nil {
-		return schema, fmt.Errorf("write schema cache %s: %w", cachePath, writeErr)
+	if opts.NoCache {
+		return schema, nil
 	}
+	storeSchema(cacheKey, schema)
 	return schema, nil
-}
-
-func (m *Manager) schemaCachePath(classpathKey, service string) string {
-	return filepath.Join(m.SchemaDir(), schemaCacheFormatVersion, classpathKey, service+".json")
 }
 
 func classpathContentKey(stubPaths []string) (string, error) {
@@ -55,6 +63,9 @@ func classpathContentKey(stubPaths []string) (string, error) {
 }
 
 func (m *Manager) describeViaWorker(ctx context.Context, spec Spec, service string) (model.ServiceSchema, error) {
+	if strings.TrimSpace(service) == "" {
+		return model.ServiceSchema{}, errors.New("service is required")
+	}
 	classpath := buildClasspath(spec.RuntimeJar, spec.StubPaths)
 	cmd := exec.CommandContext(ctx, spec.JavaBin, "-cp", classpath, mainClass, "describe", "--service", service)
 	var stdout, stderr bytes.Buffer
@@ -74,19 +85,25 @@ func (m *Manager) describeViaWorker(ctx context.Context, spec Spec, service stri
 	return schema, nil
 }
 
-func readSchemaCache(path string) (model.ServiceSchema, bool, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return model.ServiceSchema{}, false, nil
-		}
-		return model.ServiceSchema{}, false, err
+func loadSchema(key schemaCacheKey) (model.ServiceSchema, bool) {
+	schemaCacheMu.RLock()
+	defer schemaCacheMu.RUnlock()
+	schema, ok := schemaCacheStore[key]
+	return schema, ok
+}
+
+func storeSchema(key schemaCacheKey, schema model.ServiceSchema) {
+	schemaCacheMu.Lock()
+	defer schemaCacheMu.Unlock()
+	schemaCacheStore[key] = schema
+}
+
+func clearSchemaCache() {
+	schemaCacheMu.Lock()
+	defer schemaCacheMu.Unlock()
+	for key := range schemaCacheStore {
+		delete(schemaCacheStore, key)
 	}
-	var schema model.ServiceSchema
-	if err := json.Unmarshal(body, &schema); err != nil {
-		return model.ServiceSchema{}, false, fmt.Errorf("read schema cache %s: %w", path, err)
-	}
-	return schema, true, nil
 }
 
 func buildClasspath(runtimeJar string, stubs []string) string {

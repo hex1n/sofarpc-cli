@@ -1,7 +1,7 @@
 package runtime
 
 import (
-	"encoding/json"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,51 +81,113 @@ func TestClasspathContentKeyChangesOnContentChange(t *testing.T) {
 	}
 }
 
-func TestReadSchemaCacheMissing(t *testing.T) {
-	_, ok, err := readSchemaCache(filepath.Join(t.TempDir(), "no-such.json"))
-	if err != nil {
-		t.Fatalf("expected nil error on missing cache, got %v", err)
+func TestDescribeServiceCachesInMemory(t *testing.T) {
+	manager := testManager(t)
+	oldWorker := describeWorker
+	defer func() {
+		describeWorker = oldWorker
+		clearSchemaCache()
+	}()
+	clearSchemaCache()
+
+	callCount := 0
+	describeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
+		callCount++
+		return model.ServiceSchema{
+			Service: service,
+			Methods: []model.MethodSchema{{Name: "foo"}},
+		}, nil
 	}
-	if ok {
-		t.Fatal("expected ok=false for missing cache")
+
+	spec := Spec{
+		RuntimeJar: "/tmp/runtime.jar",
+		JavaBin:    "java",
+	}
+	schema, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
+	if err != nil {
+		t.Fatalf("DescribeService() error = %v", err)
+	}
+	if schema.Service != "com.example.Service" {
+		t.Fatalf("unexpected schema: %+v", schema)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected first call to hit worker, got %d", callCount)
+	}
+
+	_, err = manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
+	if err != nil {
+		t.Fatalf("DescribeService() error = %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected second call with same classpath/service to use cache, got %d", callCount)
 	}
 }
 
-func TestReadSchemaCacheValid(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "schema.json")
-	sample := model.ServiceSchema{
-		Service: "com.example.UserService",
-		Methods: []model.MethodSchema{{Name: "getUser", ParamTypes: []string{"java.lang.Long"}, ReturnType: "com.example.User"}},
+func TestDescribeServiceRefreshesWithRefreshFlag(t *testing.T) {
+	manager := testManager(t)
+	oldWorker := describeWorker
+	defer func() {
+		describeWorker = oldWorker
+		clearSchemaCache()
+	}()
+	clearSchemaCache()
+
+	callCount := 0
+	describeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
+		callCount++
+		return model.ServiceSchema{
+			Service: service,
+			Methods: []model.MethodSchema{{Name: "bar", ParamTypes: []string{string(rune('0' + callCount))}}},
+		}, nil
 	}
-	body, err := json.Marshal(sample)
+	spec := Spec{
+		RuntimeJar: "/tmp/runtime.jar",
+		JavaBin:    "java",
+	}
+	_, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
 	if err != nil {
-		t.Fatalf("marshal: %v", err)
+		t.Fatalf("DescribeService() error = %v", err)
 	}
-	if err := os.WriteFile(path, body, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	got, ok, err := readSchemaCache(path)
+	_, err = manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{Refresh: true})
 	if err != nil {
-		t.Fatalf("readSchemaCache error = %v", err)
+		t.Fatalf("DescribeService() error = %v", err)
 	}
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if got.Service != sample.Service || len(got.Methods) != 1 || got.Methods[0].Name != "getUser" {
-		t.Fatalf("unexpected schema: %+v", got)
+	if callCount != 2 {
+		t.Fatalf("expected refresh to bypass cache, got %d", callCount)
 	}
 }
 
-func TestReadSchemaCacheCorrupt(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "schema.json")
-	if err := os.WriteFile(path, []byte("not json"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
+func TestDescribeServiceRefreshesWithNoCacheFlag(t *testing.T) {
+	manager := testManager(t)
+	oldWorker := describeWorker
+	defer func() {
+		describeWorker = oldWorker
+		clearSchemaCache()
+	}()
+	clearSchemaCache()
+
+	callCount := 0
+	describeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
+		callCount++
+		return model.ServiceSchema{
+			Service: service,
+			Methods: []model.MethodSchema{{Name: "baz"}},
+		}, nil
 	}
-	_, _, err := readSchemaCache(path)
-	if err == nil {
-		t.Fatal("expected error on corrupt cache")
+	spec := Spec{
+		RuntimeJar: "/tmp/runtime.jar",
+		JavaBin:    "java",
+	}
+	_, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
+	if err != nil {
+		t.Fatalf("DescribeService() error = %v", err)
+	}
+	_, err = manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{NoCache: true})
+	if err != nil {
+		t.Fatalf("DescribeService() error = %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("expected no-cache to bypass cache, got %d", callCount)
 	}
 }
 
@@ -135,5 +197,12 @@ func TestBuildClasspathOrderAndSeparator(t *testing.T) {
 	want := "/tmp/worker.jar" + sep + "/tmp/a.jar" + sep + "/tmp/b.jar"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestBuildClasspathAllowsEmptyRuntimeJar(t *testing.T) {
+	got := buildClasspath("", []string{"/tmp/a.jar"})
+	if got != "/tmp/a.jar" {
+		t.Fatalf("buildClasspath() = %q, want %q", got, "/tmp/a.jar")
 	}
 }

@@ -30,7 +30,7 @@ Current runtime features:
 - local runtime install and cache
 - runtime sources: `file`, `directory`
 - local daemon inspection and cleanup
-- interface reflection and local schema cache
+- interface reflection with in-process schema cache
 
 ## Repo Layout
 
@@ -307,7 +307,7 @@ Use `@file` or stdin to dodge PowerShell / bash JSON escaping.
 
 ## Describe
 
-Reflect an interface from its stub jar and print the method signatures. Result is cached locally (keyed by stub-jar content), so later calls are sub-50ms.
+Reflect an interface from its stub jar and print the method signatures. Result is cached in process memory for each `sofarpc` process invocation (keyed by stub-jar content), so repeated `describe` calls in one process are fast.
 
 ```powershell
 sofarpc describe --stub-path target\order-api.jar com.example.OrderService
@@ -321,7 +321,7 @@ Bypass the cache and re-run the worker:
 sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderService
 ```
 
-Schemas live in `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`; `classpathDigest` changes whenever a stub jar's content changes, so rebuilt jars invalidate automatically.
+Schema results are not persisted to disk by `sofarpc` CLI; they are cached only in memory of the current process.
 Daemon keys use the same stub-content digest, so changing stub byte content changes the `daemon-key` and forces a fresh worker lifecycle.
 When this happens, older loopback daemons for the same runtime profile are stopped automatically so stale worker processes are replaced cleanly.
 
@@ -619,7 +619,6 @@ Cache files:
 
 - `<cacheDir>/sofarpc-cli/runtimes/<version>/`
 - `<cacheDir>/sofarpc-cli/daemons/`
-- `<cacheDir>/sofarpc-cli/schemas/<classpathDigest>/<fqcn>.json`
 
 Typical Windows locations:
 
@@ -628,7 +627,6 @@ Typical Windows locations:
 - `%AppData%\sofarpc-cli\runtime-sources.json`
 - `%LocalAppData%\sofarpc-cli\runtimes\`
 - `%LocalAppData%\sofarpc-cli\daemons\`
-- `%LocalAppData%\sofarpc-cli\schemas\`
 
 ## Notes and Limitations
 
