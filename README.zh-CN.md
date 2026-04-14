@@ -17,25 +17,25 @@
 
 ```mermaid
 flowchart LR
-    A[执行 `sofarpc <command>`] --> B["`internal/cli`: 解析参数与 manifest/context"]
-    B --> C["`internal/runtime`: ResolveSpec 并生成 daemon key"]
-    C --> D["`Manager.EnsureDaemon`: 启动/复用运行时 daemon"]
-    D --> E["`Manager.Invoke`: 通过 TCP 与 Java runtime 通信"]
-    B -->|`call` 命令| F["组装调用参数（service/method/args/target）"]
-    F --> G{是否需要参数类型推断？}
-    G -->|是| H["`DescribeService`: 走 `action=describe` 请求"]
-    G -->|否| I["直接调用请求"]
+    A[执行 CLI 命令] --> B[内部解析参数并读取 manifest 与 context]
+    B --> C[生成 ResolveSpec 与 daemon key]
+    C --> D[启动或复用 runtime worker daemon]
+    D --> E[通过 TCP 与 Java runtime 通信]
+    B -->|call 命令| F[组装调用参数 service method args target]
+    F --> G{是否需要参数类型推断}
+    G -->|是| H[通过 describe 路径读取参数类型]
+    G -->|否| I[直接发起 invoke 请求]
     H --> E
     I --> E
-    B -->|`describe` 命令| H
-    E --> J{"`request.action`"}
-    J -->|`describe`| K["WorkerMain describe 缓存（JVM 进程内，按 service）"]
-    J -->|其他| L["WorkerMain 常规 invoke 路径"]
-    K --> M["返回 ServiceSchema"]
+    B -->|describe 命令| H
+    E --> J{request action}
+    J -->|describe| K[WorkerMain 按 service 缓存 schema]
+    J -->|其他| L[WorkerMain 常规 invoke 路径]
+    K --> M[返回 ServiceSchema]
     L --> M
-    M --> N{"`response.ok`"}
+    M --> N{response ok}
     N -->|失败| O[返回结构化错误与诊断]
-    N -->|成功| P[格式化结果输出]
+    N -->|成功| P[格式化输出结果]
 ```
 
 说明：
