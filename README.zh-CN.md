@@ -30,7 +30,7 @@ go run ./cmd/sofarpc help
 
 ## Claude Code skill
 
-仓库内置 `call-rpc` skill，能在任意 SOFABoot 项目中驱动 facade 实际调用与结果验证。
+仓库内置 `call-rpc` skill，安装后就是“触发 `sofarpc call` 的薄入口”。
 用户级安装一次即可：
 
 ```powershell
@@ -38,10 +38,11 @@ sofarpc skills install          # 将 skills/call-rpc 复制到 ~/.claude/skills
 sofarpc skills where            # 查看源路径 / 目标路径
 ```
 
-每个项目的状态（config、cases、生成的 index）位于
-`<project>/.sofarpc/`。
-`detect-config`、`build-index`、`schema`、`run-cases` 都直接在 Go CLI 中执行，
-不再需要 Python 运行时。
+该 skill 不负责：
+- 接入项目、构建索引、管理 cases
+- 结果验证和业务语义解读
+
+它只负责把一次调用映射到 `sofarpc call` 命令并透传执行结果。
 
 完整用法、manifest 格式、runtime source 管理和诊断命令，请看
 [docs/usage.zh-CN.md](./docs/usage.zh-CN.md)。

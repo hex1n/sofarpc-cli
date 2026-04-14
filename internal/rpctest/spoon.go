@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	skillName      = "call-rpc"
-	indexerRelDir  = "indexer-java"
+	indexerRelDir  = "spoon-indexer-java"
 	indexerJarName = "call-rpc-spoon-indexer.jar"
 )
 
@@ -136,35 +135,25 @@ func jarIsStale(indexerDir, jarPath string) (bool, error) {
 }
 
 func indexerModuleDir() (string, error) {
-	skillsDir, err := bundledSkillsDir()
-	if err != nil {
-		return "", err
-	}
-	indexerDir := filepath.Join(skillsDir, skillName, indexerRelDir)
-	info, err := os.Stat(indexerDir)
-	if err != nil || !info.IsDir() {
-		return "", fmt.Errorf("Spoon indexer module not found under %s", indexerDir)
-	}
-	return indexerDir, nil
-}
-
-func bundledSkillsDir() (string, error) {
+	paths := []string{}
 	if home := strings.TrimSpace(os.Getenv("SOFARPC_HOME")); home != "" {
-		cand := filepath.Join(home, "skills")
-		if info, err := os.Stat(cand); err == nil && info.IsDir() {
-			return cand, nil
-		}
+		paths = append(paths, filepath.Join(home, indexerRelDir))
+		paths = append(paths, filepath.Join(home, "skills", "call-rpc", indexerRelDir))
 	}
 	exe, err := os.Executable()
 	if err == nil {
 		exe, _ = filepath.EvalSymlinks(exe)
 		installRoot := filepath.Dir(filepath.Dir(exe))
-		cand := filepath.Join(installRoot, "skills")
-		if info, err := os.Stat(cand); err == nil && info.IsDir() {
-			return cand, nil
+		paths = append(paths, filepath.Join(installRoot, indexerRelDir))
+		paths = append(paths, filepath.Join(installRoot, "skills", "call-rpc", indexerRelDir))
+	}
+	paths = append(paths, filepath.Join(".", indexerRelDir))
+	for _, indexerDir := range paths {
+		if info, err := os.Stat(indexerDir); err == nil && info.IsDir() {
+			return indexerDir, nil
 		}
 	}
-	return "", fmt.Errorf("cannot locate bundled skills/ directory — set SOFARPC_HOME to the CLI install root")
+	return "", fmt.Errorf("Spoon indexer module not found (tried: %s)", strings.Join(paths, ", "))
 }
 
 func commandString(cmd *exec.Cmd) string {
