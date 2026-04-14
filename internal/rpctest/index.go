@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type ServiceIndexFile struct {
@@ -48,17 +49,57 @@ func RefreshIndex(projectRoot string, cfg Config, stdout, stderr io.Writer) erro
 }
 
 func WriteIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry, stdout io.Writer) error {
-	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+	parentDir := filepath.Dir(indexDir)
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
 		return err
 	}
-	oldEntries, err := filepath.Glob(filepath.Join(indexDir, "*.json"))
+	tmpIndexDir, err := os.MkdirTemp(parentDir, ".sofarpc-index-")
 	if err != nil {
 		return err
 	}
-	for _, old := range oldEntries {
-		if err := os.Remove(old); err != nil {
+	tmpSummary, err := buildIndexFiles(tmpIndexDir, projectRoot, cfg, registry, stdout)
+	if err != nil {
+		_ = os.RemoveAll(tmpIndexDir)
+		return err
+	}
+	if err := switchIndexDir(tmpIndexDir, indexDir); err != nil {
+		_ = os.RemoveAll(tmpIndexDir)
+		return err
+	}
+	if stdout != nil {
+		fmt.Fprintf(stdout, "\n[build_index] wrote %d services to %s\n", len(tmpSummary.Services), displayPath(projectRoot, indexDir))
+	}
+	return nil
+}
+
+func switchIndexDir(next, current string) error {
+	backupDir := filepath.Join(filepath.Dir(current), fmt.Sprintf(".sofarpc-index-old-%d", time.Now().UnixNano()))
+	currentExists := false
+	if _, err := os.Stat(current); err == nil {
+		if err := os.Rename(current, backupDir); err != nil {
 			return err
 		}
+		currentExists = true
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := os.Rename(next, current); err != nil {
+		if currentExists {
+			_ = os.Rename(backupDir, current)
+		}
+		return err
+	}
+
+	if currentExists {
+		_ = os.RemoveAll(backupDir)
+	}
+	return nil
+}
+
+func buildIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry, stdout io.Writer) (IndexSummary, error) {
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		return IndexSummary{}, err
 	}
 
 	summary := IndexSummary{
@@ -95,7 +136,7 @@ func WriteIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry
 			methodNames = append(methodNames, method.Name)
 		}
 		if err := SaveJSON(filepath.Join(indexDir, classInfo.FQN+".json"), payload); err != nil {
-			return err
+			return IndexSummary{}, err
 		}
 		summary.Services = append(summary.Services, IndexSummaryService{
 			Service: classInfo.FQN,
@@ -108,12 +149,9 @@ func WriteIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry
 	}
 
 	if err := SaveJSON(filepath.Join(indexDir, "_index.json"), summary); err != nil {
-		return err
+		return IndexSummary{}, err
 	}
-	if stdout != nil {
-		fmt.Fprintf(stdout, "\n[build_index] wrote %d services to %s\n", len(summary.Services), displayPath(projectRoot, indexDir))
-	}
-	return nil
+	return summary, nil
 }
 
 func IsFacadeInterface(classInfo SemanticClassInfo, suffixes []string) bool {

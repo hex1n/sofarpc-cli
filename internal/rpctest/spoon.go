@@ -44,19 +44,12 @@ func LoadSemanticRegistry(projectRoot string, sourceRoots, markers []string) (Re
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		if detail != "" {
-			return nil, fmt.Errorf("Spoon semantic analysis failed: %w: %s", err, detail)
-		}
-		return nil, fmt.Errorf("Spoon semantic analysis failed: %w", err)
+		return nil, commandFailureError("Spoon semantic analysis failed", cmd, stdout.Bytes(), stderr.Bytes(), err)
 	}
 
 	var payload SemanticIndex
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		return nil, fmt.Errorf("invalid Spoon indexer output: %w", err)
+		return nil, fmt.Errorf("invalid Spoon indexer output from %q: %w", commandString(cmd), err)
 	}
 	registry := make(Registry, len(payload.Classes))
 	for _, classInfo := range payload.Classes {
@@ -99,14 +92,7 @@ func ensureIndexerJar() (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		if detail != "" {
-			return "", fmt.Errorf("failed to build Spoon indexer: %w: %s", err, detail)
-		}
-		return "", fmt.Errorf("failed to build Spoon indexer: %w", err)
+		return "", commandFailureError("failed to build Spoon indexer", cmd, stdout.Bytes(), stderr.Bytes(), err)
 	}
 	if _, err := os.Stat(jarPath); err != nil {
 		return "", fmt.Errorf("expected built jar missing: %s", jarPath)
@@ -179,4 +165,27 @@ func bundledSkillsDir() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("cannot locate bundled skills/ directory — set SOFARPC_HOME to the CLI install root")
+}
+
+func commandString(cmd *exec.Cmd) string {
+	parts := append([]string{cmd.Path}, cmd.Args[1:]...)
+	return strings.Join(parts, " ")
+}
+
+func commandFailureError(prefix string, cmd *exec.Cmd, stdout, stderr []byte, err error) error {
+	command := commandString(cmd)
+	detail := strings.TrimSpace(string(stderr))
+	if detail == "" {
+		detail = strings.TrimSpace(string(stdout))
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		if detail != "" {
+			return fmt.Errorf("%s: command %q (cwd=%s, exit=%d): %w: %s", prefix, command, cmd.Dir, exitErr.ExitCode(), err, detail)
+		}
+		return fmt.Errorf("%s: command %q (cwd=%s, exit=%d): %w", prefix, command, cmd.Dir, exitErr.ExitCode(), err)
+	}
+	if detail != "" {
+		return fmt.Errorf("%s: command %q (cwd=%s): %w: %s", prefix, command, cmd.Dir, err, detail)
+	}
+	return fmt.Errorf("%s: command %q (cwd=%s): %w", prefix, command, cmd.Dir, err)
 }
