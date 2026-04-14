@@ -19,6 +19,8 @@ type DescribeOptions struct {
 	Refresh bool
 }
 
+const schemaCacheFormatVersion = "v2"
+
 func (m *Manager) DescribeService(ctx context.Context, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
 	if strings.TrimSpace(service) == "" {
 		return model.ServiceSchema{}, errors.New("service is required")
@@ -46,7 +48,7 @@ func (m *Manager) DescribeService(ctx context.Context, spec Spec, service string
 }
 
 func (m *Manager) schemaCachePath(classpathKey, service string) string {
-	return filepath.Join(m.SchemaDir(), classpathKey, service+".json")
+	return filepath.Join(m.SchemaDir(), schemaCacheFormatVersion, classpathKey, service+".json")
 }
 
 func (m *Manager) describeViaWorker(ctx context.Context, spec Spec, service string) (model.ServiceSchema, error) {

@@ -71,16 +71,24 @@ func (a *App) runCall(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	if len(resolved.Request.ParamTypes) == 0 && len(spec.StubPaths) > 0 {
+	if len(spec.StubPaths) > 0 && (len(resolved.Request.ParamTypes) == 0 || resolved.Request.PayloadMode == model.PayloadSchema) {
 		schema, describeErr := a.Runtime.DescribeService(ctx, spec, resolved.Request.Service, runtime.DescribeOptions{})
 		if describeErr != nil {
 			return fmt.Errorf("infer paramTypes via describe: %w", describeErr)
 		}
-		types, err := pickMethodTypes(schema, resolved.Request.Method, resolved.Request.Args)
+		methodSchema, err := pickMethodSchema(schema, resolved.Request.Method, resolved.Request.Args, resolved.Request.ParamTypes)
 		if err != nil {
 			return err
 		}
-		resolved.Request.ParamTypes = types
+		if len(resolved.Request.ParamTypes) == 0 {
+			resolved.Request.ParamTypes = methodSchema.ParamTypes
+		}
+		if resolved.Request.PayloadMode == model.PayloadSchema {
+			resolved.Request.ParamTypeSignatures = methodSchema.ParamTypeSignatures
+		}
+	}
+	if resolved.Request.PayloadMode == model.PayloadSchema && len(resolved.Request.ParamTypeSignatures) == 0 {
+		resolved.Request.ParamTypeSignatures = append([]string{}, resolved.Request.ParamTypes...)
 	}
 	if wrapped, ok := maybeWrapSingleArg(resolved.Request.Args, len(resolved.Request.ParamTypes)); ok {
 		resolved.Request.Args = wrapped
@@ -129,6 +137,14 @@ func randomID() string {
 }
 
 func pickMethodTypes(schema model.ServiceSchema, method string, rawArgs json.RawMessage) ([]string, error) {
+	match, err := pickMethodSchema(schema, method, rawArgs, nil)
+	if err != nil {
+		return nil, err
+	}
+	return match.ParamTypes, nil
+}
+
+func pickMethodSchema(schema model.ServiceSchema, method string, rawArgs json.RawMessage, preferredParamTypes []string) (model.MethodSchema, error) {
 	var matches []model.MethodSchema
 	for _, candidate := range schema.Methods {
 		if candidate.Name == method {
@@ -136,10 +152,24 @@ func pickMethodTypes(schema model.ServiceSchema, method string, rawArgs json.Raw
 		}
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("method %s not found on %s", method, schema.Service)
+		return model.MethodSchema{}, fmt.Errorf("method %s not found on %s", method, schema.Service)
 	}
 	if len(matches) == 1 {
-		return matches[0].ParamTypes, nil
+		return matches[0], nil
+	}
+	if len(preferredParamTypes) > 0 {
+		var narrowed []model.MethodSchema
+		for _, candidate := range matches {
+			if sameParamTypes(candidate.ParamTypes, preferredParamTypes) {
+				narrowed = append(narrowed, candidate)
+			}
+		}
+		if len(narrowed) == 1 {
+			return narrowed[0], nil
+		}
+		if len(narrowed) > 1 {
+			matches = narrowed
+		}
 	}
 	hint := argsArityHint(rawArgs)
 	if hint >= 0 {
@@ -150,15 +180,27 @@ func pickMethodTypes(schema model.ServiceSchema, method string, rawArgs json.Raw
 			}
 		}
 		if len(narrowed) == 1 {
-			return narrowed[0].ParamTypes, nil
+			return narrowed[0], nil
 		}
 	}
 	options := make([]string, 0, len(matches))
 	for _, candidate := range matches {
 		options = append(options, "["+strings.Join(candidate.ParamTypes, ",")+"]")
 	}
-	return nil, fmt.Errorf("method %s.%s is overloaded; pass --types to disambiguate: %s",
+	return model.MethodSchema{}, fmt.Errorf("method %s.%s is overloaded; pass --types to disambiguate: %s",
 		schema.Service, method, strings.Join(options, " | "))
+}
+
+func sameParamTypes(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func maybeWrapSingleArg(raw json.RawMessage, arity int) (json.RawMessage, bool) {

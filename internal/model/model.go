@@ -61,13 +61,14 @@ type TargetConfig struct {
 }
 
 type InvocationRequest struct {
-	RequestID   string          `json:"requestId"`
-	Service     string          `json:"service"`
-	Method      string          `json:"method"`
-	ParamTypes  []string        `json:"paramTypes,omitempty"`
-	Args        json.RawMessage `json:"args"`
-	PayloadMode string          `json:"payloadMode"`
-	Target      TargetConfig    `json:"target"`
+	RequestID           string          `json:"requestId"`
+	Service             string          `json:"service"`
+	Method              string          `json:"method"`
+	ParamTypes          []string        `json:"paramTypes,omitempty"`
+	ParamTypeSignatures []string        `json:"paramTypeSignatures,omitempty"`
+	Args                json.RawMessage `json:"args"`
+	PayloadMode         string          `json:"payloadMode"`
+	Target              TargetConfig    `json:"target"`
 }
 
 type InvocationResponse struct {
@@ -204,7 +205,8 @@ type ServiceSchema struct {
 }
 
 type MethodSchema struct {
-	Name       string   `json:"name"`
-	ParamTypes []string `json:"paramTypes"`
-	ReturnType string   `json:"returnType,omitempty"`
+	Name                string   `json:"name"`
+	ParamTypes          []string `json:"paramTypes"`
+	ParamTypeSignatures []string `json:"paramTypeSignatures,omitempty"`
+	ReturnType          string   `json:"returnType,omitempty"`
 }

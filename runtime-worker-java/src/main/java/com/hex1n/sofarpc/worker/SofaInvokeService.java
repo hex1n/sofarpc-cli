@@ -17,11 +17,13 @@ import java.util.concurrent.ConcurrentMap;
 public final class SofaInvokeService {
     private final ObjectMapper mapper;
     private final PayloadConverter payloadConverter;
+    private final ResponseTreeWriter responseTreeWriter;
     private final ConcurrentMap<String, CachedConsumer> consumers = new ConcurrentHashMap<String, CachedConsumer>();
 
     public SofaInvokeService(ObjectMapper mapper) {
         this.mapper = mapper;
         this.payloadConverter = new PayloadConverter(mapper);
+        this.responseTreeWriter = new ResponseTreeWriter(mapper);
     }
 
     public InvokeResponse invoke(InvokeRequest request) {
@@ -30,7 +32,12 @@ public final class SofaInvokeService {
         try {
             validate(request);
             CachedConsumer consumer = getOrCreateConsumer(request);
-            Object[] args = payloadConverter.convertArguments(mode, normalizeParamTypes(request.paramTypes), request.args);
+            Object[] args = payloadConverter.convertArguments(
+                mode,
+                normalizeParamTypes(request.paramTypes),
+                normalizeParamTypes(request.paramTypeSignatures),
+                request.args
+            );
             String[] paramTypes = normalizeParamTypes(request.paramTypes).toArray(new String[0]);
             Object result;
             if (mode == PayloadMode.GENERIC) {
@@ -38,7 +45,12 @@ public final class SofaInvokeService {
             } else {
                 result = consumer.service.$invoke(request.method, paramTypes, args);
             }
-            JsonNode jsonResult = mapper.valueToTree(result);
+            JsonNode jsonResult;
+            try {
+                jsonResult = responseTreeWriter.write(result);
+            } catch (Exception mapEx) {
+                return InvokeResponse.failure(request.requestId, responseMappingError(mapEx, diagnostics), diagnostics);
+            }
             return InvokeResponse.success(request.requestId, jsonResult, diagnostics);
         } catch (IllegalArgumentException ex) {
             return InvokeResponse.failure(request.requestId, invalidArguments(ex, diagnostics), diagnostics);
@@ -150,8 +162,41 @@ public final class SofaInvokeService {
         error.code = "INVALID_ARGUMENTS";
         error.message = ex.getMessage();
         error.phase = "prepare";
-        error.hint = "Check method signature, payload mode, and argument JSON.";
+        error.hint = hintForMappingFailure(ex.getMessage(),
+            "Check method signature, payload mode, and argument JSON.");
         return error;
+    }
+
+    private RuntimeError responseMappingError(Exception ex, DiagnosticInfo diagnostics) {
+        RuntimeError error = baseError(diagnostics);
+        error.code = "RESPONSE_MAPPING_ERROR";
+        error.message = ex.getMessage();
+        error.phase = "response";
+        error.hint = hintForMappingFailure(ex.getMessage(),
+            "Retry with -payload-mode generic to bypass strict response DTO mapping.");
+        return error;
+    }
+
+    static String hintForMappingFailure(String message, String fallback) {
+        if (message == null) {
+            return fallback;
+        }
+        String low = message.toLowerCase();
+        if (low.contains("optional") && low.contains("not supported")) {
+            return "Response contains java.util.Optional getters. Worker already pre-registers Jdk8Module; "
+                + "if this still fires, the facade jar ships an older Jackson — retry with -payload-mode generic.";
+        }
+        if (low.contains("jackson-datatype") || low.contains("jsr310") || low.contains("add module")) {
+            return "Jackson is missing a datatype module for the response type. "
+                + "Retry with -payload-mode generic, or rebuild the worker with the required Jackson module.";
+        }
+        if (low.contains("no suitable constructor") || low.contains("cannot construct instance")) {
+            return "DTO has no default constructor for raw mode. Retry with -payload-mode generic.";
+        }
+        if (low.contains("cannot deserialize") || low.contains("cannot serialize")) {
+            return "Payload shape mismatch. Verify field types/annotations or retry with -payload-mode generic.";
+        }
+        return fallback;
     }
 
     private RuntimeError internalError(Exception ex, DiagnosticInfo diagnostics) {

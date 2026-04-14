@@ -9,6 +9,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.lang.management.ManagementFactory;
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -30,7 +31,7 @@ import java.util.concurrent.TimeoutException;
 public final class WorkerMain {
     private static final String RUNTIME_VERSION = "5.7.6";
     private static final String PROTOCOL_VERSION = "v1";
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = WorkerMappers.create();
     private final SofaInvokeService invokeService = new SofaInvokeService(mapper);
 
     public static void main(String[] args) throws Exception {
@@ -65,8 +66,12 @@ public final class WorkerMain {
             }
             MethodSchema ms = new MethodSchema();
             ms.name = method.getName();
+            Type[] genericParamTypes = method.getGenericParameterTypes();
             for (Class<?> paramType : method.getParameterTypes()) {
                 ms.paramTypes.add(paramType.getName());
+            }
+            for (Type genericParamType : genericParamTypes) {
+                ms.paramTypeSignatures.add(genericParamType.getTypeName());
             }
             ms.returnType = method.getReturnType().getName();
             schema.methods.add(ms);

@@ -6,5 +6,6 @@ import java.util.List;
 public class MethodSchema {
     public String name;
     public List<String> paramTypes = new ArrayList<String>();
+    public List<String> paramTypeSignatures = new ArrayList<String>();
     public String returnType;
 }
