@@ -42,6 +42,23 @@ func TestClasspathContentKeyOrderIndependent(t *testing.T) {
 	}
 }
 
+func TestClasspathContentKeyAllowsMissingStubs(t *testing.T) {
+	key, err := classpathContentKeyWithPolicy([]string{"/tmp/no-such-stub.jar"}, true)
+	if err != nil {
+		t.Fatalf("expected missing stub path to be accepted in fallback mode: %v", err)
+	}
+	if key == "" {
+		t.Fatal("expected a non-empty key")
+	}
+}
+
+func TestClasspathContentKeyRequiresExistingStubs(t *testing.T) {
+	_, err := classpathContentKeyWithPolicy([]string{"/tmp/no-such-stub.jar"}, false)
+	if err == nil {
+		t.Fatal("expected missing stub path to fail in strict mode")
+	}
+}
+
 func TestClasspathContentKeyChangesOnContentChange(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.jar")

@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -33,6 +35,26 @@ func fileDigest(path string) (string, error) {
 	}
 	hash := sha256.Sum256(body)
 	return hex.EncodeToString(hash[:]), nil
+}
+
+func classpathContentKeyWithPolicy(stubPaths []string, allowMissing bool) (string, error) {
+	if len(stubPaths) == 0 {
+		return hashStrings(nil), nil
+	}
+	sorted := append([]string{}, stubPaths...)
+	sort.Strings(sorted)
+	parts := make([]string, 0, len(sorted)*2)
+	for _, path := range sorted {
+		digest, err := fileDigest(path)
+		if err != nil {
+			if !allowMissing {
+				return "", fmt.Errorf("digest stub %s: %w", path, err)
+			}
+			digest = "missing"
+		}
+		parts = append(parts, path, digest)
+	}
+	return hashStrings(parts), nil
 }
 
 func hashStrings(values []string) string {
