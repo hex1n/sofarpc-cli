@@ -239,6 +239,49 @@ Failure behavior:
 
 ## Call Examples
 
+### `call` runtime sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant C as CLI (go run/sofarpc)
+    participant R as runtime.Manager
+    participant D as Runtime Daemon (Java TCP server)
+    participant W as WorkerMain
+
+    U->>C: sofarpc call ... [service/method/args]
+    C->>R: resolve manifest/context, build Spec
+    R->>R: ResolveSpec (runtime jar, classpath hash, daemon key)
+    C->>R: EnsureDaemon
+    alt existing daemon reachable
+        R-->>C: return daemon metadata
+    else start new daemon
+        R->>D: start java WorkerMain serve
+        D-->>R: write metadata file
+        R-->>C: return daemon metadata
+    end
+
+    C->>R: build invocation request
+    alt stub present and types needed
+        C->>R: DescribeService(action=describe, Refresh=no)
+        R->>D: Invoke(request)
+        D->>W: handle(action=describe, service)
+        W->>W: load from in-JVM cache or reflect service
+        W-->>D: ServiceSchema result
+        D-->>R: response
+        R-->>C: inferred param types
+    end
+    C->>R: Invoke(invoke request)
+    R->>D: Invoke(request)
+    D->>W: handle(action=invoke)
+    W->>W: invokeService.invoke(...)
+    W-->>D: response
+    D-->>R: response
+    R-->>C: decode response
+    C->>U: print result / structured error
+```
+
 The examples below assume `sofarpc.exe` is on `PATH` and a context named `dev-direct` is active. Substitute `go run ./cmd/sofarpc` for `sofarpc` when running from source.
 
 ### Simple request — primitive argument
@@ -306,6 +349,43 @@ For repeated invocations, move the service metadata and stub path into a `sofarp
 Use `@file` or stdin to dodge PowerShell / bash JSON escaping.
 
 ## Describe
+
+### `describe` runtime sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant C as CLI (go)
+    participant R as runtime.Manager
+    participant D as Runtime Daemon
+    participant W as WorkerMain
+
+    U->>C: sofarpc describe com.example.Service
+    C->>R: resolve manifest/context, build Spec
+    C->>R: EnsureDaemon
+    alt existing daemon
+        R-->>C: daemon metadata
+    else start new daemon
+        R->>D: launch java WorkerMain serve
+        D-->>R: daemon metadata
+    end
+    C->>R: DescribeService(action=describe, Refresh flag)
+    R->>D: Invoke(request)
+    D->>W: handle(action=describe, service)
+    W->>W: if refresh -> remove cache[service]
+    W->>W: cache hit? return cached schema
+    W->>W: cache miss -> reflect classpath + cache schema
+    W-->>D: ServiceSchema response
+    D-->>R: response
+    alt response.error
+        R-->>C: fallback to java -cp describe (legacy)
+        C->>C: execute runtime-worker-java.describe command
+    else success
+        R-->>C: render schema
+        C-->>U: print method signatures
+    end
+```
 
 Reflect an interface from its stub jar and print the method signatures. The schema is cached in-memory by the runtime daemon (shared by CLI processes using the same daemon key), keyed by stub classpath and service.
 
