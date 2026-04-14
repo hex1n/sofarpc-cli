@@ -17,23 +17,23 @@ Start here:
 
 ```mermaid
 flowchart LR
-    A[Run `sofarpc <command>`] --> B["`internal/cli`: parse command + resolve manifest/context"]
-    B --> C["`internal/runtime`: ResolveSpec and daemon key"]
-    C --> D["`Manager.EnsureDaemon`: start/reuse runtime worker daemon"]
-    D --> E["`Manager.Invoke`: TCP socket to Java runtime"]
-    B -->|`call` command| F["Prepare invocation request (service/method/args/targets)"]
-    F --> G{Need schema inference?}
-    G -->|yes| H["`DescribeService` with `action=describe` over daemon"]
-    G -->|no| I["Direct invoke request"]
+    A[Run CLI command] --> B[internal cli parse command and resolve manifest context]
+    B --> C[ResolveSpec and daemon key]
+    C --> D[start or reuse runtime worker daemon]
+    D --> E[TCP socket to Java runtime]
+    B -->|call command| F[Prepare invocation request service method args targets]
+    F --> G{Need schema inference}
+    G -->|yes| H[DescribeService with action describe over daemon]
+    G -->|no| I[Direct invoke request]
     H --> E
     I --> E
-    B -->|`describe` command| H
-    E --> J{"`request.action`"}
-    J -->|`describe`| K["WorkerMain describe cache by `service` (in-memory)"]
-    J -->|other| L["WorkerMain invoke path"]
-    K --> M["Return ServiceSchema result"]
+    B -->|describe command| H
+    E --> J{request action}
+    J -->|describe| K[WorkerMain describe cache by service in memory]
+    J -->|other| L[WorkerMain invoke path]
+    K --> M[Return ServiceSchema result]
     L --> M
-    M --> N{"`response.ok`"}
+    M --> N{response ok}
     N -->|error| O[Print structured diagnostics and return error]
     N -->|success| P[Format output or return result]
 ```
