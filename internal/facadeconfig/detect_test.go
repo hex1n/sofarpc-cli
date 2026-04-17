@@ -1,4 +1,4 @@
-package facadekit
+package facadeconfig
 
 import (
 	"bytes"
@@ -17,8 +17,8 @@ func TestFirstArtifactIDSkipsParentBlock(t *testing.T) {
   </parent>
   <artifactId>user-facade</artifactId>
 </project>`
-	if got := firstArtifactID(pom); got != "user-facade" {
-		t.Fatalf("firstArtifactID = %q", got)
+	if got := FirstArtifactID(pom); got != "user-facade" {
+		t.Fatalf("FirstArtifactID = %q", got)
 	}
 }
 

@@ -10,8 +10,8 @@ import (
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
 	"github.com/hex1n/sofarpc-cli/internal/metadata"
-	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/runtime"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
 const defaultSofaRPCVersion = "5.7.6"
@@ -101,17 +101,20 @@ func (a *App) printUsage() {
 	fmt.Fprintln(a.Stdout, strings.TrimSpace(`
 sofarpc — SOFARPC CLI
 
-Commands:
+Core commands:
   call      invoke a SOFARPC service through the Java runtime daemon
-  describe  print a service method schema from project source or local artifacts
+  describe  print a service method schema from local contract resolution or legacy worker fallback
   doctor    show resolved config, runtime, target reachability, and daemon state
   target    show the currently resolved direct/registry target
-  daemon    inspect and manage local Java runtime daemons
-  runtime   install and inspect locally cached Java worker runtimes
   context   manage reusable target contexts
   manifest  initialize or generate a project manifest
+  runtime   install and inspect locally cached Java worker runtimes
+  daemon    inspect and manage local Java runtime daemons
+  metadata  inspect and manage local in-memory contract cache daemons
   skills    install or inspect bundled agent skills (call-rpc, ...)
-	  facade   bootstrap + drive facade invocation helpers (init/discover/index/services/schema/replay/status)
+
+Project tooling:
+  facade    optional facade workspace helpers (.sofarpc state: discover/index/services/schema/replay/status)
 `))
 }
 
@@ -191,8 +194,8 @@ func parseServiceMethod(token string) (string, string, error) {
 	return token[:idx], token[idx+1:], nil
 }
 
-func defaultsTarget() model.TargetConfig {
-	return model.TargetConfig{
+func defaultsTarget() targetmodel.TargetConfig {
+	return targetmodel.TargetConfig{
 		Protocol:         "bolt",
 		Serialization:    "hessian2",
 		TimeoutMS:        3000,

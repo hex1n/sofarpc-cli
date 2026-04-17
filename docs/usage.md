@@ -5,14 +5,15 @@ Design notes live in [sofarpc-cli-design.md](./sofarpc-cli-design.md).
 
 Architecture:
 
-- Go CLI for config resolution, runtime selection, daemon management, and UX
+- Go CLI for runtime selection, local contract resolution, daemon management, and UX
 - Java worker runtime for real SOFARPC invocation
 - Local runtime cache and daemon pool keyed by runtime version, runtime digest,
   stub content digest, and Java major version
+- Optional facade workspace state under `.sofarpc/` for project tooling only
 
 ## What Exists Today
 
-Current commands:
+Core commands:
 
 - `call`
 - `describe`
@@ -23,6 +24,15 @@ Current commands:
 - `runtime`
 - `daemon`
 
+Optional project tooling:
+
+- `facade discover`
+- `facade index`
+- `facade services`
+- `facade schema`
+- `facade replay`
+- `facade status`
+
 Current runtime features:
 
 - SOFARPC runtime default version `5.7.6`
@@ -31,7 +41,20 @@ Current runtime features:
 - local runtime install and cache
 - runtime sources: `file`, `directory`
 - local daemon inspection and cleanup
-- interface reflection with daemon in-memory schema cache
+- local contract resolution with in-memory metadata cache and legacy worker describe fallback
+
+## .sofarpc Semantics
+
+`.sofarpc/` is an optional facade workspace state directory.
+
+It may contain:
+
+- `config.json` for project-specific facade helper config
+- `index/` for facade service summaries and method indexes
+- `replays/` for saved replay inputs and replay run outputs
+
+The core `call / describe / doctor / target` path does not require `.sofarpc/`.
+It is only used by facade tooling and as a low-priority fallback for a few project-specific hints.
 
 ## Repo Layout
 
@@ -40,9 +63,15 @@ Current runtime features:
 - `internal/config`: local config and manifest persistence
 - `internal/runtime`: runtime selection, daemon pool, source resolution, diagnostics
 - `runtime-worker-java`: Java worker runtime
-- `internal/facadekit`: Go implementation of project discovery, schema/index generation, and saved-call replay
+- `internal/facadeconfig`: optional facade workspace config/state handling
+- `internal/facadeindex`: facade service summaries and index file management
+- `internal/facadesemantic`: Spoon-backed Java semantic discovery
+- `internal/facadereplay`: saved-call replay tooling
+- `internal/facadeschema`: schema generation helpers built on semantic metadata
+- `internal/targetmodel`: target/context/manifest state models
+- `internal/model`: invocation/runtime/report models and compatibility aliases
 - `spoon-indexer-java`: Spoon-based facade indexer
-- `skills/`: Claude Code skills bundled with the CLI (currently `call-rpc`)
+- `skills/`: agent skills bundled with the CLI (currently `call-rpc`)
 
 ## Prerequisites
 
@@ -108,16 +137,17 @@ go run ./cmd/sofarpc help
 
 For everyday use, a built binary on `PATH` is faster and avoids recompiling.
 
-## Claude Code Skills
+## Agent Skills
 
 The CLI ships a `call-rpc` skill at `skills/call-rpc/` that is a thin wrapper
-for `sofarpc call`. Installing copies it to `~/.claude/skills/` so Claude Code
-picks it up globally.
+for `sofarpc call`. Installing can target Claude, Codex, or both at user scope.
 
 ### Install
 
 ```powershell
-sofarpc skills install                  # default: copies call-rpc
+sofarpc skills install                  # default target: claude
+sofarpc skills install --target codex   # install under ~/.agents/skills/
+sofarpc skills install --target both    # install for both Claude and Codex
 sofarpc skills install --force          # overwrite existing install
 sofarpc skills install --dry-run        # preview copy
 sofarpc skills where                    # show source / target paths
@@ -267,13 +297,32 @@ sequenceDiagram
     autonumber
     actor U as User
     participant C as CLI (go run/sofarpc)
+    participant M as Local Contract Resolver
     participant R as runtime.Manager
     participant D as Runtime Daemon (Java TCP server)
     participant W as WorkerMain
 
     U->>C: sofarpc call ... [service/method/args]
-    C->>R: resolve manifest/context, build Spec
-    R->>R: ResolveSpec (runtime jar, classpath hash, daemon key)
+    C->>C: resolve manifest/context/invocation inputs
+    C->>M: resolve contract (metadata -> source -> artifacts)
+    alt local contract resolved
+        M-->>C: method contract / service schema
+        C->>C: infer param types / compile payload
+    else local contract miss and types still needed
+        M-->>C: local miss
+        C->>R: ResolveSpec (runtime jar, classpath hash, daemon key)
+        C->>R: DescribeServiceLegacyFallback(...)
+        R->>D: Ensure daemon and invoke describe
+        D->>W: handle(action=describe, service)
+        W->>W: load from in-JVM cache or reflect service
+        W-->>D: ServiceSchema result
+        D-->>R: response
+        alt daemon describe fails
+            R->>R: execute java -cp describe (legacy)
+        end
+        R-->>C: inferred param types
+    end
+    C->>R: ResolveSpec (runtime jar, classpath hash, daemon key)
     C->>R: EnsureDaemon
     alt existing daemon reachable
         R-->>C: return daemon metadata
@@ -281,17 +330,6 @@ sequenceDiagram
         R->>D: start java WorkerMain serve
         D-->>R: write metadata file
         R-->>C: return daemon metadata
-    end
-
-    C->>R: build invocation request
-    alt stub present and types needed
-        C->>R: DescribeService(action=describe, Refresh=no)
-        R->>D: Invoke(request)
-        D->>W: handle(action=describe, service)
-        W->>W: load from in-JVM cache or reflect service
-        W-->>D: ServiceSchema result
-        D-->>R: response
-        R-->>C: inferred param types
     end
     C->>R: Invoke(invoke request)
     R->>D: Invoke(request)
@@ -307,7 +345,9 @@ The examples below assume `sofarpc.exe` is on `PATH` and a context named `dev-di
 
 ### Simple request — primitive argument
 
-One `Long` argument, positional form. When a stub jar is configured the CLI infers `--types` via reflection, so this is enough:
+One `Long` argument, positional form. When local project source or local
+artifacts expose method metadata the CLI infers `--types` automatically, so
+this is enough:
 
 ```powershell
 sofarpc call com.example.UserService.getUser "[123]"
@@ -319,7 +359,7 @@ For a single-arg method the body can skip the outer array — the CLI wraps it i
 sofarpc call com.example.UserService.getUser "123"
 ```
 
-Equivalent with explicit flags — useful when no stub jar is available or you want to pin a specific overload:
+Equivalent with explicit flags — useful when local contract metadata is unavailable or you want to pin a specific overload:
 
 ```powershell
 sofarpc call `
@@ -392,40 +432,40 @@ sequenceDiagram
     autonumber
     actor U as User
     participant C as CLI (go)
+    participant M as Local Contract Resolver
     participant R as runtime.Manager
     participant D as Runtime Daemon
     participant W as WorkerMain
 
     U->>C: sofarpc describe com.example.Service
-    C->>R: resolve manifest/context, build Spec
-    C->>R: EnsureDaemon
-    alt existing daemon
-        R-->>C: daemon metadata
-    else start new daemon
-        R->>D: launch java WorkerMain serve
-        D-->>R: daemon metadata
-    end
-    C->>R: DescribeService(action=describe, Refresh flag)
-    R->>D: Invoke(request)
-    D->>W: handle(action=describe, service)
-    W->>W: if refresh -> remove cache[service]
-    W->>W: cache hit? return cached schema
-    W->>W: cache miss -> reflect classpath + cache schema
-    W-->>D: ServiceSchema response
-    D-->>R: response
-    alt response.error
-        R-->>C: fallback to java -cp describe (legacy)
-        C->>C: execute runtime-worker-java.describe command
-    else success
-        R-->>C: render schema
+    C->>M: resolve schema (metadata -> source -> artifacts)
+    alt local schema resolved
+        M-->>C: schema
         C-->>U: print method signatures
+    else local schema unavailable
+        M-->>C: local miss
+        C->>R: ResolveSpec (runtime jar, classpath hash, daemon key)
+        C->>R: DescribeServiceLegacyFallback(...)
+        R->>D: Ensure daemon and invoke describe
+        D->>W: handle(action=describe, service)
+        W->>W: if refresh -> remove cache[service]
+        W->>W: cache hit? return cached schema
+        W->>W: cache miss -> reflect classpath + cache schema
+        W-->>D: ServiceSchema response
+        D-->>R: response
+        alt daemon describe fails
+            R->>R: execute runtime-worker-java describe (legacy)
+        end
+        R-->>C: render schema
+        C-->>U: print method signatures or structured failure
     end
 ```
 
 By default, `describe` first resolves schema from local project source or local
 artifacts. Manual `--stub-path` is only for fallback debugging when local
-resolution misses. The schema is cached in-memory by the runtime daemon
-(shared by CLI processes using the same daemon key).
+resolution misses. Local contract metadata is cached only in the metadata
+daemon's memory. The runtime daemon's in-JVM schema cache applies only to the
+legacy worker describe fallback path.
 
 ```powershell
 sofarpc describe com.example.OrderService
@@ -457,8 +497,11 @@ This keeps the default output compact, while exposing `contractSource`,
 `contractCacheHit`, `contractNotes`, and worker runtime details only when you
 ask for them.
 
-Schema results are not persisted to disk by `sofarpc` CLI. Cache is process-memory only in each runtime daemon and disappears when that daemon exits.
-Daemon keys use the same stub-content digest, so changing stub byte content changes the `daemon-key` and forces a fresh worker lifecycle.
+Schema results are not persisted to disk by `sofarpc` CLI. Local contract
+metadata lives only in the metadata daemon's memory, and the legacy worker
+describe cache lives only in each runtime daemon. Both disappear when their
+own process exits.
+Runtime daemon keys use the same stub-content digest, so changing stub byte content changes the `daemon-key` and forces a fresh worker lifecycle.
 When this happens, older loopback daemons for the same runtime profile are stopped automatically so stale worker processes are replaced cleanly.
 
 ## How Resolution Works

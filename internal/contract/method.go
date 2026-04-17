@@ -6,16 +6,17 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/projectscan"
 )
 
 type ProjectMethod struct {
 	ProjectRoot string
-	Registry    facadekit.Registry
-	ServiceInfo facadekit.SemanticClassInfo
-	MethodInfo  facadekit.SemanticMethodInfo
+	Registry    facadesemantic.Registry
+	ServiceInfo facadesemantic.SemanticClassInfo
+	MethodInfo  facadesemantic.SemanticMethodInfo
 	Schema      model.MethodSchema
 }
 
@@ -45,14 +46,14 @@ func ResolveMethodFromProject(projectRoot, service, method string, preferredPara
 	}, nil
 }
 
-func loadProjectRegistry(projectRoot, service string) (projectLayout, facadekit.Config, facadekit.Registry, error) {
+func loadProjectRegistry(projectRoot, service string) (projectLayout, facadeconfig.Config, facadesemantic.Registry, error) {
 	layout, err := discoverProjectLayout(projectRoot)
 	if err != nil {
-		return projectLayout{}, facadekit.Config{}, nil, err
+		return projectLayout{}, facadeconfig.Config{}, nil, err
 	}
 	cfg, err := loadProjectConfigFn(layout.Root, true)
 	if err != nil {
-		cfg = facadekit.DefaultConfig()
+		cfg = facadeconfig.DefaultConfig()
 	}
 	modules := layout.Modules
 	if match, err := matchServiceFn(layout.Root, service, layout.Modules); err == nil {
@@ -60,11 +61,11 @@ func loadProjectRegistry(projectRoot, service string) (projectLayout, facadekit.
 	}
 	sourceRoots := sourceRootsForModules(layout.Root, modules)
 	if len(sourceRoots) == 0 {
-		return projectLayout{}, facadekit.Config{}, nil, fmt.Errorf("no facade source roots discovered for %s", service)
+		return projectLayout{}, facadeconfig.Config{}, nil, fmt.Errorf("no facade source roots discovered for %s", service)
 	}
 	registry, err := loadSemanticRegistryFn(layout.Root, sourceRoots, cfg.RequiredMarkers)
 	if err != nil {
-		return projectLayout{}, facadekit.Config{}, nil, err
+		return projectLayout{}, facadeconfig.Config{}, nil, err
 	}
 	return layout, cfg, registry, nil
 }
@@ -93,18 +94,18 @@ func discoverProjectLayout(projectRoot string) (projectLayout, error) {
 	return projectLayout{Root: layout.Root, Modules: modules}, nil
 }
 
-func selectSemanticMethod(serviceInfo facadekit.SemanticClassInfo, registry facadekit.Registry, method string, preferredParamTypes []string, rawArgs json.RawMessage) (facadekit.SemanticMethodInfo, error) {
-	var matches []facadekit.SemanticMethodInfo
+func selectSemanticMethod(serviceInfo facadesemantic.SemanticClassInfo, registry facadesemantic.Registry, method string, preferredParamTypes []string, rawArgs json.RawMessage) (facadesemantic.SemanticMethodInfo, error) {
+	var matches []facadesemantic.SemanticMethodInfo
 	for _, candidate := range serviceInfo.Methods {
 		if candidate.Name == method {
 			matches = append(matches, candidate)
 		}
 	}
 	if len(matches) == 0 {
-		return facadekit.SemanticMethodInfo{}, fmt.Errorf("method %s not found on %s", method, serviceInfo.FQN)
+		return facadesemantic.SemanticMethodInfo{}, fmt.Errorf("method %s not found on %s", method, serviceInfo.FQN)
 	}
 	if len(preferredParamTypes) > 0 {
-		var narrowed []facadekit.SemanticMethodInfo
+		var narrowed []facadesemantic.SemanticMethodInfo
 		for _, candidate := range matches {
 			if sameParamTypes(candidateParamTypes(serviceInfo, candidate, registry), preferredParamTypes) {
 				narrowed = append(narrowed, candidate)
@@ -118,7 +119,7 @@ func selectSemanticMethod(serviceInfo facadekit.SemanticClassInfo, registry faca
 		}
 	}
 	if hint := argsArityHint(rawArgs); hint >= 0 {
-		var narrowed []facadekit.SemanticMethodInfo
+		var narrowed []facadesemantic.SemanticMethodInfo
 		for _, candidate := range matches {
 			if len(candidate.Parameters) == hint {
 				narrowed = append(narrowed, candidate)
@@ -139,11 +140,11 @@ func selectSemanticMethod(serviceInfo facadekit.SemanticClassInfo, registry faca
 		options = append(options, "["+strings.Join(candidateParamTypes(serviceInfo, candidate, registry), ",")+"]")
 	}
 	sort.Strings(options)
-	return facadekit.SemanticMethodInfo{}, fmt.Errorf("method %s.%s is overloaded; pass --types to disambiguate: %s",
+	return facadesemantic.SemanticMethodInfo{}, fmt.Errorf("method %s.%s is overloaded; pass --types to disambiguate: %s",
 		serviceInfo.FQN, method, strings.Join(options, " | "))
 }
 
-func candidateParamTypes(owner facadekit.SemanticClassInfo, method facadekit.SemanticMethodInfo, registry facadekit.Registry) []string {
+func candidateParamTypes(owner facadesemantic.SemanticClassInfo, method facadesemantic.SemanticMethodInfo, registry facadesemantic.Registry) []string {
 	out := make([]string, 0, len(method.Parameters))
 	for _, parameter := range method.Parameters {
 		out = append(out, rawTypeName(parameter.Type, owner, registry))

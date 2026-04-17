@@ -1,4 +1,4 @@
-package facadekit
+package facadeschema
 
 import (
 	"strings"

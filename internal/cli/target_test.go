@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
-	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
 func newTargetTestApp(t *testing.T) *App {
@@ -32,12 +32,12 @@ func newTargetTestApp(t *testing.T) *App {
 
 func TestRunTargetShowPrintsResolvedDirectContext(t *testing.T) {
 	app := newTargetTestApp(t)
-	store := model.ContextStore{
+	store := targetmodel.ContextStore{
 		Active: "dev-direct",
-		Contexts: map[string]model.Context{
+		Contexts: map[string]targetmodel.Context{
 			"dev-direct": {
 				Name:             "dev-direct",
-				Mode:             model.ModeDirect,
+				Mode:             targetmodel.ModeDirect,
 				DirectURL:        "bolt://127.0.0.1:1",
 				Protocol:         "bolt",
 				Serialization:    "hessian2",
@@ -73,16 +73,16 @@ func TestRunTargetShowPrintsResolvedDirectContext(t *testing.T) {
 func TestRunTargetShowUsesManifestServiceUniqueID(t *testing.T) {
 	app := newTargetTestApp(t)
 	manifestPath := filepath.Join(app.Cwd, "sofarpc.manifest.json")
-	if err := config.SaveManifest(manifestPath, model.Manifest{
-		DefaultTarget: model.TargetConfig{
-			Mode:             model.ModeDirect,
+	if err := config.SaveManifest(manifestPath, targetmodel.Manifest{
+		DefaultTarget: targetmodel.TargetConfig{
+			Mode:             targetmodel.ModeDirect,
 			DirectURL:        "bolt://127.0.0.1:1",
 			Protocol:         "bolt",
 			Serialization:    "hessian2",
 			TimeoutMS:        4000,
 			ConnectTimeoutMS: 1200,
 		},
-		Services: map[string]model.ServiceConfig{
+		Services: map[string]targetmodel.ServiceConfig{
 			"com.example.OrderFacade": {UniqueID: "blue"},
 		},
 	}); err != nil {
@@ -113,9 +113,9 @@ func TestRunTargetShowSupportsProjectOutsideCurrentDirectory(t *testing.T) {
 	app := newTargetTestApp(t)
 	projectRoot := t.TempDir()
 	manifestPath := filepath.Join(projectRoot, "sofarpc.manifest.json")
-	if err := config.SaveManifest(manifestPath, model.Manifest{
-		DefaultTarget: model.TargetConfig{
-			Mode:             model.ModeDirect,
+	if err := config.SaveManifest(manifestPath, targetmodel.Manifest{
+		DefaultTarget: targetmodel.TargetConfig{
+			Mode:             targetmodel.ModeDirect,
 			DirectURL:        "bolt://127.0.0.1:1",
 			Protocol:         "bolt",
 			Serialization:    "hessian2",
@@ -153,23 +153,23 @@ func TestResolveTargetReportIncludesAllCandidatesAndExplanation(t *testing.T) {
 		t.Fatalf("MkdirAll(nested) error = %v", err)
 	}
 
-	store := model.ContextStore{
+	store := targetmodel.ContextStore{
 		Active: "z-active",
-		Contexts: map[string]model.Context{
+		Contexts: map[string]targetmodel.Context{
 			"z-active": {
 				Name:      "z-active",
-				Mode:      model.ModeDirect,
+				Mode:      targetmodel.ModeDirect,
 				DirectURL: "bolt://127.0.0.1:19000",
 			},
 			"b-project": {
 				Name:        "b-project",
-				Mode:        model.ModeDirect,
+				Mode:        targetmodel.ModeDirect,
 				DirectURL:   "bolt://127.0.0.1:19001",
 				ProjectRoot: projectRoot,
 			},
 			"a-project": {
 				Name:        "a-project",
-				Mode:        model.ModeDirect,
+				Mode:        targetmodel.ModeDirect,
 				DirectURL:   "bolt://127.0.0.1:19002",
 				ProjectRoot: projectRoot,
 			},
@@ -218,17 +218,17 @@ func TestResolveTargetReportIncludesAllCandidatesAndExplanation(t *testing.T) {
 func TestRunTargetShowPrintsCandidatesAndSelection(t *testing.T) {
 	app := newTargetTestApp(t)
 	projectRoot := t.TempDir()
-	store := model.ContextStore{
+	store := targetmodel.ContextStore{
 		Active: "z-active",
-		Contexts: map[string]model.Context{
+		Contexts: map[string]targetmodel.Context{
 			"z-active": {
 				Name:      "z-active",
-				Mode:      model.ModeDirect,
+				Mode:      targetmodel.ModeDirect,
 				DirectURL: "bolt://127.0.0.1:19000",
 			},
 			"a-project": {
 				Name:        "a-project",
-				Mode:        model.ModeDirect,
+				Mode:        targetmodel.ModeDirect,
 				DirectURL:   "bolt://127.0.0.1:19002",
 				ProjectRoot: projectRoot,
 			},
@@ -263,9 +263,9 @@ func TestRunTargetShowPrintsCandidatesAndSelection(t *testing.T) {
 
 func TestResolveTargetReportAllowsExplicitDirectWhenActiveContextIsStale(t *testing.T) {
 	app := newTargetTestApp(t)
-	store := model.ContextStore{
+	store := targetmodel.ContextStore{
 		Active:   "missing-active",
-		Contexts: map[string]model.Context{},
+		Contexts: map[string]targetmodel.Context{},
 	}
 	if err := config.SaveContextStore(app.Paths, store); err != nil {
 		t.Fatalf("SaveContextStore() error = %v", err)
@@ -290,9 +290,9 @@ func TestResolveTargetReportAllowsExplicitDirectWhenActiveContextIsStale(t *test
 func TestResolveTargetReportAllowsExplicitDirectWhenManifestDefaultContextIsStale(t *testing.T) {
 	app := newTargetTestApp(t)
 	manifestPath := filepath.Join(app.Cwd, "sofarpc.manifest.json")
-	if err := config.SaveManifest(manifestPath, model.Manifest{
+	if err := config.SaveManifest(manifestPath, targetmodel.Manifest{
 		DefaultContext: "missing-default",
-		DefaultTarget: model.TargetConfig{
+		DefaultTarget: targetmodel.TargetConfig{
 			Protocol:         "bolt",
 			Serialization:    "hessian2",
 			TimeoutMS:        3000,
@@ -321,16 +321,16 @@ func TestResolveTargetReportAllowsExplicitDirectWhenManifestDefaultContextIsStal
 func TestResolveTargetReportIncludesServiceManifestAndExplicitLayers(t *testing.T) {
 	app := newTargetTestApp(t)
 	manifestPath := filepath.Join(app.Cwd, "sofarpc.manifest.json")
-	if err := config.SaveManifest(manifestPath, model.Manifest{
-		DefaultTarget: model.TargetConfig{
-			Mode:             model.ModeDirect,
+	if err := config.SaveManifest(manifestPath, targetmodel.Manifest{
+		DefaultTarget: targetmodel.TargetConfig{
+			Mode:             targetmodel.ModeDirect,
 			DirectURL:        "bolt://127.0.0.1:19010",
 			Protocol:         "bolt",
 			Serialization:    "hessian2",
 			TimeoutMS:        3000,
 			ConnectTimeoutMS: 1000,
 		},
-		Services: map[string]model.ServiceConfig{
+		Services: map[string]targetmodel.ServiceConfig{
 			"com.example.OrderFacade": {UniqueID: "blue"},
 		},
 	}); err != nil {

@@ -1,4 +1,6 @@
-package facadekit
+package facadesemantic
+
+import "strings"
 
 type SemanticIndex struct {
 	Classes []SemanticClassInfo `json:"classes"`
@@ -38,3 +40,15 @@ type SemanticParameterInfo struct {
 }
 
 type Registry map[string]SemanticClassInfo
+
+func IsFacadeInterface(classInfo SemanticClassInfo, suffixes []string) bool {
+	if classInfo.Kind != "interface" {
+		return false
+	}
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(classInfo.SimpleName, suffix) {
+			return true
+		}
+	}
+	return false
+}

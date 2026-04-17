@@ -6,12 +6,13 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 	"github.com/hex1n/sofarpc-cli/internal/projectscan"
 )
 
 func TestBuildServiceSchemaConvertsImportedAndSamePackageTypes(t *testing.T) {
-	registry := facadekit.Registry{
+	registry := facadesemantic.Registry{
 		"com.example.OrderFacade": {
 			FQN:           "com.example.OrderFacade",
 			Kind:          "interface",
@@ -19,11 +20,11 @@ func TestBuildServiceSchemaConvertsImportedAndSamePackageTypes(t *testing.T) {
 			Imports: map[string]string{
 				"List": "java.util.List",
 			},
-			Methods: []facadekit.SemanticMethodInfo{
+			Methods: []facadesemantic.SemanticMethodInfo{
 				{
 					Name:       "importAsset",
 					ReturnType: "List<OrderResult>",
-					Parameters: []facadekit.SemanticParameterInfo{
+					Parameters: []facadesemantic.SemanticParameterInfo{
 						{Name: "request", Type: "OrderRequest"},
 						{Name: "items", Type: "List<OrderItem>"},
 						{Name: "tags", Type: "java.lang.String[]"},
@@ -64,14 +65,14 @@ func TestBuildServiceSchemaConvertsImportedAndSamePackageTypes(t *testing.T) {
 }
 
 func TestBuildServiceSchemaSortsOverloads(t *testing.T) {
-	registry := facadekit.Registry{
+	registry := facadesemantic.Registry{
 		"com.example.UserFacade": {
 			FQN:  "com.example.UserFacade",
 			Kind: "interface",
-			Methods: []facadekit.SemanticMethodInfo{
-				{Name: "find", Parameters: []facadekit.SemanticParameterInfo{{Name: "id", Type: "java.lang.Long"}}},
-				{Name: "create", Parameters: []facadekit.SemanticParameterInfo{{Name: "req", Type: "com.example.CreateRequest"}}},
-				{Name: "find", Parameters: []facadekit.SemanticParameterInfo{{Name: "name", Type: "java.lang.String"}}},
+			Methods: []facadesemantic.SemanticMethodInfo{
+				{Name: "find", Parameters: []facadesemantic.SemanticParameterInfo{{Name: "id", Type: "java.lang.Long"}}},
+				{Name: "create", Parameters: []facadesemantic.SemanticParameterInfo{{Name: "req", Type: "com.example.CreateRequest"}}},
+				{Name: "find", Parameters: []facadesemantic.SemanticParameterInfo{{Name: "name", Type: "java.lang.String"}}},
 			},
 		},
 	}
@@ -119,19 +120,19 @@ func TestDescribeServiceFromProjectNarrowsMatchedModule(t *testing.T) {
 	matchServiceFn = func(projectRoot, serviceFQCN string, modules []projectscan.FacadeModule) (projectscan.ServiceMatch, error) {
 		return projectscan.ServiceMatch{Module: modules[1]}, nil
 	}
-	loadProjectConfigFn = func(string, bool) (facadekit.Config, error) {
-		return facadekit.DefaultConfig(), nil
+	loadProjectConfigFn = func(string, bool) (facadeconfig.Config, error) {
+		return facadeconfig.DefaultConfig(), nil
 	}
-	loadSemanticRegistryFn = func(projectRoot string, sourceRoots, markers []string) (facadekit.Registry, error) {
+	loadSemanticRegistryFn = func(projectRoot string, sourceRoots, markers []string) (facadesemantic.Registry, error) {
 		want := []string{filepath.Clean(filepath.Join(projectRoot, "user-facade", "src", "main", "java"))}
 		if !reflect.DeepEqual(sourceRoots, want) {
 			t.Fatalf("sourceRoots = %v, want %v", sourceRoots, want)
 		}
-		return facadekit.Registry{
+		return facadesemantic.Registry{
 			"com.example.UserFacade": {
 				FQN:  "com.example.UserFacade",
 				Kind: "interface",
-				Methods: []facadekit.SemanticMethodInfo{
+				Methods: []facadesemantic.SemanticMethodInfo{
 					{Name: "getUser"},
 				},
 			},
@@ -171,10 +172,10 @@ func TestDescribeServiceFromProjectFallsBackToAllModulesWhenMatchFails(t *testin
 	matchServiceFn = func(string, string, []projectscan.FacadeModule) (projectscan.ServiceMatch, error) {
 		return projectscan.ServiceMatch{}, errors.New("not found")
 	}
-	loadProjectConfigFn = func(string, bool) (facadekit.Config, error) {
-		return facadekit.DefaultConfig(), nil
+	loadProjectConfigFn = func(string, bool) (facadeconfig.Config, error) {
+		return facadeconfig.DefaultConfig(), nil
 	}
-	loadSemanticRegistryFn = func(projectRoot string, sourceRoots, markers []string) (facadekit.Registry, error) {
+	loadSemanticRegistryFn = func(projectRoot string, sourceRoots, markers []string) (facadesemantic.Registry, error) {
 		want := []string{
 			filepath.Clean(filepath.Join(projectRoot, "order-facade", "src", "main", "java")),
 			filepath.Clean(filepath.Join(projectRoot, "user-facade", "src", "main", "java")),
@@ -182,7 +183,7 @@ func TestDescribeServiceFromProjectFallsBackToAllModulesWhenMatchFails(t *testin
 		if !reflect.DeepEqual(sourceRoots, want) {
 			t.Fatalf("sourceRoots = %v, want %v", sourceRoots, want)
 		}
-		return facadekit.Registry{
+		return facadesemantic.Registry{
 			"com.example.OrderFacade": {FQN: "com.example.OrderFacade", Kind: "interface"},
 		}, nil
 	}

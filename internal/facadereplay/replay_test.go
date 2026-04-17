@@ -1,4 +1,4 @@
-package facadekit
+package facadereplay
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
 )
 
 func TestReplayCallsDryRunPrintsCommands(t *testing.T) {
@@ -14,13 +16,13 @@ func TestReplayCallsDryRunPrintsCommands(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("MkdirAll root: %v", err)
 	}
-	cfg := DefaultConfig()
+	cfg := facadeconfig.DefaultConfig()
 	cfg.DefaultContext = "from-config"
-	cfg.FacadeModules = []FacadeModule{{Name: "svc-facade", SourceRoot: "svc-facade/src/main/java"}}
-	if err := SaveJSON(ConfigPath(root), cfg); err != nil {
+	cfg.FacadeModules = []facadeconfig.FacadeModule{{Name: "svc-facade", SourceRoot: "svc-facade/src/main/java"}}
+	if err := facadeconfig.SaveJSON(facadeconfig.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("SaveJSON config: %v", err)
 	}
-	replayDir := EffectiveReplayDir(root)
+	replayDir := facadeconfig.EffectiveReplayDir(root)
 	if err := os.MkdirAll(replayDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll replays: %v", err)
 	}
@@ -38,7 +40,7 @@ func TestReplayCallsDryRunPrintsCommands(t *testing.T) {
 			},
 		},
 	}
-	if err := SaveJSON(filepath.Join(replayDir, "UserFacade_getUser.json"), payload); err != nil {
+	if err := facadeconfig.SaveJSON(filepath.Join(replayDir, "UserFacade_getUser.json"), payload); err != nil {
 		t.Fatalf("SaveJSON replay: %v", err)
 	}
 
@@ -79,18 +81,18 @@ func TestReplayCallsSavesResultsAndReturnsSilentErrorOnRPCFail(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("MkdirAll root: %v", err)
 	}
-	cfg := DefaultConfig()
+	cfg := facadeconfig.DefaultConfig()
 	cfg.DefaultContext = "test-direct"
 	cfg.SofaRPCBin = "fake-sofarpc"
-	cfg.FacadeModules = []FacadeModule{{Name: "svc-facade", SourceRoot: "svc-facade/src/main/java"}}
-	if err := SaveJSON(ConfigPath(root), cfg); err != nil {
+	cfg.FacadeModules = []facadeconfig.FacadeModule{{Name: "svc-facade", SourceRoot: "svc-facade/src/main/java"}}
+	if err := facadeconfig.SaveJSON(facadeconfig.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("SaveJSON config: %v", err)
 	}
-	replayDir := EffectiveReplayDir(root)
+	replayDir := facadeconfig.EffectiveReplayDir(root)
 	if err := os.MkdirAll(replayDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll replays: %v", err)
 	}
-	if err := SaveJSON(filepath.Join(replayDir, "UserFacade_getUser.json"), map[string]any{
+	if err := facadeconfig.SaveJSON(filepath.Join(replayDir, "UserFacade_getUser.json"), map[string]any{
 		"service": "com.example.UserFacade",
 		"method":  "getUser",
 		"calls": []map[string]any{
@@ -103,12 +105,12 @@ func TestReplayCallsSavesResultsAndReturnsSilentErrorOnRPCFail(t *testing.T) {
 		t.Fatalf("SaveJSON replay: %v", err)
 	}
 
-	originalRunner := runReplayCommand
-	defer func() { runReplayCommand = originalRunner }()
+	originalRunner := ReplayCommandRunner
+	defer func() { ReplayCommandRunner = originalRunner }()
 
 	var seenBin, seenCwd, tempPath string
 	var seenArgs []string
-	runReplayCommand = func(bin string, args []string, cwd string) (int, string, string, error) {
+	ReplayCommandRunner = func(bin string, args []string, cwd string) (int, string, string, error) {
 		seenBin = bin
 		seenArgs = append([]string{}, args...)
 		seenCwd = cwd

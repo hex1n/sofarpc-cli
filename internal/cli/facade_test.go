@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
+	"github.com/hex1n/sofarpc-cli/internal/facadeindex"
+	"github.com/hex1n/sofarpc-cli/internal/facadeschema"
 )
 
 func TestSplitFacadeProjectArg(t *testing.T) {
@@ -45,7 +47,7 @@ func TestInspectFacadeStatePrefersExistingConfigLayout(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	state := facadekit.InspectState(root)
+	state := facadeconfig.InspectState(root)
 	if state.Layout.Label() != "primary (.sofarpc)" {
 		t.Fatalf("expected primary layout, got %q", state.Layout.Label())
 	}
@@ -75,14 +77,14 @@ func TestResolveFacadeProjectRootWalksUpFromNestedDir(t *testing.T) {
 
 func TestPrintFacadeSchemaText(t *testing.T) {
 	var stdout bytes.Buffer
-	schema := facadekit.MethodSchemaEnvelope{
+	schema := facadeschema.MethodSchemaEnvelope{
 		Service: "com.example.UserFacade",
 		File:    "src/main/java/com/example/UserFacade.java",
-		Method: facadekit.MethodSchemaResult{
+		Method: facadeschema.MethodSchemaResult{
 			Name:                  "getUser",
 			ReturnType:            "com.example.UserVO",
 			ParamTypes:            []string{"com.example.UserRequest"},
-			ParamsFieldInfo:       []facadekit.ParameterSchema{{Name: "request", Type: "com.example.UserRequest", RequiredHint: "required", Fields: []facadekit.FieldSchema{{Name: "tenantId", Type: "java.lang.String", Comment: "tenant id"}}}},
+			ParamsFieldInfo:       []facadeschema.ParameterSchema{{Name: "request", Type: "com.example.UserRequest", RequiredHint: "required", Fields: []facadeschema.FieldSchema{{Name: "tenantId", Type: "java.lang.String", Comment: "tenant id"}}}},
 			ResponseWarning:       "response wrapper exposes Optional/helper getters; prefer raw mode when stub jars are complete, generic mode may lose nested DTO types",
 			ResponseWarningReason: "Optional getter found on return type",
 		},
@@ -110,8 +112,8 @@ func TestPrintFacadeSchemaText(t *testing.T) {
 
 func TestPrintFacadeServicesText(t *testing.T) {
 	var stdout bytes.Buffer
-	summary := facadekit.IndexSummary{
-		Services: []facadekit.IndexSummaryService{
+	summary := facadeindex.IndexSummary{
+		Services: []facadeindex.IndexSummaryService{
 			{
 				Service: "com.example.UserFacade",
 				File:    "svc/src/main/java/com/example/UserFacade.java",
@@ -151,12 +153,12 @@ func TestRunFacadeServicesUsesServiceSummaryLoader(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	loadFacadeServiceSummary = func(projectRoot string) (facadekit.IndexSummary, error) {
+	loadFacadeServiceSummary = func(projectRoot string) (facadeindex.IndexSummary, error) {
 		if projectRoot != root {
 			t.Fatalf("projectRoot = %q, want %q", projectRoot, root)
 		}
-		return facadekit.IndexSummary{
-			Services: []facadekit.IndexSummaryService{
+		return facadeindex.IndexSummary{
+			Services: []facadeindex.IndexSummaryService{
 				{Service: "com.example.OrderFacade", Methods: []string{"createOrder"}},
 			},
 		}, nil
@@ -220,6 +222,7 @@ func TestRunFacadeStatusPrintsResolvedProjectState(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"state layout:   primary (.sofarpc)",
+		"state purpose:  optional facade workspace state (.sofarpc)",
 		"config path:    " + filepath.Join(root, ".sofarpc", "config.json"),
 		"index dir:      " + filepath.Join(root, ".sofarpc", "index"),
 		"replay dir:     " + filepath.Join(root, ".sofarpc", "replays"),

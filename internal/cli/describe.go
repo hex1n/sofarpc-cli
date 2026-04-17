@@ -25,7 +25,7 @@ func (a *App) runDescribe(args []string) error {
 	flags.StringVar(&sofaRPCVersion, "sofa-rpc-version", "", "runtime SOFARPC version")
 	flags.StringVar(&javaBin, "java-bin", "", "java executable")
 	flags.StringVar(&runtimeJar, "runtime-jar", "", "worker runtime jar")
-	flags.BoolVar(&refresh, "refresh", false, "bypass schema cache and re-run worker")
+	flags.BoolVar(&refresh, "refresh", false, "bypass schema cache and re-resolve local or legacy fallback schema")
 	flags.BoolVar(&fullResponse, "full-response", false, "print schema plus local resolution diagnostics")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -76,10 +76,10 @@ func (a *App) runDescribe(args []string) error {
 		}
 		return err
 	}
-	schema, err := a.Runtime.DescribeService(context.Background(), spec, service, runtime.DescribeOptions{Refresh: refresh})
+	schema, err := a.Runtime.DescribeServiceLegacyFallback(context.Background(), spec, service, runtime.DescribeOptions{Refresh: refresh})
 	if err != nil {
 		if fullResponse {
-			return a.writeDescribeFailure(err, localResolution.Notes, stubPaths, &spec, "worker-describe")
+			return a.writeDescribeFailure(err, localResolution.Notes, stubPaths, &spec, "legacy-worker-describe")
 		}
 		return err
 	}
@@ -87,7 +87,7 @@ func (a *App) runDescribe(args []string) error {
 		return printJSON(a.Stdout, model.DescribeReport{
 			Schema: &schema,
 			Diagnostics: model.DiagnosticInfo{
-				ContractSource:  "worker-describe",
+				ContractSource:  "legacy-worker-describe",
 				ContractNotes:   localResolution.Notes,
 				WorkerClasspath: workerClasspathMode(stubPaths),
 				RuntimeJar:      spec.RuntimeJar,

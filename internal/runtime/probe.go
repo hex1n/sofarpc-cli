@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
-func ProbeTarget(target model.TargetConfig) model.ProbeResult {
+func ProbeTarget(target targetmodel.TargetConfig) model.ProbeResult {
 	endpoint := configuredTarget(target)
 	if endpoint == "" {
 		return model.ProbeResult{Reachable: false, Message: "no direct or registry target configured"}
@@ -64,18 +65,18 @@ func ScanStubWarnings(stubPaths []string) []string {
 	}
 }
 
-func configuredTarget(target model.TargetConfig) string {
+func configuredTarget(target targetmodel.TargetConfig) string {
 	switch target.Mode {
-	case model.ModeDirect:
+	case targetmodel.ModeDirect:
 		return target.DirectURL
-	case model.ModeRegistry:
+	case targetmodel.ModeRegistry:
 		return target.RegistryProtocol + "://" + target.RegistryAddress
 	default:
 		return ""
 	}
 }
 
-func dialAddress(target model.TargetConfig) (string, error) {
+func dialAddress(target targetmodel.TargetConfig) (string, error) {
 	raw := configuredTarget(target)
 	parsed, err := url.Parse(raw)
 	if err == nil && parsed.Host != "" {

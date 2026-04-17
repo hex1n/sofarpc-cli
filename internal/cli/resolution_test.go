@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
-	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/runtime"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
 func TestResolveInvocationPrefersFlagsOverContextAndManifest(t *testing.T) {
@@ -20,12 +20,12 @@ func TestResolveInvocationPrefersFlagsOverContextAndManifest(t *testing.T) {
 		ContextsFile:       filepath.Join(t.TempDir(), "contexts.json"),
 		RuntimeSourcesFile: filepath.Join(t.TempDir(), "runtime-sources.json"),
 	}
-	store := model.ContextStore{
+	store := targetmodel.ContextStore{
 		Active: "dev",
-		Contexts: map[string]model.Context{
+		Contexts: map[string]targetmodel.Context{
 			"dev": {
 				Name:      "dev",
-				Mode:      model.ModeDirect,
+				Mode:      targetmodel.ModeDirect,
 				DirectURL: "bolt://127.0.0.1:12200",
 				Protocol:  "bolt",
 			},
@@ -34,11 +34,11 @@ func TestResolveInvocationPrefersFlagsOverContextAndManifest(t *testing.T) {
 	if err := config.SaveContextStore(paths, store); err != nil {
 		t.Fatalf("SaveContextStore() error = %v", err)
 	}
-	manifest := model.Manifest{
+	manifest := targetmodel.Manifest{
 		SchemaVersion:  "v1alpha1",
 		SofaRPCVersion: defaultSofaRPCVersion,
-		DefaultTarget: model.TargetConfig{
-			Mode:      model.ModeDirect,
+		DefaultTarget: targetmodel.TargetConfig{
+			Mode:      targetmodel.ModeDirect,
 			DirectURL: "bolt://127.0.0.1:12201",
 		},
 	}
@@ -100,12 +100,12 @@ func TestResolveInvocationPrefersServiceUniqueIDOverContextAndManifestDefault(t 
 		ContextsFile:       filepath.Join(configDir, "contexts.json"),
 		RuntimeSourcesFile: filepath.Join(configDir, "runtime-sources.json"),
 	}
-	store := model.ContextStore{
+	store := targetmodel.ContextStore{
 		Active: "dev",
-		Contexts: map[string]model.Context{
+		Contexts: map[string]targetmodel.Context{
 			"dev": {
 				Name:      "dev",
-				Mode:      model.ModeDirect,
+				Mode:      targetmodel.ModeDirect,
 				DirectURL: "bolt://127.0.0.1:12200",
 				UniqueID:  "context-uid",
 			},
@@ -114,18 +114,18 @@ func TestResolveInvocationPrefersServiceUniqueIDOverContextAndManifestDefault(t 
 	if err := config.SaveContextStore(paths, store); err != nil {
 		t.Fatalf("SaveContextStore() error = %v", err)
 	}
-	manifest := model.Manifest{
+	manifest := targetmodel.Manifest{
 		SchemaVersion:  "v1alpha1",
 		SofaRPCVersion: defaultSofaRPCVersion,
-		DefaultTarget: model.TargetConfig{
-			Mode:      model.ModeDirect,
+		DefaultTarget: targetmodel.TargetConfig{
+			Mode:      targetmodel.ModeDirect,
 			DirectURL: "bolt://127.0.0.1:12201",
 			UniqueID:  "manifest-uid",
 		},
-		Services: map[string]model.ServiceConfig{
+		Services: map[string]targetmodel.ServiceConfig{
 			"com.example.UserService": {
 				UniqueID: "service-uid",
-				Methods: map[string]model.MethodConfig{
+				Methods: map[string]targetmodel.MethodConfig{
 					"getUser": {},
 				},
 			},
@@ -163,12 +163,12 @@ func TestResolveInvocationPrefersFlagUniqueIDOverServiceUniqueID(t *testing.T) {
 		ContextsFile:       filepath.Join(configDir, "contexts.json"),
 		RuntimeSourcesFile: filepath.Join(configDir, "runtime-sources.json"),
 	}
-	store := model.ContextStore{
+	store := targetmodel.ContextStore{
 		Active: "dev",
-		Contexts: map[string]model.Context{
+		Contexts: map[string]targetmodel.Context{
 			"dev": {
 				Name:      "dev",
-				Mode:      model.ModeDirect,
+				Mode:      targetmodel.ModeDirect,
 				DirectURL: "bolt://127.0.0.1:12200",
 				UniqueID:  "context-uid",
 			},
@@ -177,18 +177,18 @@ func TestResolveInvocationPrefersFlagUniqueIDOverServiceUniqueID(t *testing.T) {
 	if err := config.SaveContextStore(paths, store); err != nil {
 		t.Fatalf("SaveContextStore() error = %v", err)
 	}
-	manifest := model.Manifest{
+	manifest := targetmodel.Manifest{
 		SchemaVersion:  "v1alpha1",
 		SofaRPCVersion: defaultSofaRPCVersion,
-		DefaultTarget: model.TargetConfig{
-			Mode:      model.ModeDirect,
+		DefaultTarget: targetmodel.TargetConfig{
+			Mode:      targetmodel.ModeDirect,
 			DirectURL: "bolt://127.0.0.1:12201",
 			UniqueID:  "manifest-uid",
 		},
-		Services: map[string]model.ServiceConfig{
+		Services: map[string]targetmodel.ServiceConfig{
 			"com.example.UserService": {
 				UniqueID: "service-uid",
-				Methods: map[string]model.MethodConfig{
+				Methods: map[string]targetmodel.MethodConfig{
 					"getUser": {},
 				},
 			},
@@ -224,18 +224,18 @@ func TestResolveActiveContextSelectsProjectContextBeforeActive(t *testing.T) {
 	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
 		t.Fatalf("create repo root: %v", err)
 	}
-	store := model.ContextStore{
+	store := targetmodel.ContextStore{
 		Active: "global",
-		Contexts: map[string]model.Context{
+		Contexts: map[string]targetmodel.Context{
 			"global": {
 				Name:        "global",
-				Mode:        model.ModeDirect,
+				Mode:        targetmodel.ModeDirect,
 				DirectURL:   "bolt://127.0.0.1:12200",
 				ProjectRoot: "",
 			},
 			"project-a": {
 				Name:        "project-a",
-				Mode:        model.ModeDirect,
+				Mode:        targetmodel.ModeDirect,
 				DirectURL:   "bolt://127.0.0.1:12201",
 				ProjectRoot: repoRoot,
 			},

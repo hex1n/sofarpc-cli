@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 	"github.com/hex1n/sofarpc-cli/internal/model"
 )
 
@@ -51,54 +51,54 @@ func ResolveMethodFromArtifacts(projectRoot, service, method string, preferredPa
 	}, nil
 }
 
-func loadArtifactService(projectRoot, service string) (*javapLoader, facadekit.SemanticClassInfo, error) {
+func loadArtifactService(projectRoot, service string) (*javapLoader, facadesemantic.SemanticClassInfo, error) {
 	layout, err := discoverProjectLayout(projectRoot)
 	if err != nil {
-		return nil, facadekit.SemanticClassInfo{}, err
+		return nil, facadesemantic.SemanticClassInfo{}, err
 	}
 	match, err := matchServiceFn(layout.Root, service, layout.Modules)
 	if err != nil {
-		return nil, facadekit.SemanticClassInfo{}, err
+		return nil, facadesemantic.SemanticClassInfo{}, err
 	}
 	artifacts, err := discoverArtifactsFn(layout.Root, match.Module)
 	if err != nil {
-		return nil, facadekit.SemanticClassInfo{}, err
+		return nil, facadesemantic.SemanticClassInfo{}, err
 	}
 	classpath := append([]string{}, artifacts.PrimaryJars...)
 	classpath = append(classpath, artifacts.DependencyJars...)
 	loader := newJavapLoader(classpath)
 	serviceInfo, err := loader.load(service, false)
 	if err != nil {
-		return nil, facadekit.SemanticClassInfo{}, err
+		return nil, facadesemantic.SemanticClassInfo{}, err
 	}
 	return loader, serviceInfo, nil
 }
 
 type javapLoader struct {
 	classpath []string
-	registry  facadekit.Registry
+	registry  facadesemantic.Registry
 	queued    map[string]struct{}
 }
 
 func newJavapLoader(classpath []string) *javapLoader {
 	return &javapLoader{
 		classpath: classpath,
-		registry:  facadekit.Registry{},
+		registry:  facadesemantic.Registry{},
 		queued:    map[string]struct{}{},
 	}
 }
 
-func (l *javapLoader) load(fqcn string, includeFields bool) (facadekit.SemanticClassInfo, error) {
+func (l *javapLoader) load(fqcn string, includeFields bool) (facadesemantic.SemanticClassInfo, error) {
 	if info, ok := l.registry[fqcn]; ok && (includeFields == false || info.Kind == "interface" || len(info.Fields) > 0 || len(info.EnumConstants) > 0) {
 		return info, nil
 	}
 	output, err := runJavap(l.classpath, includeFields, fqcn)
 	if err != nil {
-		return facadekit.SemanticClassInfo{}, err
+		return facadesemantic.SemanticClassInfo{}, err
 	}
 	info, err := parseJavapClass(output, fqcn)
 	if err != nil {
-		return facadekit.SemanticClassInfo{}, err
+		return facadesemantic.SemanticClassInfo{}, err
 	}
 	if cached, ok := l.registry[fqcn]; ok {
 		if len(cached.Methods) > len(info.Methods) {
@@ -162,7 +162,7 @@ func defaultRunJavap(classpath []string, includeFields bool, fqcn string) (strin
 	return string(output), nil
 }
 
-func parseJavapClass(output, fallbackFQCN string) (facadekit.SemanticClassInfo, error) {
+func parseJavapClass(output, fallbackFQCN string) (facadesemantic.SemanticClassInfo, error) {
 	lines := strings.Split(output, "\n")
 	var header string
 	for _, line := range lines {
@@ -176,11 +176,11 @@ func parseJavapClass(output, fallbackFQCN string) (facadekit.SemanticClassInfo, 
 		}
 	}
 	if header == "" {
-		return facadekit.SemanticClassInfo{}, fmt.Errorf("javap output missing class header for %s", fallbackFQCN)
+		return facadesemantic.SemanticClassInfo{}, fmt.Errorf("javap output missing class header for %s", fallbackFQCN)
 	}
 	info, err := parseJavapHeader(header)
 	if err != nil {
-		return facadekit.SemanticClassInfo{}, err
+		return facadesemantic.SemanticClassInfo{}, err
 	}
 	if info.FQN == "" {
 		info.FQN = fallbackFQCN
@@ -219,7 +219,7 @@ func parseJavapClass(output, fallbackFQCN string) (facadekit.SemanticClassInfo, 
 	return info, nil
 }
 
-func parseJavapHeader(header string) (facadekit.SemanticClassInfo, error) {
+func parseJavapHeader(header string) (facadesemantic.SemanticClassInfo, error) {
 	clean := strings.TrimSuffix(strings.TrimSpace(header), "{")
 	tokens := strings.Fields(clean)
 	kindIndex := -1
@@ -232,11 +232,11 @@ func parseJavapHeader(header string) (facadekit.SemanticClassInfo, error) {
 	}
 found:
 	if kindIndex == -1 || kindIndex+1 >= len(tokens) {
-		return facadekit.SemanticClassInfo{}, fmt.Errorf("unable to parse javap header: %s", header)
+		return facadesemantic.SemanticClassInfo{}, fmt.Errorf("unable to parse javap header: %s", header)
 	}
 	kind := tokens[kindIndex]
 	name := stripGenericSuffix(tokens[kindIndex+1])
-	info := facadekit.SemanticClassInfo{
+	info := facadesemantic.SemanticClassInfo{
 		FQN:  name,
 		Kind: kind,
 	}
@@ -259,40 +259,40 @@ found:
 	return info, nil
 }
 
-func parseJavapField(line, kind, ownerFQCN string) (facadekit.SemanticFieldInfo, string, bool) {
+func parseJavapField(line, kind, ownerFQCN string) (facadesemantic.SemanticFieldInfo, string, bool) {
 	clean := strings.TrimSuffix(strings.TrimSpace(line), ";")
 	if strings.Contains(" "+clean+" ", " static ") {
 		if kind == "enum" {
 			lastSpace := strings.LastIndex(clean, " ")
 			if lastSpace <= 0 {
-				return facadekit.SemanticFieldInfo{}, "", false
+				return facadesemantic.SemanticFieldInfo{}, "", false
 			}
 			name := strings.TrimSpace(clean[lastSpace+1:])
 			typeAndMods := strings.TrimSpace(clean[:lastSpace])
 			fieldType := stripModifiers(typeAndMods)
 			if fieldType == ownerFQCN {
-				return facadekit.SemanticFieldInfo{}, name, true
+				return facadesemantic.SemanticFieldInfo{}, name, true
 			}
 		}
-		return facadekit.SemanticFieldInfo{}, "", false
+		return facadesemantic.SemanticFieldInfo{}, "", false
 	}
 	lastSpace := strings.LastIndex(clean, " ")
 	if lastSpace <= 0 {
-		return facadekit.SemanticFieldInfo{}, "", false
+		return facadesemantic.SemanticFieldInfo{}, "", false
 	}
 	name := strings.TrimSpace(clean[lastSpace+1:])
 	typeAndMods := strings.TrimSpace(clean[:lastSpace])
 	fieldType := stripModifiers(typeAndMods)
 	if fieldType == "" {
-		return facadekit.SemanticFieldInfo{}, "", false
+		return facadesemantic.SemanticFieldInfo{}, "", false
 	}
 	if kind == "enum" && fieldType == ownerFQCN {
-		return facadekit.SemanticFieldInfo{}, name, true
+		return facadesemantic.SemanticFieldInfo{}, name, true
 	}
-	return facadekit.SemanticFieldInfo{Name: name, JavaType: fieldType}, "", true
+	return facadesemantic.SemanticFieldInfo{Name: name, JavaType: fieldType}, "", true
 }
 
-func parseJavapMethod(line, simpleName string) (facadekit.SemanticMethodInfo, bool) {
+func parseJavapMethod(line, simpleName string) (facadesemantic.SemanticMethodInfo, bool) {
 	clean := strings.TrimSuffix(strings.TrimSpace(line), ";")
 	if idx := strings.Index(clean, " throws "); idx >= 0 {
 		clean = clean[:idx]
@@ -300,33 +300,33 @@ func parseJavapMethod(line, simpleName string) (facadekit.SemanticMethodInfo, bo
 	open := strings.Index(clean, "(")
 	close := strings.LastIndex(clean, ")")
 	if open <= 0 || close < open {
-		return facadekit.SemanticMethodInfo{}, false
+		return facadesemantic.SemanticMethodInfo{}, false
 	}
 	paramsPart := strings.TrimSpace(clean[open+1 : close])
 	prefix := strings.TrimSpace(clean[:open])
 	nameStart := strings.LastIndex(prefix, " ")
 	if nameStart < 0 {
-		return facadekit.SemanticMethodInfo{}, false
+		return facadesemantic.SemanticMethodInfo{}, false
 	}
 	methodName := strings.TrimSpace(prefix[nameStart+1:])
 	returnType := strings.TrimSpace(prefix[:nameStart])
 	returnType = stripModifiers(returnType)
 	returnType = stripMethodTypeParams(returnType)
 	if returnType == "" || methodName == simpleName || strings.HasSuffix(methodName, "."+simpleName) {
-		return facadekit.SemanticMethodInfo{}, false
+		return facadesemantic.SemanticMethodInfo{}, false
 	}
 	params := splitTopLevelCSV(paramsPart)
-	method := facadekit.SemanticMethodInfo{
+	method := facadesemantic.SemanticMethodInfo{
 		Name:       methodName,
 		ReturnType: returnType,
-		Parameters: make([]facadekit.SemanticParameterInfo, 0, len(params)),
+		Parameters: make([]facadesemantic.SemanticParameterInfo, 0, len(params)),
 	}
 	for idx, param := range params {
 		param = strings.TrimSpace(param)
 		if param == "" {
 			continue
 		}
-		method.Parameters = append(method.Parameters, facadekit.SemanticParameterInfo{
+		method.Parameters = append(method.Parameters, facadesemantic.SemanticParameterInfo{
 			Name: fmt.Sprintf("arg%d", idx),
 			Type: param,
 		})

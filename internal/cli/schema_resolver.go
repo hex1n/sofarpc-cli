@@ -11,9 +11,19 @@ import (
 
 var describeServiceFromProject = contract.DescribeServiceFromProject
 var describeServiceFromArtifacts = contract.DescribeServiceFromArtifacts
+var describeServiceLegacyFallback = func(ctx context.Context, manager *runtime.Manager, spec runtime.Spec, service string, opts runtime.DescribeOptions) (model.ServiceSchema, error) {
+	return manager.DescribeServiceLegacyFallback(ctx, spec, service, opts)
+}
 var errLocalSchemaUnavailable = errors.New("local schema unavailable")
 
 type localSchemaResolution struct {
+	Schema   model.ServiceSchema
+	Source   string
+	CacheHit bool
+	Notes    []string
+}
+
+type serviceSchemaResolution struct {
 	Schema   model.ServiceSchema
 	Source   string
 	CacheHit bool
@@ -68,9 +78,29 @@ func (a *App) resolveLocalServiceSchemaDetailed(ctx context.Context, manifestPat
 	return localSchemaResolution{Notes: notes}, errLocalSchemaUnavailable
 }
 
-func (a *App) resolveServiceSchema(ctx context.Context, manifestPath string, spec runtime.Spec, service string, opts runtime.DescribeOptions) (model.ServiceSchema, error) {
-	if schema, err := a.resolveLocalServiceSchema(ctx, manifestPath, service, opts.Refresh || opts.NoCache); err == nil {
-		return schema, nil
+func (a *App) resolveServiceSchemaDetailed(ctx context.Context, manifestPath string, spec runtime.Spec, service string, opts runtime.DescribeOptions) (serviceSchemaResolution, error) {
+	if resolution, err := a.resolveLocalServiceSchemaDetailed(ctx, manifestPath, service, opts.Refresh || opts.NoCache); err == nil {
+		return serviceSchemaResolution{
+			Schema:   resolution.Schema,
+			Source:   resolution.Source,
+			CacheHit: resolution.CacheHit,
+			Notes:    resolution.Notes,
+		}, nil
 	}
-	return a.Runtime.DescribeService(ctx, spec, service, opts)
+	schema, err := describeServiceLegacyFallback(ctx, a.Runtime, spec, service, opts)
+	if err != nil {
+		return serviceSchemaResolution{}, err
+	}
+	return serviceSchemaResolution{
+		Schema: schema,
+		Source: "legacy-worker-describe",
+	}, nil
+}
+
+func (a *App) resolveServiceSchema(ctx context.Context, manifestPath string, spec runtime.Spec, service string, opts runtime.DescribeOptions) (model.ServiceSchema, error) {
+	resolution, err := a.resolveServiceSchemaDetailed(ctx, manifestPath, spec, service, opts)
+	if err == nil {
+		return resolution.Schema, nil
+	}
+	return model.ServiceSchema{}, err
 }

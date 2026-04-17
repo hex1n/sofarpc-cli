@@ -1,4 +1,4 @@
-package facadekit
+package facadesemantic
 
 import (
 	"bytes"

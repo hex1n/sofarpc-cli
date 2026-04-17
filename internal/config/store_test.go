@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
 func TestSaveAndLoadContextStore(t *testing.T) {
@@ -16,12 +17,12 @@ func TestSaveAndLoadContextStore(t *testing.T) {
 		ContextsFile:       filepath.Join(t.TempDir(), "contexts.json"),
 		RuntimeSourcesFile: filepath.Join(t.TempDir(), "runtime-sources.json"),
 	}
-	store := model.ContextStore{
+	store := targetmodel.ContextStore{
 		Active: "dev",
-		Contexts: map[string]model.Context{
+		Contexts: map[string]targetmodel.Context{
 			"dev": {
 				Name:      "dev",
-				Mode:      model.ModeDirect,
+				Mode:      targetmodel.ModeDirect,
 				DirectURL: "bolt://127.0.0.1:12200",
 			},
 		},

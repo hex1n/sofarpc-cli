@@ -1,4 +1,4 @@
-package facadekit
+package facadeindex
 
 import (
 	"encoding/json"
@@ -8,14 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
+
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
+	"github.com/hex1n/sofarpc-cli/internal/facadeschema"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 )
 
 type ServiceIndexFile struct {
-	Service string               `json:"service"`
-	File    string               `json:"file,omitempty"`
-	Methods []MethodSchemaResult `json:"methods"`
+	Service string                            `json:"service"`
+	File    string                            `json:"file,omitempty"`
+	Methods []facadeschema.MethodSchemaResult `json:"methods"`
 }
 
 type IndexSummary struct {
@@ -35,18 +38,18 @@ type serviceIndexArtifact struct {
 }
 
 func LoadServiceSummary(projectRoot string) (IndexSummary, error) {
-	cfg, err := LoadConfigOrDiscover(projectRoot)
+	cfg, err := facadeconfig.LoadConfigOrDiscover(projectRoot)
 	if err != nil {
 		return IndexSummary{}, err
 	}
 	if summary, ok := loadCachedServiceSummary(projectRoot, cfg); ok {
 		return summary, nil
 	}
-	sourceRoots := IterSourceRoots(cfg, projectRoot)
+	sourceRoots := facadeconfig.IterSourceRoots(cfg, projectRoot)
 	if len(sourceRoots) == 0 {
 		return IndexSummary{}, fmt.Errorf("no facade source roots in config")
 	}
-	registry, err := LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
+	registry, err := facadesemantic.LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
 	if err != nil {
 		return IndexSummary{}, err
 	}
@@ -54,8 +57,52 @@ func LoadServiceSummary(projectRoot string) (IndexSummary, error) {
 	return summary, nil
 }
 
-func loadCachedServiceSummary(projectRoot string, cfg Config) (IndexSummary, bool) {
-	body, err := os.ReadFile(filepath.Join(EffectiveIndexDir(projectRoot), "_index.json"))
+func RefreshIndex(projectRoot string, cfg facadeconfig.Config, stdout, stderr io.Writer) error {
+	sourceRoots := facadeconfig.IterSourceRoots(cfg, projectRoot)
+	if len(sourceRoots) == 0 {
+		return fmt.Errorf("no facade source roots in config")
+	}
+	for _, sourceRoot := range sourceRoots {
+		if _, err := os.Stat(sourceRoot); err != nil && os.IsNotExist(err) {
+			if stderr != nil {
+				fmt.Fprintf(stderr, "[index] WARNING source root does not exist: %s\n", sourceRoot)
+			}
+		}
+	}
+	registry, err := facadesemantic.LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
+	if err != nil {
+		return err
+	}
+	indexDir := facadeconfig.EffectiveIndexDir(projectRoot)
+	return WriteIndexFiles(indexDir, projectRoot, cfg, registry, stdout)
+}
+
+func WriteIndexFiles(indexDir, projectRoot string, cfg facadeconfig.Config, registry facadesemantic.Registry, stdout io.Writer) error {
+	parentDir := filepath.Dir(indexDir)
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		return err
+	}
+	tmpIndexDir, err := os.MkdirTemp(parentDir, ".sofarpc-index-")
+	if err != nil {
+		return err
+	}
+	tmpSummary, err := buildIndexFiles(tmpIndexDir, projectRoot, cfg, registry, stdout)
+	if err != nil {
+		_ = os.RemoveAll(tmpIndexDir)
+		return err
+	}
+	if err := switchIndexDir(tmpIndexDir, indexDir); err != nil {
+		_ = os.RemoveAll(tmpIndexDir)
+		return err
+	}
+	if stdout != nil {
+		fmt.Fprintf(stdout, "\n[index] wrote %d services to %s\n", len(tmpSummary.Services), displayPath(projectRoot, indexDir))
+	}
+	return nil
+}
+
+func loadCachedServiceSummary(projectRoot string, cfg facadeconfig.Config) (IndexSummary, bool) {
+	body, err := os.ReadFile(filepath.Join(facadeconfig.EffectiveIndexDir(projectRoot), "_index.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return IndexSummary{}, false
 	}
@@ -72,14 +119,14 @@ func loadCachedServiceSummary(projectRoot string, cfg Config) (IndexSummary, boo
 	return summary, true
 }
 
-func indexSummaryCompatible(summary IndexSummary, cfg Config, projectRoot string) bool {
+func indexSummaryCompatible(summary IndexSummary, cfg facadeconfig.Config, projectRoot string) bool {
 	return sameStringSet(summary.SourceRoots, relativeSourceRoots(projectRoot, cfg)) &&
 		sameStringSet(summary.InterfaceSuffixes, cfg.InterfaceSuffixes)
 }
 
-func relativeSourceRoots(projectRoot string, cfg Config) []string {
+func relativeSourceRoots(projectRoot string, cfg facadeconfig.Config) []string {
 	roots := make([]string, 0, len(cfg.FacadeModules))
-	for _, sourceRoot := range IterSourceRoots(cfg, projectRoot) {
+	for _, sourceRoot := range facadeconfig.IterSourceRoots(cfg, projectRoot) {
 		rel, err := filepath.Rel(projectRoot, sourceRoot)
 		if err != nil {
 			rel = sourceRoot
@@ -103,50 +150,6 @@ func sameStringSet(left, right []string) bool {
 		}
 	}
 	return true
-}
-
-func RefreshIndex(projectRoot string, cfg Config, stdout, stderr io.Writer) error {
-	sourceRoots := IterSourceRoots(cfg, projectRoot)
-	if len(sourceRoots) == 0 {
-		return fmt.Errorf("no facade source roots in config")
-	}
-	for _, sourceRoot := range sourceRoots {
-		if _, err := os.Stat(sourceRoot); err != nil && os.IsNotExist(err) {
-			if stderr != nil {
-				fmt.Fprintf(stderr, "[index] WARNING source root does not exist: %s\n", sourceRoot)
-			}
-		}
-	}
-	registry, err := LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
-	if err != nil {
-		return err
-	}
-	indexDir := EffectiveIndexDir(projectRoot)
-	return WriteIndexFiles(indexDir, projectRoot, cfg, registry, stdout)
-}
-
-func WriteIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry, stdout io.Writer) error {
-	parentDir := filepath.Dir(indexDir)
-	if err := os.MkdirAll(parentDir, 0o755); err != nil {
-		return err
-	}
-	tmpIndexDir, err := os.MkdirTemp(parentDir, ".sofarpc-index-")
-	if err != nil {
-		return err
-	}
-	tmpSummary, err := buildIndexFiles(tmpIndexDir, projectRoot, cfg, registry, stdout)
-	if err != nil {
-		_ = os.RemoveAll(tmpIndexDir)
-		return err
-	}
-	if err := switchIndexDir(tmpIndexDir, indexDir); err != nil {
-		_ = os.RemoveAll(tmpIndexDir)
-		return err
-	}
-	if stdout != nil {
-		fmt.Fprintf(stdout, "\n[index] wrote %d services to %s\n", len(tmpSummary.Services), displayPath(projectRoot, indexDir))
-	}
-	return nil
 }
 
 func switchIndexDir(next, current string) error {
@@ -174,14 +177,14 @@ func switchIndexDir(next, current string) error {
 	return nil
 }
 
-func buildIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry, stdout io.Writer) (IndexSummary, error) {
+func buildIndexFiles(indexDir, projectRoot string, cfg facadeconfig.Config, registry facadesemantic.Registry, stdout io.Writer) (IndexSummary, error) {
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
 		return IndexSummary{}, err
 	}
 
 	summary, artifacts := collectServiceIndexes(projectRoot, cfg, registry)
 	for _, artifact := range artifacts {
-		if err := SaveJSON(filepath.Join(indexDir, artifact.Payload.Service+".json"), artifact.Payload); err != nil {
+		if err := facadeconfig.SaveJSON(filepath.Join(indexDir, artifact.Payload.Service+".json"), artifact.Payload); err != nil {
 			return IndexSummary{}, err
 		}
 		if stdout != nil {
@@ -189,19 +192,19 @@ func buildIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry
 		}
 	}
 
-	if err := SaveJSON(filepath.Join(indexDir, "_index.json"), summary); err != nil {
+	if err := facadeconfig.SaveJSON(filepath.Join(indexDir, "_index.json"), summary); err != nil {
 		return IndexSummary{}, err
 	}
 	return summary, nil
 }
 
-func collectServiceIndexes(projectRoot string, cfg Config, registry Registry) (IndexSummary, []serviceIndexArtifact) {
+func collectServiceIndexes(projectRoot string, cfg facadeconfig.Config, registry facadesemantic.Registry) (IndexSummary, []serviceIndexArtifact) {
 	summary := IndexSummary{
 		SourceRoots:       make([]string, 0, len(cfg.FacadeModules)),
 		InterfaceSuffixes: append([]string{}, cfg.InterfaceSuffixes...),
 		Services:          []IndexSummaryService{},
 	}
-	for _, sourceRoot := range IterSourceRoots(cfg, projectRoot) {
+	for _, sourceRoot := range facadeconfig.IterSourceRoots(cfg, projectRoot) {
 		rel, err := filepath.Rel(projectRoot, sourceRoot)
 		if err != nil {
 			rel = sourceRoot
@@ -218,17 +221,17 @@ func collectServiceIndexes(projectRoot string, cfg Config, registry Registry) (I
 	artifacts := make([]serviceIndexArtifact, 0, len(serviceNames))
 	for _, fqn := range serviceNames {
 		classInfo := registry[fqn]
-		if !IsFacadeInterface(classInfo, cfg.InterfaceSuffixes) {
+		if !facadesemantic.IsFacadeInterface(classInfo, cfg.InterfaceSuffixes) {
 			continue
 		}
 		payload := ServiceIndexFile{
 			Service: classInfo.FQN,
 			File:    classInfo.File,
-			Methods: make([]MethodSchemaResult, 0, len(classInfo.Methods)),
+			Methods: make([]facadeschema.MethodSchemaResult, 0, len(classInfo.Methods)),
 		}
 		methodNames := make([]string, 0, len(classInfo.Methods))
 		for _, method := range classInfo.Methods {
-			payload.Methods = append(payload.Methods, buildMethodSchemaResult(registry, classInfo, method, cfg.RequiredMarkers))
+			payload.Methods = append(payload.Methods, facadeschema.BuildMethodSchemaResult(registry, classInfo, method, cfg.RequiredMarkers))
 			methodNames = append(methodNames, method.Name)
 		}
 		summary.Services = append(summary.Services, IndexSummaryService{
@@ -239,18 +242,6 @@ func collectServiceIndexes(projectRoot string, cfg Config, registry Registry) (I
 		artifacts = append(artifacts, serviceIndexArtifact{Payload: payload})
 	}
 	return summary, artifacts
-}
-
-func IsFacadeInterface(classInfo SemanticClassInfo, suffixes []string) bool {
-	if classInfo.Kind != "interface" {
-		return false
-	}
-	for _, suffix := range suffixes {
-		if strings.HasSuffix(classInfo.SimpleName, suffix) {
-			return true
-		}
-	}
-	return false
 }
 
 func displayPath(projectRoot, path string) string {

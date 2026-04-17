@@ -1,4 +1,4 @@
-package facadekit
+package facadereplay
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
 )
 
 type ReplayOptions struct {
@@ -60,15 +62,15 @@ func (e *exitError) Silent() bool {
 	return e.silent
 }
 
-var runReplayCommand = defaultRunReplayCommand
+var ReplayCommandRunner = defaultRunReplayCommand
 
 func ReplayCalls(projectRoot string, opts ReplayOptions, stdout, stderr io.Writer) error {
-	cfg, err := LoadConfig(projectRoot, false)
+	cfg, err := facadeconfig.LoadConfig(projectRoot, false)
 	if err != nil {
 		return err
 	}
 	sofarpcBin := firstNonEmpty(strings.TrimSpace(opts.SofaRPCBin), strings.TrimSpace(cfg.SofaRPCBin), "sofarpc")
-	replayDir := EffectiveReplayDir(projectRoot)
+	replayDir := facadeconfig.EffectiveReplayDir(projectRoot)
 	replayFiles, err := iterReplayFiles(replayDir)
 	if err != nil {
 		return err
@@ -138,7 +140,7 @@ func ReplayCalls(projectRoot string, opts ReplayOptions, stdout, stderr io.Write
 				continue
 			}
 
-			rc, stdoutText, stderrText, err := runReplayCommand(argv[0], argv[1:], projectRoot)
+			rc, stdoutText, stderrText, err := ReplayCommandRunner(argv[0], argv[1:], projectRoot)
 			_ = os.Remove(tempPath)
 			if err != nil {
 				return fmt.Errorf("replay %s [%s]: %w", shortName, name, err)
@@ -153,7 +155,7 @@ func ReplayCalls(projectRoot string, opts ReplayOptions, stdout, stderr io.Write
 				Name:          name,
 				Status:        status,
 				Code:          stringify(summary["errorCode"]),
-				Message:       trimMessage(summary["errorMsg"]),
+				Message:       trimMessage(stringify(summary["errorMsg"])),
 			})
 			if opts.Save {
 				out := map[string]any{
@@ -166,7 +168,7 @@ func ReplayCalls(projectRoot string, opts ReplayOptions, stdout, stderr io.Write
 				}
 				stem := strings.TrimSuffix(filepath.Base(replayFilePath), filepath.Ext(replayFilePath))
 				safeName := strings.NewReplacer("/", "_", "\\", "_").Replace(name)
-				if err := SaveJSON(filepath.Join(runsDir, stem+"__"+safeName+".json"), out); err != nil {
+				if err := facadeconfig.SaveJSON(filepath.Join(runsDir, stem+"__"+safeName+".json"), out); err != nil {
 					return err
 				}
 			}
@@ -261,128 +263,117 @@ func defaultRunReplayCommand(bin string, args []string, cwd string) (int, string
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	if err == nil {
-		return 0, stdout.String(), stderr.String(), nil
+	exitCode := 0
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return -1, stdout.String(), stderr.String(), err
+		}
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), stdout.String(), stderr.String(), nil
-	}
-	return 0, stdout.String(), stderr.String(), err
+	return exitCode, stdout.String(), stderr.String(), nil
 }
 
 func parseReplayResult(stdout string) map[string]any {
-	var data any
-	if err := json.Unmarshal([]byte(stdout), &data); err != nil {
-		return map[string]any{
-			"parsed":     false,
-			"stdoutHead": truncate(stdout, 200),
-		}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+		return map[string]any{}
 	}
-	out := map[string]any{"parsed": true}
-	root, ok := data.(map[string]any)
-	if !ok {
-		return out
-	}
-	body := any(root)
-	if result, ok := root["result"].(map[string]any); ok {
-		body = result
-	}
-	if envelope, ok := body.(map[string]any); ok {
-		if fields, ok := envelope["fields"].(map[string]any); ok && envelope["type"] != nil {
-			out["envelope"] = envelope["type"]
-			body = unwrapGenericEnvelope(fields)
-		}
-	}
-	if payload, ok := body.(map[string]any); ok {
-		if success, ok := payload["success"]; ok {
-			out["success"] = success
-		}
-		if errorCode := firstNonEmpty(stringify(payload["errorCode"]), stringify(payload["code"])); errorCode != "" {
-			out["errorCode"] = errorCode
-		}
-		if errorMsg := firstNonEmpty(stringify(payload["errorMsg"]), stringify(payload["message"])); errorMsg != "" {
-			out["errorMsg"] = errorMsg
-		}
-	}
-	if diagnostics, ok := root["diagnostics"].(map[string]any); ok {
-		if target := firstNonEmpty(stringify(diagnostics["targetUrl"]), stringify(diagnostics["target"])); target != "" {
-			out["target"] = target
-		}
-	}
-	return out
+	return parsed
 }
 
-func unwrapGenericEnvelope(body any) any {
-	current := body
-	for i := 0; i < 3; i++ {
-		envelope, ok := current.(map[string]any)
-		if !ok {
-			break
-		}
-		fields, ok := envelope["fields"].(map[string]any)
-		if !ok || envelope["type"] == nil {
-			break
-		}
-		current = fields
+func classifyReplayResult(rc int, summary map[string]any) string {
+	if rc == 0 {
+		return "OK"
 	}
-	return current
-}
-
-func classifyReplayResult(returnCode int, summary map[string]any) string {
-	if returnCode != 0 {
-		return "RPC_FAIL"
-	}
-	if success, ok := summary["success"].(bool); ok {
-		if success {
-			return "OK"
-		}
-		return "BIZ_FAIL"
-	}
-	return "UNKNOWN"
+	return "RPC_FAIL"
 }
 
 func printReplaySummary(stdout io.Writer, rows []replayRow) {
 	if stdout == nil {
 		return
 	}
-	fmt.Fprintf(stdout, "\n── summary %s\n", strings.Repeat("─", 60))
-	fmt.Fprintf(stdout, "%-50s%-14s%-10s%-10s%s\n", "call", "name", "status", "code", "msg")
-	for _, row := range rows {
-		fmt.Fprintf(stdout, "%-50s%-14s%-10s%-10s%s\n",
-			truncate(row.ServiceMethod, 48),
-			truncate(row.Name, 12),
-			row.Status,
-			truncate(row.Code, 10),
-			row.Message,
-		)
-	}
 	if len(rows) == 0 {
-		fmt.Fprintln(stdout, "(no saved calls matched filter)")
+		fmt.Fprintln(stdout, "\n(no matching saved calls)")
+		return
+	}
+
+	serviceWidth := len("call")
+	nameWidth := len("name")
+	statusWidth := len("status")
+	codeWidth := len("code")
+	for _, row := range rows {
+		serviceWidth = max(serviceWidth, len(row.ServiceMethod))
+		nameWidth = max(nameWidth, len(row.Name))
+		statusWidth = max(statusWidth, len(row.Status))
+		codeWidth = max(codeWidth, len(row.Code))
+	}
+
+	line := strings.Repeat("─", serviceWidth+nameWidth+statusWidth+codeWidth+16)
+	fmt.Fprintf(stdout, "\n%s %s\n", "── summary", line)
+	fmt.Fprintf(stdout, "%-*s  %-*s  %-*s  %-*s  %s\n",
+		serviceWidth, "call",
+		nameWidth, "name",
+		statusWidth, "status",
+		codeWidth, "code",
+		"msg",
+	)
+	for _, row := range rows {
+		fmt.Fprintf(stdout, "%-*s  %-*s  %-*s  %-*s  %s\n",
+			serviceWidth, row.ServiceMethod,
+			nameWidth, trimForTable(row.Name),
+			statusWidth, row.Status,
+			codeWidth, row.Code,
+			trimForTable(row.Message),
+		)
 	}
 }
 
-func shortServiceMethod(service, method string) string {
-	shortService := service
-	if idx := strings.LastIndex(service, "."); idx >= 0 && idx+1 < len(service) {
-		shortService = service[idx+1:]
+func trimForTable(value string) string {
+	if len(value) <= 12 {
+		return value
 	}
-	return shortService + "." + method
+	return value[:12]
+}
+
+func trimMessage(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	if len(value) > 80 {
+		return value[:77] + "..."
+	}
+	return value
 }
 
 func quoteCommand(argv []string) string {
 	quoted := make([]string, 0, len(argv))
 	for _, arg := range argv {
-		quoted = append(quoted, quoteArg(arg))
+		if strings.ContainsAny(arg, " \t") {
+			quoted = append(quoted, strconvQuote(arg))
+			continue
+		}
+		quoted = append(quoted, arg)
 	}
 	return strings.Join(quoted, " ")
 }
 
-func quoteArg(value string) string {
-	if value == "" || strings.ContainsAny(value, " \"'<>|&") {
-		return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+func stringify(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return ""
 	}
-	return value
+}
+
+func shortServiceMethod(service, method string) string {
+	parts := strings.Split(service, ".")
+	if len(parts) == 0 {
+		return service + "." + method
+	}
+	return parts[len(parts)-1] + "." + method
 }
 
 func firstNonEmpty(values ...string) string {
@@ -394,24 +385,21 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func stringify(value any) string {
-	switch typed := value.(type) {
-	case nil:
-		return ""
-	case string:
-		return typed
-	default:
-		return fmt.Sprint(typed)
+func max(left, right int) int {
+	if left > right {
+		return left
 	}
+	return right
 }
 
-func trimMessage(value any) string {
-	return truncate(strings.TrimSpace(stringify(value)), 60)
+func strconvQuote(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
 }
 
-func truncate(value string, max int) string {
-	if max <= 0 || len(value) <= max {
-		return value
+func displayPath(projectRoot, path string) string {
+	rel, err := filepath.Rel(projectRoot, path)
+	if err != nil {
+		return path
 	}
-	return value[:max]
+	return filepath.ToSlash(rel)
 }

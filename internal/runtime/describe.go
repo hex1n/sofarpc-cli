@@ -20,29 +20,31 @@ type DescribeOptions struct {
 	NoCache bool
 }
 
-var describeWorker = func(m *Manager, ctx context.Context, spec Spec, service string) (model.ServiceSchema, error) {
-	return m.describeViaWorker(ctx, spec, service)
+var legacyDescribeWorker = func(m *Manager, ctx context.Context, spec Spec, service string) (model.ServiceSchema, error) {
+	return m.describeViaLegacyWorker(ctx, spec, service)
 }
 
-var describeViaDaemonRequest = func(ctx context.Context, m *Manager, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
-	return m.describeViaDaemon(ctx, spec, service, opts)
+var legacyDescribeViaDaemonRequest = func(ctx context.Context, m *Manager, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
+	return m.describeViaLegacyDaemon(ctx, spec, service, opts)
 }
 
-func (m *Manager) DescribeService(ctx context.Context, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
+// DescribeServiceLegacyFallback keeps the old worker-driven describe path alive as
+// a compatibility fallback. Callers should prefer local contract resolution first.
+func (m *Manager) DescribeServiceLegacyFallback(ctx context.Context, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
 	if strings.TrimSpace(service) == "" {
 		return model.ServiceSchema{}, errors.New("service is required")
 	}
 
-	schema, err := describeViaDaemonRequest(ctx, m, spec, service, opts)
+	schema, err := legacyDescribeViaDaemonRequest(ctx, m, spec, service, opts)
 	if err == nil {
 		return schema, nil
 	}
 
 	// Keep direct worker call as a compatibility fallback.
-	return describeWorker(m, ctx, spec, service)
+	return legacyDescribeWorker(m, ctx, spec, service)
 }
 
-func (m *Manager) describeViaDaemon(ctx context.Context, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
+func (m *Manager) describeViaLegacyDaemon(ctx context.Context, spec Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
 	metadata, err := m.EnsureDaemon(ctx, spec)
 	if err != nil {
 		return model.ServiceSchema{}, err
@@ -80,7 +82,7 @@ func classpathContentKey(stubPaths []string) (string, error) {
 	return classpathContentKeyWithPolicy(stubPaths, false)
 }
 
-func (m *Manager) describeViaWorker(ctx context.Context, spec Spec, service string) (model.ServiceSchema, error) {
+func (m *Manager) describeViaLegacyWorker(ctx context.Context, spec Spec, service string) (model.ServiceSchema, error) {
 	if strings.TrimSpace(service) == "" {
 		return model.ServiceSchema{}, errors.New("service is required")
 	}

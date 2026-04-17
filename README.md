@@ -1,6 +1,6 @@
 # sofarpc-cli
 
-CLI for invoking SOFARPC services.
+CLI for invoking and debugging SOFARPC services.
 
 Architecture (deliberately polyglot, each language kept to what it does best):
 
@@ -14,6 +14,22 @@ Start here:
 
 - usage and command reference: [docs/usage.md](./docs/usage.md)
 - design notes: [docs/sofarpc-cli-design.md](./docs/sofarpc-cli-design.md)
+
+Core product surface:
+
+- `call`
+- `describe`
+- `doctor`
+- `target`
+
+Optional project tooling:
+
+- `facade discover`
+- `facade index`
+- `facade services`
+- `facade schema`
+- `facade replay`
+- `facade status`
 
 ## Runtime Workflow
 
@@ -44,6 +60,9 @@ Notes:
   a runtime-only classpath instead of loading business jars
 - cache is process-lifetime only; refresh is supported via `call --refresh-contract`,
   `doctor --refresh-contract`, and `describe --refresh`
+- `.sofarpc/` is an optional facade workspace state directory used only by
+  project tooling such as discover/index/replay; the core
+  `call/describe/doctor/target` flow does not require it
 
 ## Quick Start
 
@@ -60,7 +79,7 @@ Run:
 go run ./cmd/sofarpc help
 ```
 
-Project helper commands:
+Optional project helper commands:
 
 ```powershell
 sofarpc facade discover --write
@@ -71,14 +90,16 @@ sofarpc facade replay
 sofarpc facade status
 ```
 
-## Claude Code skills
+## Agent Skill
 
-The repo ships a `call-rpc` Claude Code skill that triggers `sofarpc call` for
+The repo ships a `call-rpc` agent skill that triggers `sofarpc call` for
 SOFABoot projects. Install once at user scope:
 
 ```powershell
-sofarpc skills install          # copies skills/call-rpc -> ~/.claude/skills/
-sofarpc skills where            # show source / target paths
+sofarpc skills install                    # default target: claude
+sofarpc skills install --target codex     # install under ~/.agents/skills/
+sofarpc skills install --target both      # install for both Claude and Codex
+sofarpc skills where                      # show source / target paths
 ```
 
 The skill intentionally does not handle facade discovery, index generation,

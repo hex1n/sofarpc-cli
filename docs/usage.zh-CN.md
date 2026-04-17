@@ -5,13 +5,14 @@
 
 架构：
 
-- Go CLI 负责配置解析、runtime 选择、daemon 管理与交互体验
+- Go CLI 负责 runtime 选择、本地 contract 解析、daemon 管理与交互体验
 - Java worker runtime 负责真正的 SOFARPC 调用
 - 本地 runtime 缓存与 daemon 池按 runtime 版本、runtime 摘要、stub 内容摘要、Java 主版本号分片
+- `.sofarpc/` 仅作为可选的 facade workspace 状态目录
 
 ## 当前能力
 
-可用命令：
+核心命令：
 
 - `call`
 - `describe`
@@ -22,6 +23,15 @@
 - `runtime`
 - `daemon`
 
+项目增强命令：
+
+- `facade discover`
+- `facade index`
+- `facade services`
+- `facade schema`
+- `facade replay`
+- `facade status`
+
 当前 runtime 特性：
 
 - SOFARPC runtime 默认版本 `5.7.6`
@@ -30,7 +40,20 @@
 - 本地 runtime 安装与缓存
 - runtime source：`file`、`directory`
 - 本地 daemon 查看与清理
-- 接口反射由 daemon 进程内存缓存
+- 本地 contract 解析 + 内存 metadata cache，外加 legacy worker describe fallback
+
+## .sofarpc 语义
+
+`.sofarpc/` 是可选的 facade workspace 状态目录。
+
+它通常包含：
+
+- `config.json`：项目级 facade helper 配置
+- `index/`：facade 服务和方法索引
+- `replays/`：保存的回放输入与回放结果
+
+核心 `call / describe / doctor / target` 主链并不要求 `.sofarpc/` 存在。
+它主要服务于 facade tooling，并在少数场景里作为低优先级项目提示来源。
 
 ## 仓库结构
 
@@ -39,9 +62,15 @@
 - `internal/config`：本地配置与 manifest 持久化
 - `internal/runtime`：runtime 选择、daemon 池、source 解析、诊断
 - `runtime-worker-java`：Java worker runtime
-- `internal/facadekit`：Go 版项目发现、schema/index 生成与已保存调用回放实现
+- `internal/facadeconfig`：facade workspace config/state 处理
+- `internal/facadeindex`：facade 服务摘要与 index 文件管理
+- `internal/facadesemantic`：基于 Spoon 的 Java 语义发现
+- `internal/facadereplay`：已保存调用回放能力
+- `internal/facadeschema`：基于语义元数据的 schema 生成辅助
+- `internal/targetmodel`：target/context/manifest 状态模型
+- `internal/model`：invoke/runtime/report 模型与兼容 alias
 - `spoon-indexer-java`：基于 Spoon 的 facade 索引器
-- `skills/`：随 CLI 一起分发的 Claude Code skills（当前是 `call-rpc`）
+- `skills/`：随 CLI 一起分发的 agent skills（当前是 `call-rpc`）
 
 ## 前置依赖
 
@@ -107,15 +136,17 @@ go run ./cmd/sofarpc help
 
 日常使用建议把构建好的二进制放到 `PATH`，更快也免去重复编译。
 
-## Claude Code Skill
+## Agent Skill
 
 仓库 `skills/call-rpc/` 下是 `call-rpc` skill，安装后会复制到
-`~/.claude/skills/`，本质上是 `sofarpc call` 的薄封装入口。
+用户目录，本质上是 `sofarpc call` 的薄封装入口。
 
 ### 安装
 
 ```powershell
-sofarpc skills install                  # 默认安装 call-rpc
+sofarpc skills install                  # 默认安装到 Claude
+sofarpc skills install --target codex   # 安装到 ~/.agents/skills/
+sofarpc skills install --target both    # 同时安装到 Claude 和 Codex
 sofarpc skills install --force          # 覆盖已有安装
 sofarpc skills install --dry-run        # 预览拷贝
 sofarpc skills where                    # 查看源/目标路径
@@ -264,13 +295,32 @@ sequenceDiagram
     autonumber
     actor U as 用户
     participant C as CLI（Go）
+    participant M as 本地 Contract Resolver
     participant R as runtime.Manager
     participant D as 运行时 Daemon（Java TCP）
     participant W as WorkerMain
 
     U->>C: sofarpc call ...（service/method/args）
-    C->>R: 解析 manifest/context，构建 Spec
-    R->>R: ResolveSpec（runtime jar、classpath 摘要、daemon key）
+    C->>C: 解析 manifest/context/调用输入
+    C->>M: 解析 contract（metadata -> source -> artifacts）
+    alt 本地 contract 命中
+        M-->>C: 方法 contract / service schema
+        C->>C: 推断 paramTypes / 编译 payload
+    else 本地 contract miss 且仍需类型信息
+        M-->>C: local miss
+        C->>R: ResolveSpec（runtime jar、classpath 摘要、daemon key）
+        C->>R: DescribeServiceLegacyFallback(...)
+        R->>D: Ensure daemon 并执行 describe
+        D->>W: handle(action=describe, service)
+        W->>W: 命中内存 cache 则直接返回，否则反射构建 schema
+        W-->>D: 返回 ServiceSchema
+        D-->>R: 响应
+        alt daemon describe 失败
+            R->>R: 执行 java -cp describe（legacy）
+        end
+        R-->>C: 获得参数类型推断
+    end
+    C->>R: ResolveSpec（runtime jar、classpath 摘要、daemon key）
     C->>R: EnsureDaemon
     alt daemon 已存在且可达
         R-->>C: 返回 daemon 元信息
@@ -278,17 +328,6 @@ sequenceDiagram
         R->>D: 启动 java WorkerMain serve
         D-->>R: 写入并返回 metadata
         R-->>C: 返回 daemon 元信息
-    end
-
-    C->>R: 组装调用请求
-    alt 有 stub 且需要推断类型
-        C->>R: DescribeService(action=describe, Refresh=false)
-        R->>D: Invoke(request)
-        D->>W: handle(action=describe, service)
-        W->>W: 命中内存 cache 则直接返回，否则反射构建 schema
-        W-->>D: 返回 ServiceSchema
-        D-->>R: 响应
-        R-->>C: 获得参数类型推断
     end
     C->>R: Invoke(正式 invoke 请求)
     R->>D: Invoke(request)
@@ -304,7 +343,7 @@ sequenceDiagram
 
 ### 简单请求 — 基础类型参数
 
-一个 `Long` 入参，位置参数形式。只要本地项目或本地产物能解析到方法元信息，CLI 会自动推断 `--types`，因此下面这样就够了：
+一个 `Long` 入参，位置参数形式。只要本地项目源码或本地产物能解析到方法元信息，CLI 会自动推断 `--types`，因此下面这样就够了：
 
 ```powershell
 sofarpc call com.example.UserService.getUser "[123]"
@@ -316,7 +355,7 @@ sofarpc call com.example.UserService.getUser "[123]"
 sofarpc call com.example.UserService.getUser "123"
 ```
 
-显式 flag 等价写法 — 本地解析不到元信息或想锁定具体重载时更稳：
+显式 flag 等价写法 — 本地 contract 元信息拿不到，或想锁定具体重载时更稳：
 
 ```powershell
 sofarpc call `
@@ -384,36 +423,35 @@ sequenceDiagram
     autonumber
     actor U as 用户
     participant C as CLI（Go）
+    participant M as 本地 Contract Resolver
     participant R as runtime.Manager
     participant D as Runtime Daemon
     participant W as WorkerMain
 
     U->>C: sofarpc describe com.example.Service
-    C->>R: 解析 manifest/context，构建 Spec
-    C->>R: EnsureDaemon
-    alt 已有可达 daemon
-        R-->>C: daemon 元信息
-    else 启动新 daemon
-        R->>D: 启动 java WorkerMain serve
-        D-->>R: daemon 元信息
-    end
-    C->>R: DescribeService(action=describe, Refresh 参数)
-    R->>D: Invoke(request)
-    D->>W: handle(action=describe, service)
-    W->>W: refresh 时清理 cache[service]
-    W->>W: 缓存命中则返回；未命中则反射并入缓存
-    W-->>D: ServiceSchema
-    D-->>R: 响应
-    alt response.error
-        R-->>C: 回退执行 java -cp describe
-        C->>C: 执行 JVM describe 子命令
-    else 成功
-        R-->>C: 渲染 schema
+    C->>M: 解析 schema（metadata -> source -> artifacts）
+    alt 本地 schema 命中
+        M-->>C: schema
         C-->>U: 打印 method signature
+    else 本地 schema 不可用
+        M-->>C: local miss
+        C->>R: ResolveSpec（runtime jar、classpath 摘要、daemon key）
+        C->>R: DescribeServiceLegacyFallback(...)
+        R->>D: Ensure daemon 并执行 describe
+        D->>W: handle(action=describe, service)
+        W->>W: refresh 时清理 cache[service]
+        W->>W: 缓存命中则返回；未命中则反射并入缓存
+        W-->>D: ServiceSchema
+        D-->>R: 响应
+        alt daemon describe 失败
+            R->>R: 执行 runtime-worker-java describe（legacy）
+        end
+        R-->>C: 渲染 schema
+        C-->>U: 打印 method signature 或结构化错误
     end
 ```
 
-默认情况下，`describe` 会先从本地项目源码或本地产物解析 schema。手工 `--stub-path` 只用于本地解析失败后的 fallback 调试。schema 结果保存在 runtime daemon 的进程内存里，共享给使用同一 `daemon-key` 的 CLI 进程。
+默认情况下，`describe` 会先从本地项目源码或本地产物解析 schema。手工 `--stub-path` 只用于本地解析失败后的 fallback 调试。本地 contract 元信息只缓存于 metadata daemon 的内存中；runtime daemon 里的 JVM schema cache 只服务于 legacy worker describe fallback。
 
 ```powershell
 sofarpc describe com.example.OrderService
@@ -443,8 +481,8 @@ sofarpc describe --full-response com.example.OrderService
 这样默认输出仍然保持紧凑，只有在显式需要时才会看到
 `contractSource`、`contractCacheHit`、`contractNotes` 以及 worker runtime 细节。
 
-schema 结果不会落盘，不写本地文件，只保留在 daemon 进程内存中；daemon 退出即失效。
-daemon key 也使用同一份 stub 内容摘要；stub jar 内容变化会触发新的 `daemon-key`，自动拉起新 worker，避免复用旧进程。新 worker 启动后，同一 runtime profile 下的历史 loopback worker 会被自动停止，减少旧进程留存。
+schema 结果不会落盘，不写本地文件。本地 contract 元信息只存在于 metadata daemon 内存，legacy worker describe cache 只存在于 runtime daemon 内存；各自进程退出即失效。
+runtime daemon key 也使用同一份 stub 内容摘要；stub jar 内容变化会触发新的 `daemon-key`，自动拉起新 worker，避免复用旧进程。新 worker 启动后，同一 runtime profile 下的历史 loopback worker 会被自动停止，减少旧进程留存。
 
 ## 解析顺序
 

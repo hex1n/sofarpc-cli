@@ -5,6 +5,7 @@ import (
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
 	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
 func (a *App) runManifest(args []string) error {
@@ -39,15 +40,15 @@ func (a *App) runManifestInit(args []string) error {
 		return err
 	}
 	target := defaultsTarget()
-	target.Mode = model.ModeDirect
+	target.Mode = targetmodel.ModeDirect
 	target.DirectURL = directURL
-	manifest := model.Manifest{
+	manifest := targetmodel.Manifest{
 		SchemaVersion:  "v1alpha1",
 		SofaRPCVersion: defaultSofaRPCVersion,
 		DefaultTarget:  target,
-		Services: map[string]model.ServiceConfig{
+		Services: map[string]targetmodel.ServiceConfig{
 			service: {
-				Methods: map[string]model.MethodConfig{
+				Methods: map[string]targetmodel.MethodConfig{
 					method: {
 						ParamTypes:  parseCSV(types),
 						PayloadMode: payloadMode,
@@ -84,11 +85,11 @@ func (a *App) runManifestGenerate(args []string) error {
 	}
 	name := firstNonEmpty(contextName, store.Active)
 	contextValue := store.Contexts[name]
-	manifest := model.Manifest{
+	manifest := targetmodel.Manifest{
 		SchemaVersion:  "v1alpha1",
 		SofaRPCVersion: defaultSofaRPCVersion,
 		DefaultContext: name,
-		DefaultTarget: model.TargetConfig{
+		DefaultTarget: targetmodel.TargetConfig{
 			Mode:             contextValue.Mode,
 			DirectURL:        contextValue.DirectURL,
 			RegistryAddress:  contextValue.RegistryAddress,
@@ -102,10 +103,10 @@ func (a *App) runManifestGenerate(args []string) error {
 		StubPaths: parseCSV(stubPathCSV),
 	}
 	if service != "" && method != "" {
-		manifest.Services = map[string]model.ServiceConfig{
+		manifest.Services = map[string]targetmodel.ServiceConfig{
 			service: {
 				UniqueID: contextValue.UniqueID,
-				Methods: map[string]model.MethodConfig{
+				Methods: map[string]targetmodel.MethodConfig{
 					method: {
 						ParamTypes:  parseCSV(types),
 						PayloadMode: payloadMode,
