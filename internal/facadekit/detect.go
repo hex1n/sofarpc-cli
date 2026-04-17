@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 import (
 	"encoding/json"
@@ -8,17 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
-	"sort"
 	"strings"
-)
 
-var (
-	facadeSuffixPattern = regexp.MustCompile(`(?i)(?:-|_)?(facade|api|client)(?:s)?$`)
-	artifactPattern     = regexp.MustCompile(`(?i)<artifactId>\s*([^<\s]+?)\s*</artifactId>`)
-	skipDirs            = map[string]struct{}{
-		"target": {}, "build": {}, "node_modules": {}, ".git": {}, ".idea": {}, "dist": {}, "out": {},
-	}
+	"github.com/hex1n/sofarpc-cli/internal/projectscan"
 )
 
 func DetectConfig(projectRoot string, write bool, stdout, stderr io.Writer) error {
@@ -100,76 +92,11 @@ func detectSofaRPCBin() string {
 }
 
 func detectFacadeModules(projectRoot string) []FacadeModule {
-	var found []FacadeModule
-	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if _, skip := skipDirs[d.Name()]; skip {
-				return filepath.SkipDir
-			}
-			if strings.HasPrefix(d.Name(), ".") && path != projectRoot {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() != "pom.xml" {
-			return nil
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		artifact := firstArtifactID(string(body))
-		if artifact == "" || !facadeSuffixPattern.MatchString(artifact) {
-			return nil
-		}
-		moduleDir := filepath.Dir(path)
-		sourceRoot := filepath.Join(moduleDir, "src", "main", "java")
-		if info, err := os.Stat(sourceRoot); err != nil || !info.IsDir() {
-			return nil
-		}
-		found = append(found, FacadeModule{
-			Name:            artifact,
-			SourceRoot:      relPath(projectRoot, sourceRoot),
-			MavenModulePath: relPath(projectRoot, moduleDir),
-			JarGlob:         filepath.ToSlash(filepath.Join(relPath(projectRoot, moduleDir), "target", artifact+"-*.jar")),
-			DepsDir:         filepath.ToSlash(filepath.Join(relPath(projectRoot, moduleDir), "target", "facade-deps")),
-		})
-		return nil
-	})
-	sort.Slice(found, func(i, j int) bool {
-		if found[i].Name == found[j].Name {
-			return found[i].MavenModulePath < found[j].MavenModulePath
-		}
-		return found[i].Name < found[j].Name
-	})
-	var unique []FacadeModule
-	seen := map[string]struct{}{}
-	for _, module := range found {
-		key := module.Name + "\x00" + module.MavenModulePath
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		unique = append(unique, module)
-	}
-	return unique
+	return projectscan.DetectFacadeModules(projectRoot)
 }
 
 func firstArtifactID(pomText string) string {
-	searchFrom := 0
-	if idx := strings.Index(strings.ToLower(pomText), "</parent>"); idx >= 0 {
-		searchFrom = idx + len("</parent>")
-	}
-	if match := artifactPattern.FindStringSubmatch(pomText[searchFrom:]); len(match) >= 2 {
-		return match[1]
-	}
-	if match := artifactPattern.FindStringSubmatch(pomText); len(match) >= 2 {
-		return match[1]
-	}
-	return ""
+	return projectscan.FirstArtifactID(pomText)
 }
 
 func loadExistingConfigForDetect(projectRoot string, stderr io.Writer) (Config, map[string]any, string, error) {
@@ -301,14 +228,6 @@ func isBlankConfigValue(value any) bool {
 		return rv.Len() == 0
 	}
 	return false
-}
-
-func relPath(projectRoot, path string) string {
-	rel, err := filepath.Rel(projectRoot, path)
-	if err != nil {
-		return filepath.ToSlash(path)
-	}
-	return filepath.ToSlash(rel)
 }
 
 func runtimeWindows() bool {

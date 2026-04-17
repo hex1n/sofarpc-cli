@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to config.json and edit paths to match your SOFABoot project. Or run `sofarpc facade detect-config --write` for auto-detection.",
+  "_comment": "Copy to config.json and edit paths to match your SOFABoot project. Or run `sofarpc facade discover --write` for auto-discovery.",
 
   "facadeModules": [
     {

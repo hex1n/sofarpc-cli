@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 import (
 	"fmt"
@@ -36,7 +36,7 @@ func RefreshIndex(projectRoot string, cfg Config, stdout, stderr io.Writer) erro
 	for _, sourceRoot := range sourceRoots {
 		if _, err := os.Stat(sourceRoot); err != nil && os.IsNotExist(err) {
 			if stderr != nil {
-				fmt.Fprintf(stderr, "[build_index] WARNING source root does not exist: %s\n", sourceRoot)
+				fmt.Fprintf(stderr, "[index] WARNING source root does not exist: %s\n", sourceRoot)
 			}
 		}
 	}
@@ -67,7 +67,7 @@ func WriteIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry
 		return err
 	}
 	if stdout != nil {
-		fmt.Fprintf(stdout, "\n[build_index] wrote %d services to %s\n", len(tmpSummary.Services), displayPath(projectRoot, indexDir))
+		fmt.Fprintf(stdout, "\n[index] wrote %d services to %s\n", len(tmpSummary.Services), displayPath(projectRoot, indexDir))
 	}
 	return nil
 }

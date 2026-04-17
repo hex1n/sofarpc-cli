@@ -9,17 +9,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hex1n/sofarpc-cli/internal/rpctest"
+	"github.com/hex1n/sofarpc-cli/internal/facadekit"
 )
 
-func TestSplitRPCTestProjectArg(t *testing.T) {
-	project, rest, err := splitRPCTestProjectArg([]string{
+func TestSplitFacadeProjectArg(t *testing.T) {
+	project, rest, err := splitFacadeProjectArg([]string{
 		"--project", "C:/work/demo",
 		"--filter", "Deal",
 		"--save",
 	})
 	if err != nil {
-		t.Fatalf("splitRPCTestProjectArg() error = %v", err)
+		t.Fatalf("splitFacadeProjectArg() error = %v", err)
 	}
 	if project != "C:/work/demo" {
 		t.Fatalf("expected project override, got %q", project)
@@ -29,13 +29,13 @@ func TestSplitRPCTestProjectArg(t *testing.T) {
 	}
 }
 
-func TestSplitRPCTestProjectArgRejectsMissingValue(t *testing.T) {
-	if _, _, err := splitRPCTestProjectArg([]string{"--project"}); err == nil {
+func TestSplitFacadeProjectArgRejectsMissingValue(t *testing.T) {
+	if _, _, err := splitFacadeProjectArg([]string{"--project"}); err == nil {
 		t.Fatal("expected missing project value to be rejected")
 	}
 }
 
-func TestInspectRPCTestStatePrefersExistingConfigLayout(t *testing.T) {
+func TestInspectFacadeStatePrefersExistingConfigLayout(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, ".sofarpc")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -45,7 +45,7 @@ func TestInspectRPCTestStatePrefersExistingConfigLayout(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	state := rpctest.InspectState(root)
+	state := facadekit.InspectState(root)
 	if state.Layout.Label() != "primary (.sofarpc)" {
 		t.Fatalf("expected primary layout, got %q", state.Layout.Label())
 	}
@@ -54,7 +54,7 @@ func TestInspectRPCTestStatePrefersExistingConfigLayout(t *testing.T) {
 	}
 }
 
-func TestResolveRPCTestProjectRootWalksUpFromNestedDir(t *testing.T) {
+func TestResolveFacadeProjectRootWalksUpFromNestedDir(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "pom.xml"), []byte("<project><modelVersion>4.0.0</modelVersion></project>"), 0o644); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -64,32 +64,32 @@ func TestResolveRPCTestProjectRootWalksUpFromNestedDir(t *testing.T) {
 		t.Fatalf("MkdirAll(nested) error = %v", err)
 	}
 	app := &App{Cwd: nested}
-	got, err := app.resolveRPCTestProjectRoot("")
+	got, err := app.resolveFacadeProjectRoot("")
 	if err != nil {
-		t.Fatalf("resolveRPCTestProjectRoot() error = %v", err)
+		t.Fatalf("resolveFacadeProjectRoot() error = %v", err)
 	}
 	if got != root {
 		t.Fatalf("expected walk-up root %q, got %q", root, got)
 	}
 }
 
-func TestPrintRPCTestingSchemaText(t *testing.T) {
+func TestPrintFacadeSchemaText(t *testing.T) {
 	var stdout bytes.Buffer
-	schema := rpctest.MethodSchemaEnvelope{
+	schema := facadekit.MethodSchemaEnvelope{
 		Service: "com.example.UserFacade",
 		File:    "src/main/java/com/example/UserFacade.java",
-		Method: rpctest.MethodSchemaResult{
+		Method: facadekit.MethodSchemaResult{
 			Name:                  "getUser",
 			ReturnType:            "com.example.UserVO",
 			ParamTypes:            []string{"com.example.UserRequest"},
-			ParamsFieldInfo:       []rpctest.ParameterSchema{{Name: "request", Type: "com.example.UserRequest", RequiredHint: "required", Fields: []rpctest.FieldSchema{{Name: "tenantId", Type: "java.lang.String", Comment: "tenant id"}}}},
+			ParamsFieldInfo:       []facadekit.ParameterSchema{{Name: "request", Type: "com.example.UserRequest", RequiredHint: "required", Fields: []facadekit.FieldSchema{{Name: "tenantId", Type: "java.lang.String", Comment: "tenant id"}}}},
 			ResponseWarning:       "response wrapper exposes Optional/helper getters; prefer raw mode when stub jars are complete, generic mode may lose nested DTO types",
 			ResponseWarningReason: "Optional getter found on return type",
 		},
 	}
 
-	if err := printRPCTestingSchema(&stdout, schema); err != nil {
-		t.Fatalf("printRPCTestingSchema() error = %v", err)
+	if err := printFacadeSchema(&stdout, schema); err != nil {
+		t.Fatalf("printFacadeSchema() error = %v", err)
 	}
 
 	out := stdout.String()
@@ -108,14 +108,14 @@ func TestPrintRPCTestingSchemaText(t *testing.T) {
 	}
 }
 
-func TestRunRPCTestWherePrintsResolvedProjectState(t *testing.T) {
+func TestRunFacadeStatusPrintsResolvedProjectState(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, ".sofarpc")
 	if err := os.MkdirAll(filepath.Join(stateDir, "index"), 0o755); err != nil {
 		t.Fatalf("MkdirAll(index) error = %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(stateDir, "cases"), 0o755); err != nil {
-		t.Fatalf("MkdirAll(cases) error = %v", err)
+	if err := os.MkdirAll(filepath.Join(stateDir, "replays"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(replays) error = %v", err)
 	}
 	body, err := json.Marshal(map[string]any{
 		"sofarpcBin":     "C:/Users/demo/bin/sofarpc.exe",
@@ -146,8 +146,8 @@ func TestRunRPCTestWherePrintsResolvedProjectState(t *testing.T) {
 		Stderr: io.Discard,
 		Cwd:    root,
 	}
-	if err := app.runRPCTestWhere(nil); err != nil {
-		t.Fatalf("runRPCTestWhere() error = %v", err)
+	if err := app.runFacadeStatus(nil); err != nil {
+		t.Fatalf("runFacadeStatus() error = %v", err)
 	}
 
 	out := stdout.String()
@@ -155,7 +155,7 @@ func TestRunRPCTestWherePrintsResolvedProjectState(t *testing.T) {
 		"state layout:   primary (.sofarpc)",
 		"config path:    " + filepath.Join(root, ".sofarpc", "config.json"),
 		"index dir:      " + filepath.Join(root, ".sofarpc", "index"),
-		"cases dir:      " + filepath.Join(root, ".sofarpc", "cases"),
+		"replay dir:     " + filepath.Join(root, ".sofarpc", "replays"),
 		"sofarpcBin:     C:/Users/demo/bin/sofarpc.exe",
 		"defaultContext: test-direct",
 	} {

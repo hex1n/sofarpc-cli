@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
+	"github.com/hex1n/sofarpc-cli/internal/metadata"
 	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/runtime"
 )
@@ -16,12 +17,13 @@ import (
 const defaultSofaRPCVersion = "5.7.6"
 
 type App struct {
-	Stdin   io.Reader
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Cwd     string
-	Paths   config.Paths
-	Runtime *runtime.Manager
+	Stdin    io.Reader
+	Stdout   io.Writer
+	Stderr   io.Writer
+	Cwd      string
+	Paths    config.Paths
+	Runtime  *runtime.Manager
+	Metadata *metadata.Manager
 }
 
 type exitError struct {
@@ -49,12 +51,13 @@ func New(stdin io.Reader, stdout, stderr io.Writer, cwd string) (*App, error) {
 		return nil, err
 	}
 	return &App{
-		Stdin:   stdin,
-		Stdout:  stdout,
-		Stderr:  stderr,
-		Cwd:     cwd,
-		Paths:   paths,
-		Runtime: runtime.NewManager(paths, cwd),
+		Stdin:    stdin,
+		Stdout:   stdout,
+		Stderr:   stderr,
+		Cwd:      cwd,
+		Paths:    paths,
+		Runtime:  runtime.NewManager(paths, cwd),
+		Metadata: metadata.NewManager(paths, cwd),
 	}, nil
 }
 
@@ -74,6 +77,8 @@ func (a *App) Run(args []string) error {
 		return a.runDaemon(args[1:])
 	case "runtime":
 		return a.runRuntime(args[1:])
+	case "metadata":
+		return a.runMetadata(args[1:])
 	case "context":
 		return a.runContext(args[1:])
 	case "manifest":
@@ -81,7 +86,7 @@ func (a *App) Run(args []string) error {
 	case "skills":
 		return a.runSkills(args[1:])
 	case "facade":
-		return a.runRPCTest(args[1:])
+		return a.runFacade(args[1:])
 	case "help":
 		a.printUsage()
 		return nil
@@ -96,14 +101,14 @@ sofarpc — SOFARPC CLI
 
 Commands:
   call      invoke a SOFARPC service through the Java runtime daemon
-  describe  reflect an interface from stub jars and print its method schema
+  describe  print a service method schema from project source or stub jars
   doctor    show resolved config, runtime, target reachability, and daemon state
   daemon    inspect and manage local Java runtime daemons
   runtime   install and inspect locally cached Java worker runtimes
   context   manage reusable target contexts
   manifest  initialize or generate a project manifest
   skills    install or inspect bundled agent skills (call-rpc, ...)
-	  facade   bootstrap + drive facade invocation helpers (init/detect-config/build-index/schema/run-cases)
+	  facade   bootstrap + drive facade invocation helpers (init/discover/index/schema/replay/status)
 `))
 }
 

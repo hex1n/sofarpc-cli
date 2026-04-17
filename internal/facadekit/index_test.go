@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 import (
 	"bytes"
@@ -62,7 +62,7 @@ func TestWriteIndexFilesCreatesServiceAndSummaryFiles(t *testing.T) {
 		t.Fatalf("SourceRoots = %v", summary.SourceRoots)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "com.example.UserFacade") || !strings.Contains(out, "[build_index] wrote 1 services") {
+	if !strings.Contains(out, "com.example.UserFacade") || !strings.Contains(out, "[index] wrote 1 services") {
 		t.Fatalf("stdout = %s", out)
 	}
 }

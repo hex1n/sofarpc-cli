@@ -21,8 +21,8 @@ allowed-tools: Bash
 ## 行为边界（必须遵守）
 
 1. 只执行 `sofarpc call`。
-2. 不读取 `.sofarpc/config.json`、不查 index、不构建索引、不运行 `build-index`、`detect-config`、`run-cases`。
-3. 不做 payload 填充、类型推断、cases 落盘、结果分类。
+2. 不读取 `.sofarpc/config.json`、不查 index、不构建索引、不运行 `index`、`discover`、`replay`。
+3. 不做 payload 填充、类型推断、replays 落盘、结果分类。
 4. 用户没给完整参数时，先追问，不猜测缺失字段。
 
 ## 最小工作流
@@ -44,6 +44,6 @@ sofarpc call [flags] <method-fqn>
 
 ## 禁止行为
 
-- 不调用 `sofarpc facade where`、`detect-config`、`build-index`、`run-cases`。
-- 不改写、生成、保存任何 `cases` 文件。
+- 不调用 `sofarpc facade status`、`discover`、`index`、`replay`。
+- 不改写、生成、保存任何 `replays` 文件。
 - 不在响应里解读业务含义，只返回原始执行结果。

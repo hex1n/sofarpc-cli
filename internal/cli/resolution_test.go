@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
@@ -301,11 +302,91 @@ func TestAutoResolveStubPathsFromFacadeConfig(t *testing.T) {
 		t.Fatalf("marshal facade config: %v", err)
 	}
 
-	paths, err := resolveStubPaths(project, filepath.Join(project, "sofarpc.manifest.json"), nil, "")
+	paths, err := resolveStubPaths(project, filepath.Join(project, "sofarpc.manifest.json"), nil, "", "")
 	if err != nil {
 		t.Fatalf("resolveStubPaths() error = %v", err)
 	}
 	if len(paths) != 2 {
 		t.Fatalf("expected 2 stub paths, got %d", len(paths))
+	}
+}
+
+func TestAutoResolveStubPathsFromDiscoveredProjectArtifacts(t *testing.T) {
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatalf("create .git dir: %v", err)
+	}
+	moduleDir := filepath.Join(project, "order-facade")
+	sourceDir := filepath.Join(moduleDir, "src", "main", "java", "com", "example")
+	depsDir := filepath.Join(moduleDir, "target", "facade-deps")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("create source dir: %v", err)
+	}
+	if err := os.MkdirAll(depsDir, 0o755); err != nil {
+		t.Fatalf("create deps dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "pom.xml"), []byte(`<project><artifactId>order-facade</artifactId></project>`), 0o644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "OrderFacade.java"), []byte(`package com.example; public interface OrderFacade {}`), 0o644); err != nil {
+		t.Fatalf("write OrderFacade.java: %v", err)
+	}
+	jarFile := filepath.Join(moduleDir, "target", "order-facade-1.0.0.jar")
+	depFile := filepath.Join(depsDir, "dep-1.0.0.jar")
+	if err := os.MkdirAll(filepath.Dir(jarFile), 0o755); err != nil {
+		t.Fatalf("create target dir: %v", err)
+	}
+	if err := os.WriteFile(jarFile, []byte("fake"), 0o644); err != nil {
+		t.Fatalf("write jar file: %v", err)
+	}
+	if err := os.WriteFile(depFile, []byte("fake"), 0o644); err != nil {
+		t.Fatalf("write dep file: %v", err)
+	}
+
+	paths, err := resolveStubPaths(project, filepath.Join(project, "sofarpc.manifest.json"), nil, "", "com.example.OrderFacade")
+	if err != nil {
+		t.Fatalf("resolveStubPaths() error = %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("expected 2 stub paths, got %d (%v)", len(paths), paths)
+	}
+}
+
+func TestAutoResolveStubPathsNarrowsToMatchedModule(t *testing.T) {
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatalf("create .git dir: %v", err)
+	}
+	writeModule := func(name, service string) string {
+		moduleDir := filepath.Join(project, name)
+		sourceDir := filepath.Join(moduleDir, "src", "main", "java", "com", "example")
+		if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+			t.Fatalf("create source dir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(moduleDir, "pom.xml"), []byte(`<project><artifactId>`+name+`</artifactId></project>`), 0o644); err != nil {
+			t.Fatalf("write pom.xml for %s: %v", name, err)
+		}
+		className := strings.TrimPrefix(service, "com.example.")
+		if err := os.WriteFile(filepath.Join(sourceDir, className+".java"), []byte(`package com.example; public interface `+className+` {}`), 0o644); err != nil {
+			t.Fatalf("write source for %s: %v", name, err)
+		}
+		jarFile := filepath.Join(moduleDir, "target", name+"-1.0.0.jar")
+		if err := os.MkdirAll(filepath.Dir(jarFile), 0o755); err != nil {
+			t.Fatalf("create target dir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(jarFile, []byte("fake"), 0o644); err != nil {
+			t.Fatalf("write jar file for %s: %v", name, err)
+		}
+		return jarFile
+	}
+	orderJar := writeModule("order-facade", "com.example.OrderFacade")
+	_ = writeModule("user-facade", "com.example.UserFacade")
+
+	paths, err := resolveStubPaths(project, filepath.Join(project, "sofarpc.manifest.json"), nil, "", "com.example.OrderFacade")
+	if err != nil {
+		t.Fatalf("resolveStubPaths() error = %v", err)
+	}
+	if len(paths) != 1 || paths[0] != orderJar {
+		t.Fatalf("paths = %v, want [%s]", paths, orderJar)
 	}
 }

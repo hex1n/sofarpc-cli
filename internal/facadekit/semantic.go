@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 type SemanticIndex struct {
 	Classes []SemanticClassInfo `json:"classes"`

@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-type RunCasesOptions struct {
+type ReplayOptions struct {
 	Filter          string
 	OnlyNames       []string
 	ContextOverride string
@@ -24,13 +24,13 @@ type RunCasesOptions struct {
 	Now             func() time.Time
 }
 
-type CaseFile struct {
-	Service string     `json:"service"`
-	Method  string     `json:"method"`
-	Cases   []CaseSpec `json:"cases"`
+type ReplayFile struct {
+	Service string       `json:"service"`
+	Method  string       `json:"method"`
+	Calls   []ReplaySpec `json:"calls"`
 }
 
-type CaseSpec struct {
+type ReplaySpec struct {
 	Name        string          `json:"name"`
 	Notes       string          `json:"notes,omitempty"`
 	Context     string          `json:"context"`
@@ -39,7 +39,7 @@ type CaseSpec struct {
 	Params      json.RawMessage `json:"params"`
 }
 
-type caseRunRow struct {
+type replayRow struct {
 	ServiceMethod string
 	Name          string
 	Status        string
@@ -60,26 +60,26 @@ func (e *exitError) Silent() bool {
 	return e.silent
 }
 
-var runCasesCommand = defaultRunCasesCommand
+var runReplayCommand = defaultRunReplayCommand
 
-func RunCases(projectRoot string, opts RunCasesOptions, stdout, stderr io.Writer) error {
+func ReplayCalls(projectRoot string, opts ReplayOptions, stdout, stderr io.Writer) error {
 	cfg, err := LoadConfig(projectRoot, false)
 	if err != nil {
 		return err
 	}
 	sofarpcBin := firstNonEmpty(strings.TrimSpace(opts.SofaRPCBin), strings.TrimSpace(cfg.SofaRPCBin), "sofarpc")
-	casesDir := EffectiveCasesDir(projectRoot)
-	caseFiles, err := iterCaseFiles(casesDir)
+	replayDir := EffectiveReplayDir(projectRoot)
+	replayFiles, err := iterReplayFiles(replayDir)
 	if err != nil {
 		return err
 	}
-	if len(caseFiles) == 0 {
+	if len(replayFiles) == 0 {
 		if stderr != nil {
-			fmt.Fprintf(stderr, "[run_cases] no cases under %s\n", displayPath(projectRoot, casesDir))
+			fmt.Fprintf(stderr, "[replay] no saved calls under %s\n", displayPath(projectRoot, replayDir))
 		}
 		return &exitError{silent: true}
 	}
-	runsDir := filepath.Join(casesDir, "_runs")
+	runsDir := filepath.Join(replayDir, "_runs")
 	if opts.Save {
 		if err := os.MkdirAll(runsDir, 0o755); err != nil {
 			return err
@@ -98,10 +98,10 @@ func RunCases(projectRoot string, opts RunCasesOptions, stdout, stderr io.Writer
 		now = time.Now
 	}
 
-	var rows []caseRunRow
+	var rows []replayRow
 	anyRPCFail := false
-	for _, caseFilePath := range caseFiles {
-		payload, err := readCaseFile(caseFilePath, stderr)
+	for _, replayFilePath := range replayFiles {
+		payload, err := readReplayFile(replayFilePath, stderr)
 		if err != nil {
 			continue
 		}
@@ -112,14 +112,14 @@ func RunCases(projectRoot string, opts RunCasesOptions, stdout, stderr io.Writer
 		if opts.Filter != "" && !strings.Contains(strings.ToLower(slug), strings.ToLower(opts.Filter)) {
 			continue
 		}
-		for _, scenario := range payload.Cases {
-			name := firstNonEmpty(strings.TrimSpace(scenario.Name), "<unnamed>")
+		for _, call := range payload.Calls {
+			name := firstNonEmpty(strings.TrimSpace(call.Name), "<unnamed>")
 			if len(onlyNames) > 0 {
 				if _, ok := onlyNames[name]; !ok {
 					continue
 				}
 			}
-			argv, tempPath, err := buildRunCaseCommand(sofarpcBin, payload.Service, payload.Method, scenario, opts.ContextOverride, cfg.DefaultContext, projectRoot)
+			argv, tempPath, err := buildReplayCommand(sofarpcBin, payload.Service, payload.Method, call, opts.ContextOverride, cfg.DefaultContext, projectRoot)
 			if err != nil {
 				return err
 			}
@@ -130,7 +130,7 @@ func RunCases(projectRoot string, opts RunCasesOptions, stdout, stderr io.Writer
 			}
 			if opts.DryRun {
 				_ = os.Remove(tempPath)
-				rows = append(rows, caseRunRow{
+				rows = append(rows, replayRow{
 					ServiceMethod: shortName,
 					Name:          name,
 					Status:        "DRY",
@@ -138,17 +138,17 @@ func RunCases(projectRoot string, opts RunCasesOptions, stdout, stderr io.Writer
 				continue
 			}
 
-			rc, stdoutText, stderrText, err := runCasesCommand(argv[0], argv[1:], projectRoot)
+			rc, stdoutText, stderrText, err := runReplayCommand(argv[0], argv[1:], projectRoot)
 			_ = os.Remove(tempPath)
 			if err != nil {
-				return fmt.Errorf("run case %s [%s]: %w", shortName, name, err)
+				return fmt.Errorf("replay %s [%s]: %w", shortName, name, err)
 			}
-			summary := parseRunCaseResult(stdoutText)
-			status := classifyRunCase(rc, summary)
+			summary := parseReplayResult(stdoutText)
+			status := classifyReplayResult(rc, summary)
 			if status == "RPC_FAIL" {
 				anyRPCFail = true
 			}
-			rows = append(rows, caseRunRow{
+			rows = append(rows, replayRow{
 				ServiceMethod: shortName,
 				Name:          name,
 				Status:        status,
@@ -164,7 +164,7 @@ func RunCases(projectRoot string, opts RunCasesOptions, stdout, stderr io.Writer
 					"stdout":     stdoutText,
 					"stderr":     stderrText,
 				}
-				stem := strings.TrimSuffix(filepath.Base(caseFilePath), filepath.Ext(caseFilePath))
+				stem := strings.TrimSuffix(filepath.Base(replayFilePath), filepath.Ext(replayFilePath))
 				safeName := strings.NewReplacer("/", "_", "\\", "_").Replace(name)
 				if err := SaveJSON(filepath.Join(runsDir, stem+"__"+safeName+".json"), out); err != nil {
 					return err
@@ -173,7 +173,7 @@ func RunCases(projectRoot string, opts RunCasesOptions, stdout, stderr io.Writer
 		}
 	}
 
-	printRunCasesSummary(stdout, rows)
+	printReplaySummary(stdout, rows)
 	if len(rows) == 0 {
 		return &exitError{silent: true}
 	}
@@ -183,8 +183,8 @@ func RunCases(projectRoot string, opts RunCasesOptions, stdout, stderr io.Writer
 	return nil
 }
 
-func iterCaseFiles(casesDir string) ([]string, error) {
-	entries, err := filepath.Glob(filepath.Join(casesDir, "*.json"))
+func iterReplayFiles(replayDir string) ([]string, error) {
+	entries, err := filepath.Glob(filepath.Join(replayDir, "*.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -199,31 +199,31 @@ func iterCaseFiles(casesDir string) ([]string, error) {
 	return visible, nil
 }
 
-func readCaseFile(path string, stderr io.Writer) (CaseFile, error) {
+func readReplayFile(path string, stderr io.Writer) (ReplayFile, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if stderr != nil {
-			fmt.Fprintf(stderr, "[run_cases] skip %s: %v\n", filepath.Base(path), err)
+			fmt.Fprintf(stderr, "[replay] skip %s: %v\n", filepath.Base(path), err)
 		}
-		return CaseFile{}, err
+		return ReplayFile{}, err
 	}
-	var payload CaseFile
+	var payload ReplayFile
 	if err := json.Unmarshal(body, &payload); err != nil {
 		if stderr != nil {
-			fmt.Fprintf(stderr, "[run_cases] skip %s: %v\n", filepath.Base(path), err)
+			fmt.Fprintf(stderr, "[replay] skip %s: %v\n", filepath.Base(path), err)
 		}
-		return CaseFile{}, err
+		return ReplayFile{}, err
 	}
 	return payload, nil
 }
 
-func buildRunCaseCommand(sofarpcBin, service, method string, scenario CaseSpec, contextOverride, defaultContext, projectRoot string) ([]string, string, error) {
-	params := scenario.Params
+func buildReplayCommand(sofarpcBin, service, method string, call ReplaySpec, contextOverride, defaultContext, projectRoot string) ([]string, string, error) {
+	params := call.Params
 	if len(bytes.TrimSpace(params)) == 0 || string(bytes.TrimSpace(params)) == "null" {
 		params = json.RawMessage("[]")
 	}
 	if !json.Valid(params) {
-		return nil, "", fmt.Errorf("case %s.%s has invalid params JSON", service, method)
+		return nil, "", fmt.Errorf("saved call %s.%s has invalid params JSON", service, method)
 	}
 
 	tempFile, err := os.CreateTemp(projectRoot, ".rpc-run-*.json")
@@ -241,20 +241,20 @@ func buildRunCaseCommand(sofarpcBin, service, method string, scenario CaseSpec, 
 	}
 
 	argv := []string{sofarpcBin, "call"}
-	if ctx := firstNonEmpty(strings.TrimSpace(contextOverride), strings.TrimSpace(scenario.Context), strings.TrimSpace(defaultContext)); ctx != "" {
+	if ctx := firstNonEmpty(strings.TrimSpace(contextOverride), strings.TrimSpace(call.Context), strings.TrimSpace(defaultContext)); ctx != "" {
 		argv = append(argv, "-context", ctx)
 	}
-	if payloadMode := strings.TrimSpace(scenario.PayloadMode); payloadMode != "" {
+	if payloadMode := strings.TrimSpace(call.PayloadMode); payloadMode != "" {
 		argv = append(argv, "-payload-mode", payloadMode)
 	}
-	if scenario.TimeoutMS != nil && *scenario.TimeoutMS > 0 {
-		argv = append(argv, "-timeout-ms", fmt.Sprintf("%d", *scenario.TimeoutMS))
+	if call.TimeoutMS != nil && *call.TimeoutMS > 0 {
+		argv = append(argv, "-timeout-ms", fmt.Sprintf("%d", *call.TimeoutMS))
 	}
 	argv = append(argv, "-data", "@"+tempFile.Name(), "-full-response", service+"."+method)
 	return argv, tempFile.Name(), nil
 }
 
-func defaultRunCasesCommand(bin string, args []string, cwd string) (int, string, string, error) {
+func defaultRunReplayCommand(bin string, args []string, cwd string) (int, string, string, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = cwd
 	var stdout, stderr bytes.Buffer
@@ -271,7 +271,7 @@ func defaultRunCasesCommand(bin string, args []string, cwd string) (int, string,
 	return 0, stdout.String(), stderr.String(), err
 }
 
-func parseRunCaseResult(stdout string) map[string]any {
+func parseReplayResult(stdout string) map[string]any {
 	var data any
 	if err := json.Unmarshal([]byte(stdout), &data); err != nil {
 		return map[string]any{
@@ -329,7 +329,7 @@ func unwrapGenericEnvelope(body any) any {
 	return current
 }
 
-func classifyRunCase(returnCode int, summary map[string]any) string {
+func classifyReplayResult(returnCode int, summary map[string]any) string {
 	if returnCode != 0 {
 		return "RPC_FAIL"
 	}
@@ -342,12 +342,12 @@ func classifyRunCase(returnCode int, summary map[string]any) string {
 	return "UNKNOWN"
 }
 
-func printRunCasesSummary(stdout io.Writer, rows []caseRunRow) {
+func printReplaySummary(stdout io.Writer, rows []replayRow) {
 	if stdout == nil {
 		return
 	}
 	fmt.Fprintf(stdout, "\n── summary %s\n", strings.Repeat("─", 60))
-	fmt.Fprintf(stdout, "%-50s%-14s%-10s%-10s%s\n", "case", "name", "status", "code", "msg")
+	fmt.Fprintf(stdout, "%-50s%-14s%-10s%-10s%s\n", "call", "name", "status", "code", "msg")
 	for _, row := range rows {
 		fmt.Fprintf(stdout, "%-50s%-14s%-10s%-10s%s\n",
 			truncate(row.ServiceMethod, 48),
@@ -358,7 +358,7 @@ func printRunCasesSummary(stdout io.Writer, rows []caseRunRow) {
 		)
 	}
 	if len(rows) == 0 {
-		fmt.Fprintln(stdout, "(no cases matched filter)")
+		fmt.Fprintln(stdout, "(no saved calls matched filter)")
 	}
 }
 

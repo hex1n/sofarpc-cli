@@ -34,11 +34,14 @@ func (a *App) runDescribe(args []string) error {
 	service := positionals[0]
 
 	resolvedManifest := resolveManifestPath(a.Cwd, manifestPath)
+	if schema, err := a.resolveLocalServiceSchema(context.Background(), resolvedManifest, service, refresh); err == nil {
+		return printJSON(a.Stdout, schema)
+	}
 	manifest, _, err := config.LoadManifest(resolvedManifest)
 	if err != nil {
 		return err
 	}
-	stubPaths, err := resolveStubPaths(a.Cwd, resolvedManifest, manifest.StubPaths, stubPathCSV)
+	stubPaths, err := resolveStubPaths(a.Cwd, resolvedManifest, manifest.StubPaths, stubPathCSV, service)
 	if err != nil {
 		return err
 	}

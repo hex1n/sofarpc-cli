@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 import (
 	"bytes"
@@ -96,8 +96,8 @@ func TestEffectivePathsPrimaryLayout(t *testing.T) {
 	if got := EffectiveIndexDir(root); got != filepath.Join(root, ".sofarpc", "index") {
 		t.Fatalf("EffectiveIndexDir = %s", got)
 	}
-	if got := EffectiveCasesDir(root); got != filepath.Join(root, ".sofarpc", "cases") {
-		t.Fatalf("EffectiveCasesDir = %s", got)
+	if got := EffectiveReplayDir(root); got != filepath.Join(root, ".sofarpc", "replays") {
+		t.Fatalf("EffectiveReplayDir = %s", got)
 	}
 }
 

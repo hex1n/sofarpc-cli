@@ -239,21 +239,21 @@ func isOnPATH(dir string) bool {
 
 // runSkillsInit bootstraps the call-rpc skill for the current (or explicit)
 // project in one shot:
-// ensure the user-level skill is installed, run detect_config --write, preflight
+// ensure the user-level skill is installed, run facade discover --write, preflight
 // facade jars, then build the initial index. Everything is idempotent — re-running
 // just refreshes config and index.
 func (a *App) runSkillsInit(args []string) error {
 	flags := failFlagSet("skills init")
 	var (
-		project    string
-		name       string
-		skipIndex  bool
-		skipDetect bool
+		project      string
+		name         string
+		skipIndex    bool
+		skipDiscover bool
 	)
 	flags.StringVar(&project, "project", "", "project root (default: current working directory)")
 	flags.StringVar(&name, "name", callRPCSkillName, "skill name (default: call-rpc)")
-	flags.BoolVar(&skipIndex, "skip-index", false, "skip the initial build_index run")
-	flags.BoolVar(&skipDetect, "skip-detect-config", false, "skip detect_config (use existing config.json as-is)")
+	flags.BoolVar(&skipIndex, "skip-index", false, "skip the initial facade index run")
+	flags.BoolVar(&skipDiscover, "skip-discover", false, "skip facade discover (use existing config.json as-is)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -289,26 +289,26 @@ func (a *App) runSkillsInit(args []string) error {
 	}
 	fmt.Fprintf(a.Stdout, "skill present: %s (%s)\n", dstSkill, foundLabel)
 
-	if skipDetect {
-		fmt.Fprintln(a.Stdout, "\n[1/2] detect_config — skipped (--skip-detect-config)")
+	if skipDiscover {
+		fmt.Fprintln(a.Stdout, "\n[1/2] facade discover — skipped (--skip-discover)")
 	} else {
-		fmt.Fprintln(a.Stdout, "\n[1/2] detect_config --write")
-		if err := a.runRPCTestDetectConfig([]string{"--project", project, "--write"}); err != nil {
-			return fmt.Errorf("detect_config: %w", err)
+		fmt.Fprintln(a.Stdout, "\n[1/2] facade discover --write")
+		if err := a.runFacadeDiscover([]string{"--project", project, "--write"}); err != nil {
+			return fmt.Errorf("facade discover: %w", err)
 		}
 	}
 
 	preflightFacadeArtifacts(a.Stdout, project)
 
 	if skipIndex {
-		fmt.Fprintln(a.Stdout, "\n[2/2] build_index — skipped (--skip-index)")
+		fmt.Fprintln(a.Stdout, "\n[2/2] facade index — skipped (--skip-index)")
 		fmt.Fprintln(a.Stdout, "done.")
 		return nil
 	}
 
-	fmt.Fprintln(a.Stdout, "\n[2/2] build_index")
-	if err := a.runRPCTestBuildIndex([]string{"--project", project}); err != nil {
-		return fmt.Errorf("build_index: %w", err)
+	fmt.Fprintln(a.Stdout, "\n[2/2] facade index")
+	if err := a.runFacadeIndex([]string{"--project", project}); err != nil {
+		return fmt.Errorf("facade index: %w", err)
 	}
 	fmt.Fprintln(a.Stdout, "\ndone.")
 	return nil
@@ -316,7 +316,7 @@ func (a *App) runSkillsInit(args []string) error {
 
 // preflightFacadeArtifacts reads the project's primary config.json and warns about
 // facade modules whose jar or depsDir is missing.
-// Non-fatal: build_index tolerates missing jars (it uses sourceRoot), but
+// Non-fatal: facade index tolerates missing jars (it uses sourceRoot), but
 // invoke-time will need them.
 func preflightFacadeArtifacts(stdout io.Writer, project string) {
 	candidates := []string{
