@@ -3,9 +3,15 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/runtime"
+)
+
+const (
+	doctorProbeService = "doctor.ProbeService"
+	doctorProbeMethod  = "doctor"
 )
 
 func (a *App) runDoctor(args []string) error {
@@ -21,13 +27,13 @@ func (a *App) runDoctor(args []string) error {
 	flags.StringVar(&input.UniqueID, "unique-id", "", "service uniqueId")
 	flags.IntVar(&input.TimeoutMS, "timeout-ms", 0, "invoke timeout in milliseconds")
 	flags.IntVar(&input.ConnectTimeoutMS, "connect-timeout-ms", 0, "connect timeout in milliseconds")
-	flags.StringVar(&input.StubPathCSV, "stub-path", "", "comma-separated stub paths")
+	flags.StringVar(&input.StubPathCSV, "stub-path", "", "manual fallback stub paths (debug only when auto-discovery misses)")
 	flags.StringVar(&input.SofaRPCVersion, "sofa-rpc-version", "", "runtime SOFARPC version")
 	flags.StringVar(&input.JavaBin, "java-bin", "", "java executable")
 	flags.StringVar(&input.RuntimeJar, "runtime-jar", "", "worker runtime jar")
 	flags.BoolVar(&input.RefreshContract, "refresh-contract", false, "bypass local contract cache and re-resolve source/jar metadata")
-	flags.StringVar(&input.Service, "service", "doctor.ProbeService", "optional service marker")
-	flags.StringVar(&input.Method, "method", "doctor", "optional method marker")
+	flags.StringVar(&input.Service, "service", doctorProbeService, "optional service marker")
+	flags.StringVar(&input.Method, "method", doctorProbeMethod, "optional method marker")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -38,7 +44,7 @@ func (a *App) runDoctor(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	contractSource, contractCacheHit, err := a.applyProjectMethodContract(ctx, &resolved, input.RefreshContract)
+	contractSource, contractCacheHit, contractNotes, err := a.prepareDoctorInvocation(ctx, &resolved, input)
 	if err != nil {
 		return err
 	}
@@ -57,6 +63,7 @@ func (a *App) runDoctor(args []string) error {
 			SofaRPCVersionSource: resolved.SofaRPCVersionSource,
 			ContractSource:       contractSourceLabel(contractSource),
 			ContractCacheHit:     contractCacheHit,
+			ContractNotes:        contractNotes,
 			WorkerClasspath:      workerClasspathMode(resolved.StubPaths),
 			RuntimeJar:           spec.RuntimeJar,
 			JavaBin:              spec.JavaBin,
@@ -70,8 +77,8 @@ func (a *App) runDoctor(args []string) error {
 			report.Daemon = model.DaemonSnapshot{Ready: true, Metadata: &metadata}
 			probeRequest := model.InvocationRequest{
 				RequestID:   randomID(),
-				Service:     "doctor.ProbeService",
-				Method:      "doctor",
+				Service:     doctorProbeService,
+				Method:      doctorProbeMethod,
 				Args:        json.RawMessage("[]"),
 				PayloadMode: model.PayloadRaw,
 				Target:      resolved.Request.Target,
@@ -85,11 +92,27 @@ func (a *App) runDoctor(args []string) error {
 			SofaRPCVersionSource: resolved.SofaRPCVersionSource,
 			ContractSource:       contractSourceLabel(contractSource),
 			ContractCacheHit:     contractCacheHit,
+			ContractNotes:        contractNotes,
 			WorkerClasspath:      workerClasspathMode(resolved.StubPaths),
 		}
 		report.Daemon = model.DaemonSnapshot{Ready: false, Error: err.Error()}
 	}
 	return printJSON(a.Stdout, report)
+}
+
+func (a *App) prepareDoctorInvocation(ctx context.Context, resolved *resolvedInvocation, input invocationInputs) (string, bool, []string, error) {
+	if shouldUseRuntimeOnlyDoctorProbe(input, *resolved) {
+		resolved.StubPaths = nil
+		return "", false, nil, nil
+	}
+	return a.applyProjectMethodContract(ctx, resolved, input.RefreshContract)
+}
+
+func shouldUseRuntimeOnlyDoctorProbe(input invocationInputs, resolved resolvedInvocation) bool {
+	if strings.TrimSpace(input.StubPathCSV) != "" {
+		return false
+	}
+	return resolved.Request.Service == doctorProbeService && resolved.Request.Method == doctorProbeMethod
 }
 
 func summarizeInvokeProbe(response model.InvocationResponse, invokeErr error) *model.InvokeProbe {

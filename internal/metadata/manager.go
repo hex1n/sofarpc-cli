@@ -35,10 +35,10 @@ func (m *Manager) metadataFile() string {
 	return filepath.Join(m.DaemonDir(), "daemon.json")
 }
 
-func (m *Manager) ResolveServiceSchema(ctx context.Context, projectRoot, service string, refresh bool) (model.ServiceSchema, string, bool, error) {
+func (m *Manager) ResolveServiceSchema(ctx context.Context, projectRoot, service string, refresh bool) (model.ServiceSchema, string, bool, []string, error) {
 	meta, err := m.ensureDaemon(ctx)
 	if err != nil {
-		return model.ServiceSchema{}, "", false, err
+		return model.ServiceSchema{}, "", false, nil, err
 	}
 	resp, err := m.request(ctx, meta, resolveRequest{
 		Action:      actionSchema,
@@ -47,18 +47,18 @@ func (m *Manager) ResolveServiceSchema(ctx context.Context, projectRoot, service
 		Refresh:     refresh,
 	})
 	if err != nil {
-		return model.ServiceSchema{}, "", false, err
+		return model.ServiceSchema{}, "", false, nil, err
 	}
 	if !resp.OK || resp.Schema == nil {
-		return model.ServiceSchema{}, "", false, responseError(resp)
+		return model.ServiceSchema{}, "", false, resp.Notes, responseError(resp)
 	}
-	return *resp.Schema, resp.Source, resp.CacheHit, nil
+	return *resp.Schema, resp.Source, resp.CacheHit, resp.Notes, nil
 }
 
-func (m *Manager) ResolveMethod(ctx context.Context, projectRoot, service, method string, preferredParamTypes []string, rawArgs json.RawMessage, refresh bool) (contract.ProjectMethod, string, bool, error) {
+func (m *Manager) ResolveMethod(ctx context.Context, projectRoot, service, method string, preferredParamTypes []string, rawArgs json.RawMessage, refresh bool) (contract.ProjectMethod, string, bool, []string, error) {
 	meta, err := m.ensureDaemon(ctx)
 	if err != nil {
-		return contract.ProjectMethod{}, "", false, err
+		return contract.ProjectMethod{}, "", false, nil, err
 	}
 	resp, err := m.request(ctx, meta, resolveRequest{
 		Action:              actionMethod,
@@ -70,12 +70,12 @@ func (m *Manager) ResolveMethod(ctx context.Context, projectRoot, service, metho
 		Refresh:             refresh,
 	})
 	if err != nil {
-		return contract.ProjectMethod{}, "", false, err
+		return contract.ProjectMethod{}, "", false, nil, err
 	}
 	if !resp.OK || resp.Method == nil {
-		return contract.ProjectMethod{}, "", false, responseError(resp)
+		return contract.ProjectMethod{}, "", false, resp.Notes, responseError(resp)
 	}
-	return *resp.Method, resp.Source, resp.CacheHit, nil
+	return *resp.Method, resp.Source, resp.CacheHit, resp.Notes, nil
 }
 
 func responseError(resp resolveResponse) error {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
@@ -69,5 +70,83 @@ func TestRunDescribePrefersProjectSourceBeforeManifestAndWorker(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"service": "com.example.OrderFacade"`) {
 		t.Fatalf("stdout = %s", stdout.String())
+	}
+}
+
+func TestRunDescribeFullResponseIncludesFallbackNotes(t *testing.T) {
+	originalProject := describeServiceFromProject
+	originalArtifacts := describeServiceFromArtifacts
+	t.Cleanup(func() {
+		describeServiceFromProject = originalProject
+		describeServiceFromArtifacts = originalArtifacts
+	})
+
+	var stdout bytes.Buffer
+	app := newDescribeTestApp(t)
+	app.Stdout = &stdout
+	describeServiceFromProject = func(projectRoot, service string) (model.ServiceSchema, error) {
+		return model.ServiceSchema{}, fmt.Errorf("source miss")
+	}
+	describeServiceFromArtifacts = func(projectRoot, service string) (model.ServiceSchema, error) {
+		return model.ServiceSchema{
+			Service: service,
+			Methods: []model.MethodSchema{{Name: "importAsset"}},
+		}, nil
+	}
+
+	if err := app.runDescribe([]string{"--full-response", "com.example.OrderFacade"}); err != nil {
+		t.Fatalf("runDescribe() error = %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		`"contractSource": "jar-javap"`,
+		`"contractNotes": [`,
+		`"project-source: source miss"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunDescribeFullResponseWritesStructuredFailure(t *testing.T) {
+	originalProject := describeServiceFromProject
+	originalArtifacts := describeServiceFromArtifacts
+	t.Cleanup(func() {
+		describeServiceFromProject = originalProject
+		describeServiceFromArtifacts = originalArtifacts
+	})
+
+	var stderr bytes.Buffer
+	app := newDescribeTestApp(t)
+	app.Stderr = &stderr
+	describeServiceFromProject = func(projectRoot, service string) (model.ServiceSchema, error) {
+		return model.ServiceSchema{}, fmt.Errorf("source miss")
+	}
+	describeServiceFromArtifacts = func(projectRoot, service string) (model.ServiceSchema, error) {
+		return model.ServiceSchema{}, fmt.Errorf("artifact miss")
+	}
+
+	missingJava := filepath.Join(t.TempDir(), "missing-java")
+	err := app.runDescribe([]string{"--full-response", "--java-bin", missingJava, "com.example.OrderFacade"})
+	exitErr, ok := err.(*exitError)
+	if !ok {
+		t.Fatalf("expected exitError, got %T (%v)", err, err)
+	}
+	if !exitErr.Silent() {
+		t.Fatalf("expected silent exitError, got %+v", exitErr)
+	}
+
+	out := stderr.String()
+	for _, want := range []string{
+		`"error":`,
+		`"contractNotes": [`,
+		`"project-source: source miss"`,
+		`"jar-javap: artifact miss"`,
+		`"workerClasspath": "runtime-only"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected stderr to contain %q, got:\n%s", want, out)
+		}
 	}
 }

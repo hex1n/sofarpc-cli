@@ -37,7 +37,7 @@ func (a *App) runCall(args []string) error {
 	flags.StringVar(&input.UniqueID, "unique-id", "", "service uniqueId")
 	flags.IntVar(&input.TimeoutMS, "timeout-ms", 0, "invoke timeout in milliseconds")
 	flags.IntVar(&input.ConnectTimeoutMS, "connect-timeout-ms", 0, "connect timeout in milliseconds")
-	flags.StringVar(&input.StubPathCSV, "stub-path", "", "comma-separated stub paths")
+	flags.StringVar(&input.StubPathCSV, "stub-path", "", "manual fallback stub paths (debug only when auto-discovery misses)")
 	flags.StringVar(&input.SofaRPCVersion, "sofa-rpc-version", "", "runtime SOFARPC version")
 	flags.StringVar(&input.JavaBin, "java-bin", "", "java executable")
 	flags.StringVar(&input.RuntimeJar, "runtime-jar", "", "worker runtime jar")
@@ -68,7 +68,7 @@ func (a *App) runCall(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	contractSource, contractCacheHit, err := a.applyProjectMethodContract(ctx, &resolved, input.RefreshContract)
+	contractSource, contractCacheHit, contractNotes, err := a.applyProjectMethodContract(ctx, &resolved, input.RefreshContract)
 	if err != nil {
 		return err
 	}
@@ -116,6 +116,7 @@ func (a *App) runCall(args []string) error {
 	response.Diagnostics.DaemonKey = spec.DaemonKey
 	response.Diagnostics.ContractSource = contractSourceLabel(contractSource)
 	response.Diagnostics.ContractCacheHit = contractCacheHit
+	response.Diagnostics.ContractNotes = contractNotes
 	response.Diagnostics.WorkerClasspath = workerClasspathMode(resolved.StubPaths)
 	if !response.OK {
 		if err := printJSON(a.Stderr, response); err != nil {

@@ -17,6 +17,7 @@ Current commands:
 - `call`
 - `describe`
 - `doctor`
+- `target`
 - `context`
 - `manifest`
 - `runtime`
@@ -126,6 +127,17 @@ sofarpc skills list                     # list bundled skills
 The skill does not bootstrap projects, run facade discovery, build indexes, or replay saved calls.
 Use CLI facade subcommands directly when needed.
 
+Facade helpers:
+
+```powershell
+sofarpc facade discover --write
+sofarpc facade index
+sofarpc facade services
+sofarpc facade schema com.example.UserFacade.getUser
+sofarpc facade replay
+sofarpc facade status
+```
+
 ### Typical invocation
 
 ```powershell
@@ -184,6 +196,15 @@ go run ./cmd/sofarpc context show dev-direct
 
 ```powershell
 go run ./cmd/sofarpc doctor --context dev-direct
+```
+
+For a concise view of the currently resolved target without runtime/daemon details:
+
+```powershell
+go run ./cmd/sofarpc target
+go run ./cmd/sofarpc target --service com.example.OrderFacade
+go run ./cmd/sofarpc target --project C:\code\project-a
+go run ./cmd/sofarpc target --project C:\code\project-a --all --explain
 ```
 
 `doctor` reports:
@@ -310,9 +331,21 @@ sofarpc call `
 
 On success the CLI prints just the decoded `result`. Add `--full-response` to see diagnostics (runtime jar, daemon key, java version).
 
-### Complex request — DTO payload with stub jar
+### Complex request — DTO payload in a discovered project
 
-The worker classpath needs to resolve any custom DTO. Pass the API jar via `--stub-path`, and put the JSON body in a file to skip shell-quoting:
+In a normal project checkout, prefer the default path: let `sofarpc` resolve
+contracts from project source or local artifacts automatically. That keeps the
+user-facing command short and avoids echoing a long business-jar list.
+
+```powershell
+sofarpc call `
+  --service com.example.OrderService `
+  --method createOrder `
+  -d @order.json
+```
+
+Only fall back to manual `--stub-path` when local contract resolution misses
+and you are explicitly debugging classpath issues:
 
 ```powershell
 sofarpc call `
@@ -336,7 +369,9 @@ Useful overrides when the defaults don't fit:
 - `--timeout-ms 15000` — raise the call timeout
 - `--full-response` — also print runtime/daemon diagnostics
 
-For repeated invocations, move the service metadata and stub path into a `sofarpc.manifest.json` (see [Manifest](#manifest)) so the positional form stays terse.
+For repeated invocations, move the service metadata into a `sofarpc.manifest.json`
+(see [Manifest](#manifest)) so the positional form stays terse. Persist manual
+`stubPaths` only as a fallback, not as the default path.
 
 ### Body input forms
 
@@ -387,19 +422,40 @@ sequenceDiagram
     end
 ```
 
-Reflect an interface from its stub jar and print the method signatures. The schema is cached in-memory by the runtime daemon (shared by CLI processes using the same daemon key), keyed by stub classpath and service.
+By default, `describe` first resolves schema from local project source or local
+artifacts. Manual `--stub-path` is only for fallback debugging when local
+resolution misses. The schema is cached in-memory by the runtime daemon
+(shared by CLI processes using the same daemon key).
+
+```powershell
+sofarpc describe com.example.OrderService
+```
+
+Put flags before the positional FQCN (Go's flag parser stops at the first non-flag arg).
+
+Bypass the cache and re-resolve local contract metadata:
+
+```powershell
+sofarpc describe --refresh com.example.OrderService
+```
+
+Manual `--stub-path` remains available when you are explicitly debugging local
+artifact/classpath issues:
 
 ```powershell
 sofarpc describe --stub-path target\order-api.jar com.example.OrderService
 ```
 
-Put flags before the positional FQCN (Go's flag parser stops at the first non-flag arg).
-
-Bypass the cache and re-run the worker:
+If you want the schema plus fallback diagnostics in one response, add
+`--full-response`:
 
 ```powershell
-sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderService
+sofarpc describe --full-response com.example.OrderService
 ```
+
+This keeps the default output compact, while exposing `contractSource`,
+`contractCacheHit`, `contractNotes`, and worker runtime details only when you
+ask for them.
 
 Schema results are not persisted to disk by `sofarpc` CLI. Cache is process-memory only in each runtime daemon and disappears when that daemon exits.
 Daemon keys use the same stub-content digest, so changing stub byte content changes the `daemon-key` and forces a fresh worker lifecycle.
@@ -437,6 +493,10 @@ Built-in defaults:
 - built-in default `5.7.6`
 
 ### Stub path precedence
+
+`stubPaths` are now a fallback/debug mechanism, not the primary happy path.
+Default user-facing output should only need `contractSource` and
+`workerClasspath`, not the concrete jar list.
 
 - `--stub-path`
 - `manifest.stubPaths`

@@ -4,9 +4,11 @@ CLI for invoking SOFARPC services.
 
 Architecture (deliberately polyglot, each language kept to what it does best):
 
-- **Go** — CLI control plane, daemon lifecycle, runtime cache. Fast cold
-  start, clean Windows subprocess semantics, single-binary distribution.
-- **Java** — SOFARPC worker runtime plus the Spoon-based facade indexer.
+- **Go** — CLI control plane, project discovery, local contract resolution,
+  metadata daemon, daemon lifecycle, and runtime cache. Fast cold start,
+  clean Windows subprocess semantics, single-binary distribution.
+- **Java** — SOFARPC invoke worker plus source/jar analyzers used to recover
+  facade contracts without keeping business jars inside the long-lived worker.
 
 Start here:
 
@@ -18,31 +20,30 @@ Start here:
 ```mermaid
 flowchart LR
     A[Run CLI command] --> B[internal cli parse command and resolve manifest context]
-    B --> C[ResolveSpec and daemon key]
-    C --> D[start or reuse runtime worker daemon]
-    D --> E[TCP socket to Java runtime]
-    B -->|call command| F[Prepare invocation request service method args targets]
-    F --> G{Need schema inference}
-    G -->|yes| H[DescribeService with action describe over daemon]
-    G -->|no| I[Direct invoke request]
-    H --> E
-    I --> E
-    B -->|describe command| H
-    E --> J{request action}
-    J -->|describe| K[WorkerMain describe cache by service in memory]
-    J -->|other| L[WorkerMain invoke path]
-    K --> M[Return ServiceSchema result]
-    L --> M
-    M --> N{response ok}
-    N -->|error| O[Print structured diagnostics and return error]
-    N -->|success| P[Format output or return result]
+    B --> C[Resolve local contract from project source or facade jars]
+    C --> D[start or reuse metadata daemon]
+    D --> E[in-memory contract cache]
+    C --> F[Compile generic payload when contract is available]
+    B --> G[ResolveSpec and invoke daemon key]
+    G --> H[start or reuse runtime worker daemon]
+    H --> I[TCP socket to Java runtime]
+    F --> I
+    B -->|describe command| E
+    I --> J[WorkerMain invoke path]
+    E --> K[Return ServiceSchema result]
+    J --> L{response ok}
+    L -->|error| M[Print structured diagnostics and return error]
+    L -->|success| N[Format output or return result]
 ```
 
 Notes:
 
-- schema cache is now kept in the runtime daemon JVM memory, shared by CLI processes using the same daemon key;
-- cache is process-lifetime only: no local schema files are written.
-- schema refresh is supported via `refresh`/`no-cache` (goes into daemon describe request).
+- service schema is resolved locally first from project source, then facade jars,
+  and cached in a dedicated metadata daemon; no contract artifacts are written to disk
+- when local contract resolution succeeds, the long-lived invoke worker runs with
+  a runtime-only classpath instead of loading business jars
+- cache is process-lifetime only; refresh is supported via `call --refresh-contract`,
+  `doctor --refresh-contract`, and `describe --refresh`
 
 ## Quick Start
 
@@ -59,6 +60,17 @@ Run:
 go run ./cmd/sofarpc help
 ```
 
+Project helper commands:
+
+```powershell
+sofarpc facade discover --write
+sofarpc facade index
+sofarpc facade services
+sofarpc facade schema com.example.UserFacade.getUser
+sofarpc facade replay
+sofarpc facade status
+```
+
 ## Claude Code skills
 
 The repo ships a `call-rpc` Claude Code skill that triggers `sofarpc call` for
@@ -69,9 +81,9 @@ sofarpc skills install          # copies skills/call-rpc -> ~/.claude/skills/
 sofarpc skills where            # show source / target paths
 ```
 
-The skill intentionally does not handle project bootstrap, index generation,
-cases, or result interpretation. It is a thin wrapper around the `sofarpc call`
-command.
+The skill intentionally does not handle facade discovery, index generation,
+saved-call replay, or result interpretation. It is a thin wrapper around the
+`sofarpc call` command.
 
 For full usage, examples, manifest format, runtime source management, and
 diagnostics, see [docs/usage.md](./docs/usage.md).

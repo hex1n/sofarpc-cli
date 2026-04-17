@@ -26,10 +26,17 @@ func TestHashStringsChangesWithOrder(t *testing.T) {
 func TestScanStubWarnings(t *testing.T) {
 	warnings := ScanStubWarnings([]string{
 		"/tmp/guava-32.1.2.jar",
+		"/tmp/jackson-databind-2.11.2.jar",
 		"/tmp/user-api.jar",
 	})
 	if len(warnings) != 1 {
 		t.Fatalf("expected one warning, got %d", len(warnings))
+	}
+	if strings.Contains(warnings[0], "guava-32.1.2.jar") || strings.Contains(warnings[0], "jackson-databind-2.11.2.jar") {
+		t.Fatalf("expected summarized warning without concrete jar names, got %q", warnings[0])
+	}
+	if !strings.Contains(warnings[0], "2 across guava, jackson") {
+		t.Fatalf("expected summarized warning families/count, got %q", warnings[0])
 	}
 }
 

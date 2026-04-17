@@ -259,6 +259,39 @@ func TestDaemonRefreshBypassesCache(t *testing.T) {
 	}
 }
 
+func TestDaemonResolveMethodCarriesFallbackNotes(t *testing.T) {
+	origProject := resolveMethodFromProjectFn
+	origArtifacts := resolveMethodFromArtifactsFn
+	t.Cleanup(func() {
+		resolveMethodFromProjectFn = origProject
+		resolveMethodFromArtifactsFn = origArtifacts
+	})
+
+	resolveMethodFromProjectFn = func(projectRoot, service, method string, preferredParamTypes []string, rawArgs json.RawMessage) (contract.ProjectMethod, error) {
+		return contract.ProjectMethod{}, errors.New("source miss")
+	}
+	resolveMethodFromArtifactsFn = func(projectRoot, service, method string, preferredParamTypes []string, rawArgs json.RawMessage) (contract.ProjectMethod, error) {
+		return contract.ProjectMethod{
+			Schema: model.MethodSchema{Name: method},
+		}, nil
+	}
+
+	d := newDaemon()
+	resp := d.handle(resolveRequest{
+		Action:      actionMethod,
+		ProjectRoot: "C:/repo",
+		Service:     "com.example.OrderFacade",
+		Method:      "importAsset",
+		RawArgs:     json.RawMessage(`[{}]`),
+	})
+	if !resp.OK {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if len(resp.Notes) != 1 || resp.Notes[0] != "project-source: source miss" {
+		t.Fatalf("Notes = %v", resp.Notes)
+	}
+}
+
 func TestDaemonFingerprintChangeInvalidatesCache(t *testing.T) {
 	origProject := describeServiceFromProjectFn
 	origArtifacts := describeServiceFromArtifactsFn

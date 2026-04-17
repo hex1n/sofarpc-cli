@@ -10,6 +10,8 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/facadekit"
 )
 
+var loadFacadeServiceSummary = facadekit.LoadServiceSummary
+
 // runFacade dispatches `sofarpc facade <sub>`.
 // It drives facade support workflows from the Go CLI, while delegating only
 // Java source semantics to the Spoon indexer.
@@ -19,12 +21,13 @@ import (
 //	init      alias for `sofarpc skills init`
 //	discover  writes <project>/.sofarpc/config.json
 //	index     refreshes facade index/
+//	services  lists available facade services in the current project
 //	schema    prints generated DTO schema for a facade method
 //	replay    replays saved calls under replays/
 //	status    prints resolved tools dir + project state paths
 func (a *App) runFacade(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("facade subcommand required: init, discover, index, schema, replay, status")
+		return fmt.Errorf("facade subcommand required: init, discover, index, services, schema, replay, status")
 	}
 	switch normalizeFacadeSubcommand(args[0]) {
 	case "init":
@@ -33,6 +36,8 @@ func (a *App) runFacade(args []string) error {
 		return a.runFacadeDiscover(args[1:])
 	case "index":
 		return a.runFacadeIndex(args[1:])
+	case "services":
+		return a.runFacadeServices(args[1:])
 	case "schema":
 		return a.runFacadeSchema(args[1:])
 	case "replay":
@@ -211,6 +216,37 @@ func (a *App) runFacadeSchema(args []string) error {
 	return printFacadeSchema(a.Stdout, schema)
 }
 
+func (a *App) runFacadeServices(args []string) error {
+	flags := failFlagSet("facade services")
+	var (
+		project string
+		filter  string
+		asJSON  bool
+	)
+	flags.StringVar(&project, "project", "", "project root (default: current working directory)")
+	flags.StringVar(&filter, "filter", "", "substring match against service or method")
+	flags.BoolVar(&asJSON, "json", false, "print JSON output")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if len(flags.Args()) > 0 {
+		return fmt.Errorf("unknown facade services args: %s", strings.Join(flags.Args(), " "))
+	}
+	projectRoot, err := a.resolveFacadeProjectRoot(project)
+	if err != nil {
+		return err
+	}
+	summary, err := loadFacadeServiceSummary(projectRoot)
+	if err != nil {
+		return err
+	}
+	summary = filterFacadeServiceSummary(summary, filter)
+	if asJSON {
+		return printJSON(a.Stdout, summary)
+	}
+	return printFacadeServices(a.Stdout, projectRoot, summary, filter)
+}
+
 func printFacadeSchema(out io.Writer, schema facadekit.MethodSchemaEnvelope) error {
 	method := schema.Method
 	if _, err := fmt.Fprintf(out, "service: %s\n", schema.Service); err != nil {
@@ -268,6 +304,60 @@ func printFacadeSchema(out io.Writer, schema facadekit.MethodSchemaEnvelope) err
 			); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func filterFacadeServiceSummary(summary facadekit.IndexSummary, filter string) facadekit.IndexSummary {
+	needle := strings.TrimSpace(strings.ToLower(filter))
+	if needle == "" {
+		return summary
+	}
+	filtered := make([]facadekit.IndexSummaryService, 0, len(summary.Services))
+	for _, service := range summary.Services {
+		if strings.Contains(strings.ToLower(service.Service), needle) {
+			filtered = append(filtered, service)
+			continue
+		}
+		for _, method := range service.Methods {
+			if strings.Contains(strings.ToLower(method), needle) {
+				filtered = append(filtered, service)
+				break
+			}
+		}
+	}
+	summary.Services = filtered
+	return summary
+}
+
+func printFacadeServices(out io.Writer, projectRoot string, summary facadekit.IndexSummary, filter string) error {
+	if _, err := fmt.Fprintf(out, "project root: %s\n", projectRoot); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "services:     %d\n", len(summary.Services)); err != nil {
+		return err
+	}
+	if strings.TrimSpace(filter) != "" {
+		if _, err := fmt.Fprintf(out, "filter:       %s\n", filter); err != nil {
+			return err
+		}
+	}
+	if len(summary.Services) == 0 {
+		_, err := fmt.Fprintln(out, "\n(no facade services matched)")
+		return err
+	}
+	for _, service := range summary.Services {
+		if _, err := fmt.Fprintf(out, "\n- %s (%d methods)\n", service.Service, len(service.Methods)); err != nil {
+			return err
+		}
+		if strings.TrimSpace(service.File) != "" {
+			if _, err := fmt.Fprintf(out, "  file:    %s\n", service.File); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(out, "  methods: %s\n", strings.Join(service.Methods, ", ")); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -96,20 +96,21 @@ type RuntimeError struct {
 }
 
 type DiagnosticInfo struct {
-	Phase            string `json:"phase,omitempty"`
-	TargetMode       string `json:"targetMode,omitempty"`
-	ConfiguredTarget string `json:"configuredTarget,omitempty"`
-	ResolvedTarget   string `json:"resolvedTarget,omitempty"`
-	InvokeStyle      string `json:"invokeStyle,omitempty"`
-	PayloadMode      string `json:"payloadMode,omitempty"`
-	ContractSource   string `json:"contractSource,omitempty"`
-	ContractCacheHit bool   `json:"contractCacheHit,omitempty"`
-	WorkerClasspath  string `json:"workerClasspath,omitempty"`
-	RuntimeVersion   string `json:"runtimeVersion,omitempty"`
-	RuntimeJar       string `json:"runtimeJar,omitempty"`
-	JavaBin          string `json:"javaBin,omitempty"`
-	JavaMajor        string `json:"javaMajor,omitempty"`
-	DaemonKey        string `json:"daemonKey,omitempty"`
+	Phase            string   `json:"phase,omitempty"`
+	TargetMode       string   `json:"targetMode,omitempty"`
+	ConfiguredTarget string   `json:"configuredTarget,omitempty"`
+	ResolvedTarget   string   `json:"resolvedTarget,omitempty"`
+	InvokeStyle      string   `json:"invokeStyle,omitempty"`
+	PayloadMode      string   `json:"payloadMode,omitempty"`
+	ContractSource   string   `json:"contractSource,omitempty"`
+	ContractCacheHit bool     `json:"contractCacheHit,omitempty"`
+	ContractNotes    []string `json:"contractNotes,omitempty"`
+	WorkerClasspath  string   `json:"workerClasspath,omitempty"`
+	RuntimeVersion   string   `json:"runtimeVersion,omitempty"`
+	RuntimeJar       string   `json:"runtimeJar,omitempty"`
+	JavaBin          string   `json:"javaBin,omitempty"`
+	JavaMajor        string   `json:"javaMajor,omitempty"`
+	DaemonKey        string   `json:"daemonKey,omitempty"`
 }
 
 type DaemonMetadata struct {
@@ -180,16 +181,23 @@ type DoctorReport struct {
 	InvokeProbe    *InvokeProbe    `json:"invokeProbe,omitempty"`
 }
 
+type DescribeReport struct {
+	Schema      *ServiceSchema `json:"schema,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Diagnostics DiagnosticInfo `json:"diagnostics,omitempty"`
+}
+
 type RuntimeSnapshot struct {
-	SofaRPCVersion       string `json:"sofaRpcVersion,omitempty"`
-	SofaRPCVersionSource string `json:"sofaRpcVersionSource,omitempty"`
-	ContractSource       string `json:"contractSource,omitempty"`
-	ContractCacheHit     bool   `json:"contractCacheHit,omitempty"`
-	WorkerClasspath      string `json:"workerClasspath,omitempty"`
-	RuntimeJar           string `json:"runtimeJar,omitempty"`
-	JavaBin              string `json:"javaBin,omitempty"`
-	JavaMajor            string `json:"javaMajor,omitempty"`
-	DaemonKey            string `json:"daemonKey,omitempty"`
+	SofaRPCVersion       string   `json:"sofaRpcVersion,omitempty"`
+	SofaRPCVersionSource string   `json:"sofaRpcVersionSource,omitempty"`
+	ContractSource       string   `json:"contractSource,omitempty"`
+	ContractCacheHit     bool     `json:"contractCacheHit,omitempty"`
+	ContractNotes        []string `json:"contractNotes,omitempty"`
+	WorkerClasspath      string   `json:"workerClasspath,omitempty"`
+	RuntimeJar           string   `json:"runtimeJar,omitempty"`
+	JavaBin              string   `json:"javaBin,omitempty"`
+	JavaMajor            string   `json:"javaMajor,omitempty"`
+	DaemonKey            string   `json:"daemonKey,omitempty"`
 }
 
 type ProbeResult struct {

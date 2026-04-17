@@ -72,6 +72,20 @@ func LoadConfig(projectRoot string, optional bool) (Config, error) {
 	return cfg, nil
 }
 
+func LoadConfigOrDiscover(projectRoot string) (Config, error) {
+	cfg, err := LoadConfig(projectRoot, true)
+	if err != nil {
+		return Config{}, err
+	}
+	if len(cfg.FacadeModules) == 0 {
+		cfg.FacadeModules = projectscan.DetectFacadeModules(projectRoot)
+	}
+	if len(cfg.FacadeModules) == 0 {
+		return Config{}, fmt.Errorf("[facade] no facade modules found under %s", projectRoot)
+	}
+	return cfg, nil
+}
+
 func ResolveRepoPath(pathFromRepo, projectRoot string) string {
 	if filepath.IsAbs(pathFromRepo) {
 		return filepath.Clean(pathFromRepo)

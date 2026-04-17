@@ -1,6 +1,8 @@
 package facadekit
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +28,81 @@ type IndexSummaryService struct {
 	Service string   `json:"service"`
 	File    string   `json:"file,omitempty"`
 	Methods []string `json:"methods"`
+}
+
+type serviceIndexArtifact struct {
+	Payload ServiceIndexFile
+}
+
+func LoadServiceSummary(projectRoot string) (IndexSummary, error) {
+	cfg, err := LoadConfigOrDiscover(projectRoot)
+	if err != nil {
+		return IndexSummary{}, err
+	}
+	if summary, ok := loadCachedServiceSummary(projectRoot, cfg); ok {
+		return summary, nil
+	}
+	sourceRoots := IterSourceRoots(cfg, projectRoot)
+	if len(sourceRoots) == 0 {
+		return IndexSummary{}, fmt.Errorf("no facade source roots in config")
+	}
+	registry, err := LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
+	if err != nil {
+		return IndexSummary{}, err
+	}
+	summary, _ := collectServiceIndexes(projectRoot, cfg, registry)
+	return summary, nil
+}
+
+func loadCachedServiceSummary(projectRoot string, cfg Config) (IndexSummary, bool) {
+	body, err := os.ReadFile(filepath.Join(EffectiveIndexDir(projectRoot), "_index.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return IndexSummary{}, false
+	}
+	if err != nil {
+		return IndexSummary{}, false
+	}
+	var summary IndexSummary
+	if err := json.Unmarshal(body, &summary); err != nil {
+		return IndexSummary{}, false
+	}
+	if !indexSummaryCompatible(summary, cfg, projectRoot) {
+		return IndexSummary{}, false
+	}
+	return summary, true
+}
+
+func indexSummaryCompatible(summary IndexSummary, cfg Config, projectRoot string) bool {
+	return sameStringSet(summary.SourceRoots, relativeSourceRoots(projectRoot, cfg)) &&
+		sameStringSet(summary.InterfaceSuffixes, cfg.InterfaceSuffixes)
+}
+
+func relativeSourceRoots(projectRoot string, cfg Config) []string {
+	roots := make([]string, 0, len(cfg.FacadeModules))
+	for _, sourceRoot := range IterSourceRoots(cfg, projectRoot) {
+		rel, err := filepath.Rel(projectRoot, sourceRoot)
+		if err != nil {
+			rel = sourceRoot
+		}
+		roots = append(roots, filepath.ToSlash(rel))
+	}
+	return roots
+}
+
+func sameStringSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	left = append([]string{}, left...)
+	right = append([]string{}, right...)
+	sort.Strings(left)
+	sort.Strings(right)
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func RefreshIndex(projectRoot string, cfg Config, stdout, stderr io.Writer) error {
@@ -102,6 +179,23 @@ func buildIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry
 		return IndexSummary{}, err
 	}
 
+	summary, artifacts := collectServiceIndexes(projectRoot, cfg, registry)
+	for _, artifact := range artifacts {
+		if err := SaveJSON(filepath.Join(indexDir, artifact.Payload.Service+".json"), artifact.Payload); err != nil {
+			return IndexSummary{}, err
+		}
+		if stdout != nil {
+			fmt.Fprintf(stdout, "  + %s  (%d methods)\n", artifact.Payload.Service, len(artifact.Payload.Methods))
+		}
+	}
+
+	if err := SaveJSON(filepath.Join(indexDir, "_index.json"), summary); err != nil {
+		return IndexSummary{}, err
+	}
+	return summary, nil
+}
+
+func collectServiceIndexes(projectRoot string, cfg Config, registry Registry) (IndexSummary, []serviceIndexArtifact) {
 	summary := IndexSummary{
 		SourceRoots:       make([]string, 0, len(cfg.FacadeModules)),
 		InterfaceSuffixes: append([]string{}, cfg.InterfaceSuffixes...),
@@ -120,6 +214,8 @@ func buildIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry
 		serviceNames = append(serviceNames, fqn)
 	}
 	sort.Strings(serviceNames)
+
+	artifacts := make([]serviceIndexArtifact, 0, len(serviceNames))
 	for _, fqn := range serviceNames {
 		classInfo := registry[fqn]
 		if !IsFacadeInterface(classInfo, cfg.InterfaceSuffixes) {
@@ -135,23 +231,14 @@ func buildIndexFiles(indexDir, projectRoot string, cfg Config, registry Registry
 			payload.Methods = append(payload.Methods, buildMethodSchemaResult(registry, classInfo, method, cfg.RequiredMarkers))
 			methodNames = append(methodNames, method.Name)
 		}
-		if err := SaveJSON(filepath.Join(indexDir, classInfo.FQN+".json"), payload); err != nil {
-			return IndexSummary{}, err
-		}
 		summary.Services = append(summary.Services, IndexSummaryService{
 			Service: classInfo.FQN,
 			File:    classInfo.File,
 			Methods: methodNames,
 		})
-		if stdout != nil {
-			fmt.Fprintf(stdout, "  + %s  (%d methods)\n", classInfo.FQN, len(payload.Methods))
-		}
+		artifacts = append(artifacts, serviceIndexArtifact{Payload: payload})
 	}
-
-	if err := SaveJSON(filepath.Join(indexDir, "_index.json"), summary); err != nil {
-		return IndexSummary{}, err
-	}
-	return summary, nil
+	return summary, artifacts
 }
 
 func IsFacadeInterface(classInfo SemanticClassInfo, suffixes []string) bool {

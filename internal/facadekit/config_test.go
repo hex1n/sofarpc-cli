@@ -74,6 +74,28 @@ func TestLoadConfigOptionalReturnsDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigOrDiscoverUsesDetectedModulesWhenConfigMissing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pom.xml"), []byte("<project><modelVersion>4.0.0</modelVersion><artifactId>demo-root</artifactId></project>"), 0o644); err != nil {
+		t.Fatalf("write root pom: %v", err)
+	}
+	moduleDir := filepath.Join(root, "user-facade")
+	if err := os.MkdirAll(filepath.Join(moduleDir, "src", "main", "java"), 0o755); err != nil {
+		t.Fatalf("mkdir source root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "pom.xml"), []byte("<project><modelVersion>4.0.0</modelVersion><artifactId>user-facade</artifactId></project>"), 0o644); err != nil {
+		t.Fatalf("write module pom: %v", err)
+	}
+
+	cfg, err := LoadConfigOrDiscover(root)
+	if err != nil {
+		t.Fatalf("LoadConfigOrDiscover error = %v", err)
+	}
+	if len(cfg.FacadeModules) != 1 || cfg.FacadeModules[0].Name != "user-facade" {
+		t.Fatalf("FacadeModules = %+v", cfg.FacadeModules)
+	}
+}
+
 func TestLoadConfigMissingErrors(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "empty")
 	if err := os.MkdirAll(root, 0o755); err != nil {

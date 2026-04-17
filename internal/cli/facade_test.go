@@ -108,6 +108,73 @@ func TestPrintFacadeSchemaText(t *testing.T) {
 	}
 }
 
+func TestPrintFacadeServicesText(t *testing.T) {
+	var stdout bytes.Buffer
+	summary := facadekit.IndexSummary{
+		Services: []facadekit.IndexSummaryService{
+			{
+				Service: "com.example.UserFacade",
+				File:    "svc/src/main/java/com/example/UserFacade.java",
+				Methods: []string{"getUser", "createUser"},
+			},
+		},
+	}
+
+	if err := printFacadeServices(&stdout, "C:/work/demo", summary, "User"); err != nil {
+		t.Fatalf("printFacadeServices() error = %v", err)
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"project root: C:/work/demo",
+		"services:     1",
+		"filter:       User",
+		"- com.example.UserFacade (2 methods)",
+		"file:    svc/src/main/java/com/example/UserFacade.java",
+		"methods: getUser, createUser",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunFacadeServicesUsesServiceSummaryLoader(t *testing.T) {
+	original := loadFacadeServiceSummary
+	t.Cleanup(func() {
+		loadFacadeServiceSummary = original
+	})
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pom.xml"), []byte("<project><modelVersion>4.0.0</modelVersion></project>"), 0o644); err != nil {
+		t.Fatalf("WriteFile(pom.xml) error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	loadFacadeServiceSummary = func(projectRoot string) (facadekit.IndexSummary, error) {
+		if projectRoot != root {
+			t.Fatalf("projectRoot = %q, want %q", projectRoot, root)
+		}
+		return facadekit.IndexSummary{
+			Services: []facadekit.IndexSummaryService{
+				{Service: "com.example.OrderFacade", Methods: []string{"createOrder"}},
+			},
+		}, nil
+	}
+
+	app := &App{
+		Stdout: &stdout,
+		Stderr: io.Discard,
+		Cwd:    root,
+	}
+	if err := app.runFacadeServices([]string{"--project", root}); err != nil {
+		t.Fatalf("runFacadeServices() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "com.example.OrderFacade") {
+		t.Fatalf("stdout = %s", stdout.String())
+	}
+}
+
 func TestRunFacadeStatusPrintsResolvedProjectState(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, ".sofarpc")

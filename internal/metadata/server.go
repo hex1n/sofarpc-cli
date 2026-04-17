@@ -193,9 +193,9 @@ func (d *daemon) resolveSchema(req resolveRequest) resolveResponse {
 			return resolveResponse{OK: true, Source: cached.Source, CacheHit: true, Schema: &schema}
 		}
 	}
-	schema, source, err := resolveSchemaUncached(req.ProjectRoot, req.Service)
+	schema, source, notes, err := resolveSchemaUncached(req.ProjectRoot, req.Service)
 	if err != nil {
-		return resolveResponse{OK: false, Error: err.Error()}
+		return resolveResponse{OK: false, Error: err.Error(), Notes: notes}
 	}
 	if cacheable {
 		d.putSchema(key, schemaCacheEntry{
@@ -204,7 +204,7 @@ func (d *daemon) resolveSchema(req resolveRequest) resolveResponse {
 			ExpiresAt: d.nextExpiry(),
 		})
 	}
-	return resolveResponse{OK: true, Source: source, Schema: &schema}
+	return resolveResponse{OK: true, Source: source, Notes: notes, Schema: &schema}
 }
 
 func (d *daemon) resolveMethod(req resolveRequest) resolveResponse {
@@ -215,9 +215,9 @@ func (d *daemon) resolveMethod(req resolveRequest) resolveResponse {
 			return resolveResponse{OK: true, Source: cached.Source, CacheHit: true, Method: &method}
 		}
 	}
-	method, source, err := resolveMethodUncached(req.ProjectRoot, req.Service, req.Method, req.PreferredParamTypes, req.RawArgs)
+	method, source, notes, err := resolveMethodUncached(req.ProjectRoot, req.Service, req.Method, req.PreferredParamTypes, req.RawArgs)
 	if err != nil {
-		return resolveResponse{OK: false, Error: err.Error()}
+		return resolveResponse{OK: false, Error: err.Error(), Notes: notes}
 	}
 	if cacheable {
 		d.putMethod(key, methodCacheEntry{
@@ -226,27 +226,51 @@ func (d *daemon) resolveMethod(req resolveRequest) resolveResponse {
 			ExpiresAt: d.nextExpiry(),
 		})
 	}
-	return resolveResponse{OK: true, Source: source, Method: &method}
+	return resolveResponse{OK: true, Source: source, Notes: notes, Method: &method}
 }
 
-func resolveSchemaUncached(projectRoot, service string) (model.ServiceSchema, string, error) {
+func resolveSchemaUncached(projectRoot, service string) (model.ServiceSchema, string, []string, error) {
+	notes := []string{}
 	if schema, err := describeServiceFromProjectFn(projectRoot, service); err == nil {
-		return schema, "project-source", nil
+		return schema, "project-source", notes, nil
+	} else {
+		notes = append(notes, contractAttemptNote("project-source", err))
 	}
 	if schema, err := describeServiceFromArtifactsFn(projectRoot, service); err == nil {
-		return schema, "jar-javap", nil
+		return schema, "jar-javap", notes, nil
+	} else {
+		notes = append(notes, contractAttemptNote("jar-javap", err))
 	}
-	return model.ServiceSchema{}, "", fmt.Errorf("service schema %s not found", service)
+	return model.ServiceSchema{}, "", notes, fmt.Errorf("service schema %s not found", service)
 }
 
-func resolveMethodUncached(projectRoot, service, method string, preferredParamTypes []string, rawArgs json.RawMessage) (contract.ProjectMethod, string, error) {
+func resolveMethodUncached(projectRoot, service, method string, preferredParamTypes []string, rawArgs json.RawMessage) (contract.ProjectMethod, string, []string, error) {
+	notes := []string{}
 	if resolved, err := resolveMethodFromProjectFn(projectRoot, service, method, preferredParamTypes, rawArgs); err == nil {
-		return resolved, "project-source", nil
+		return resolved, "project-source", notes, nil
+	} else {
+		notes = append(notes, contractAttemptNote("project-source", err))
 	}
 	if resolved, err := resolveMethodFromArtifactsFn(projectRoot, service, method, preferredParamTypes, rawArgs); err == nil {
-		return resolved, "jar-javap", nil
+		return resolved, "jar-javap", notes, nil
+	} else {
+		notes = append(notes, contractAttemptNote("jar-javap", err))
 	}
-	return contract.ProjectMethod{}, "", fmt.Errorf("method contract %s.%s not found", service, method)
+	return contract.ProjectMethod{}, "", notes, fmt.Errorf("method contract %s.%s not found", service, method)
+}
+
+func contractAttemptNote(stage string, err error) string {
+	if err == nil {
+		return stage
+	}
+	text := strings.TrimSpace(err.Error())
+	if idx := strings.IndexByte(text, '\n'); idx >= 0 {
+		text = text[:idx]
+	}
+	if len(text) > 180 {
+		text = text[:177] + "..."
+	}
+	return stage + ": " + text
 }
 
 func resolveCacheTTL() time.Duration {

@@ -74,7 +74,7 @@ func (a *App) runManifestGenerate(args []string) error {
 	flags.StringVar(&method, "method", "", "method name")
 	flags.StringVar(&types, "types", "", "comma-separated parameter types")
 	flags.StringVar(&payloadMode, "payload-mode", payloadMode, "payload mode")
-	flags.StringVar(&stubPathCSV, "stub-path", "", "comma-separated stub paths")
+	flags.StringVar(&stubPathCSV, "stub-path", "", "manual fallback stub paths to persist in the manifest")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
