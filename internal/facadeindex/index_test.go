@@ -1,4 +1,4 @@
-package facadekit
+package facadeindex
 
 import (
 	"bytes"
@@ -7,15 +7,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 )
 
 func TestWriteIndexFilesCreatesServiceAndSummaryFiles(t *testing.T) {
 	root := t.TempDir()
 	indexDir := filepath.Join(root, ".sofarpc", "index")
-	cfg := DefaultConfig()
+	cfg := facadeconfig.DefaultConfig()
 	cfg.InterfaceSuffixes = []string{"Facade"}
 	cfg.RequiredMarkers = []string{"必传", "required"}
-	cfg.FacadeModules = []FacadeModule{
+	cfg.FacadeModules = []facadeconfig.FacadeModule{
 		{Name: "fixture-facade", SourceRoot: "src/main/java"},
 	}
 	if err := os.MkdirAll(filepath.Join(root, "src", "main", "java"), 0o755); err != nil {
@@ -109,12 +112,12 @@ func TestSwitchIndexDirReplacesIndexDirectory(t *testing.T) {
 
 func TestLoadServiceSummaryUsesCachedIndexWhenCompatible(t *testing.T) {
 	root := t.TempDir()
-	cfg := DefaultConfig()
+	cfg := facadeconfig.DefaultConfig()
 	cfg.InterfaceSuffixes = []string{"Facade"}
-	cfg.FacadeModules = []FacadeModule{
+	cfg.FacadeModules = []facadeconfig.FacadeModule{
 		{Name: "fixture-facade", SourceRoot: "src/main/java"},
 	}
-	if err := SaveJSON(ConfigPath(root), cfg); err != nil {
+	if err := facadeconfig.SaveJSON(facadeconfig.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("SaveJSON(config) error = %v", err)
 	}
 	cached := IndexSummary{
@@ -124,7 +127,7 @@ func TestLoadServiceSummaryUsesCachedIndexWhenCompatible(t *testing.T) {
 			{Service: "com.example.UserFacade", Methods: []string{"getUser"}},
 		},
 	}
-	if err := SaveJSON(filepath.Join(EffectiveIndexDir(root), "_index.json"), cached); err != nil {
+	if err := facadeconfig.SaveJSON(filepath.Join(facadeconfig.EffectiveIndexDir(root), "_index.json"), cached); err != nil {
 		t.Fatalf("SaveJSON(index) error = %v", err)
 	}
 
@@ -139,9 +142,9 @@ func TestLoadServiceSummaryUsesCachedIndexWhenCompatible(t *testing.T) {
 
 func TestIndexSummaryCompatibleRejectsConfigDrift(t *testing.T) {
 	root := t.TempDir()
-	cfg := DefaultConfig()
+	cfg := facadeconfig.DefaultConfig()
 	cfg.InterfaceSuffixes = []string{"Facade"}
-	cfg.FacadeModules = []FacadeModule{
+	cfg.FacadeModules = []facadeconfig.FacadeModule{
 		{Name: "fixture-facade", SourceRoot: "src/main/java"},
 	}
 	summary := IndexSummary{
@@ -151,5 +154,62 @@ func TestIndexSummaryCompatibleRejectsConfigDrift(t *testing.T) {
 	}
 	if indexSummaryCompatible(summary, cfg, root) {
 		t.Fatal("expected summary compatibility check to fail when interface suffixes drift")
+	}
+}
+
+func fixtureRegistry() facadesemantic.Registry {
+	return facadesemantic.Registry{
+		"com.example.UserFacade": {
+			FQN:        "com.example.UserFacade",
+			SimpleName: "UserFacade",
+			File:       "src/main/java/com/example/UserFacade.java",
+			Kind:       "interface",
+			Methods: []facadesemantic.SemanticMethodInfo{
+				{
+					Name:       "getUser",
+					Javadoc:    "@param request\n\t\t必传 用户请求",
+					ReturnType: "com.example.ResponseEnvelope",
+					Parameters: []facadesemantic.SemanticParameterInfo{{Name: "request", Type: "com.example.UserRequest"}},
+				},
+			},
+		},
+		"com.example.BaseRequest": {
+			FQN:        "com.example.BaseRequest",
+			SimpleName: "BaseRequest",
+			Kind:       "class",
+			Fields: []facadesemantic.SemanticFieldInfo{
+				{Name: "tenantId", JavaType: "java.lang.String", Comment: "tenant id 必传", Required: true},
+			},
+		},
+		"com.example.UserRequest": {
+			FQN:        "com.example.UserRequest",
+			SimpleName: "UserRequest",
+			Kind:       "class",
+			Superclass: "com.example.BaseRequest",
+			Fields: []facadesemantic.SemanticFieldInfo{
+				{Name: "items", JavaType: "java.util.List<com.example.Item>"},
+				{Name: "status", JavaType: "com.example.Status"},
+			},
+		},
+		"com.example.Item": {
+			FQN:        "com.example.Item",
+			SimpleName: "Item",
+			Kind:       "class",
+			Fields: []facadesemantic.SemanticFieldInfo{
+				{Name: "code", JavaType: "java.lang.String"},
+			},
+		},
+		"com.example.Status": {
+			FQN:           "com.example.Status",
+			SimpleName:    "Status",
+			Kind:          "enum",
+			EnumConstants: []string{"ACTIVE", "INACTIVE"},
+		},
+		"com.example.ResponseEnvelope": {
+			FQN:           "com.example.ResponseEnvelope",
+			SimpleName:    "ResponseEnvelope",
+			Kind:          "class",
+			MethodReturns: []string{"java.util.Optional<java.lang.String>"},
+		},
 	}
 }

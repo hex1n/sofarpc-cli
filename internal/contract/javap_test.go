@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/projectscan"
 )
@@ -180,7 +180,7 @@ func TestDescribeServiceFromArtifactsBuildsSchema(t *testing.T) {
 	}
 }
 
-func mapsKeys(registry map[string]facadekit.SemanticClassInfo) []string {
+func mapsKeys(registry map[string]facadesemantic.SemanticClassInfo) []string {
 	keys := make([]string, 0, len(registry))
 	for key := range registry {
 		keys = append(keys, key)

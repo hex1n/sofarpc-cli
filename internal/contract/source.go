@@ -6,7 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/projectscan"
 )
@@ -15,8 +16,8 @@ var (
 	discoverProjectFn      = projectscan.DiscoverProject
 	discoverArtifactsFn    = projectscan.DiscoverArtifacts
 	matchServiceFn         = projectscan.MatchService
-	loadProjectConfigFn    = facadekit.LoadConfig
-	loadSemanticRegistryFn = facadekit.LoadSemanticRegistry
+	loadProjectConfigFn    = facadeconfig.LoadConfig
+	loadSemanticRegistryFn = facadesemantic.LoadSemanticRegistry
 )
 
 func DescribeServiceFromProject(projectRoot, service string) (model.ServiceSchema, error) {
@@ -48,7 +49,7 @@ func DescribeServiceFromProject(projectRoot, service string) (model.ServiceSchem
 
 	cfg, err := loadProjectConfigFn(layout.Root, true)
 	if err != nil {
-		cfg = facadekit.DefaultConfig()
+		cfg = facadeconfig.DefaultConfig()
 	}
 	registry, err := loadSemanticRegistryFn(layout.Root, sourceRoots, cfg.RequiredMarkers)
 	if err != nil {
@@ -57,7 +58,7 @@ func DescribeServiceFromProject(projectRoot, service string) (model.ServiceSchem
 	return BuildServiceSchema(registry, service)
 }
 
-func BuildServiceSchema(registry facadekit.Registry, service string) (model.ServiceSchema, error) {
+func BuildServiceSchema(registry facadesemantic.Registry, service string) (model.ServiceSchema, error) {
 	service = strings.TrimSpace(service)
 	serviceInfo, ok := registry[service]
 	if !ok {
@@ -91,7 +92,7 @@ func sourceRootsForModules(projectRoot string, modules []projectscan.FacadeModul
 		if strings.TrimSpace(module.SourceRoot) == "" {
 			continue
 		}
-		root := facadekit.ResolveRepoPath(module.SourceRoot, projectRoot)
+		root := facadeconfig.ResolveRepoPath(module.SourceRoot, projectRoot)
 		root = filepath.Clean(root)
 		if _, ok := seen[root]; ok {
 			continue
@@ -103,7 +104,7 @@ func sourceRootsForModules(projectRoot string, modules []projectscan.FacadeModul
 	return roots
 }
 
-func convertMethodSchema(owner facadekit.SemanticClassInfo, method facadekit.SemanticMethodInfo, registry facadekit.Registry) model.MethodSchema {
+func convertMethodSchema(owner facadesemantic.SemanticClassInfo, method facadesemantic.SemanticMethodInfo, registry facadesemantic.Registry) model.MethodSchema {
 	paramTypes := make([]string, 0, len(method.Parameters))
 	paramTypeSignatures := make([]string, 0, len(method.Parameters))
 	for _, parameter := range method.Parameters {
@@ -119,7 +120,7 @@ func convertMethodSchema(owner facadekit.SemanticClassInfo, method facadekit.Sem
 	}
 }
 
-func rawTypeName(typeStr string, owner facadekit.SemanticClassInfo, registry facadekit.Registry) string {
+func rawTypeName(typeStr string, owner facadesemantic.SemanticClassInfo, registry facadesemantic.Registry) string {
 	text := stripWildcard(strings.TrimSpace(typeStr))
 	if text == "" {
 		return ""
@@ -136,7 +137,7 @@ func rawTypeName(typeStr string, owner facadekit.SemanticClassInfo, registry fac
 	return head + arraySuffix
 }
 
-func resolveTypeName(typeName string, owner facadekit.SemanticClassInfo, registry facadekit.Registry) string {
+func resolveTypeName(typeName string, owner facadesemantic.SemanticClassInfo, registry facadesemantic.Registry) string {
 	typeName = stripWildcard(strings.TrimSpace(typeName))
 	if typeName == "" {
 		return ""

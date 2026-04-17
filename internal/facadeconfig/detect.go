@@ -1,4 +1,4 @@
-package facadekit
+package facadeconfig
 
 import (
 	"encoding/json"
@@ -95,7 +95,7 @@ func detectFacadeModules(projectRoot string) []FacadeModule {
 	return projectscan.DetectFacadeModules(projectRoot)
 }
 
-func firstArtifactID(pomText string) string {
+func FirstArtifactID(pomText string) string {
 	return projectscan.FirstArtifactID(pomText)
 }
 

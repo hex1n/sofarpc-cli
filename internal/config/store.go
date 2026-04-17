@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
 const appName = "sofarpc-cli"
@@ -46,8 +47,8 @@ func (p Paths) Ensure() error {
 	return os.MkdirAll(p.CacheDir, 0o755)
 }
 
-func LoadContextStore(paths Paths) (model.ContextStore, error) {
-	store := model.ContextStore{Contexts: map[string]model.Context{}}
+func LoadContextStore(paths Paths) (targetmodel.ContextStore, error) {
+	store := targetmodel.ContextStore{Contexts: map[string]targetmodel.Context{}}
 	body, err := os.ReadFile(paths.ContextsFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		return store, nil
@@ -62,14 +63,14 @@ func LoadContextStore(paths Paths) (model.ContextStore, error) {
 		return store, err
 	}
 	if store.Contexts == nil {
-		store.Contexts = map[string]model.Context{}
+		store.Contexts = map[string]targetmodel.Context{}
 	}
 	return store, nil
 }
 
-func SaveContextStore(paths Paths, store model.ContextStore) error {
+func SaveContextStore(paths Paths, store targetmodel.ContextStore) error {
 	if store.Contexts == nil {
-		store.Contexts = map[string]model.Context{}
+		store.Contexts = map[string]targetmodel.Context{}
 	}
 	return writeJSON(paths.ContextsFile, store)
 }
@@ -145,8 +146,8 @@ func SaveRuntimeSourceStore(paths Paths, store model.RuntimeSourceStore) error {
 	return writeJSON(paths.RuntimeSourcesFile, store)
 }
 
-func LoadManifest(path string) (model.Manifest, bool, error) {
-	var manifest model.Manifest
+func LoadManifest(path string) (targetmodel.Manifest, bool, error) {
+	var manifest targetmodel.Manifest
 	if path == "" {
 		return manifest, false, nil
 	}
@@ -166,7 +167,7 @@ func LoadManifest(path string) (model.Manifest, bool, error) {
 	return manifest, true, nil
 }
 
-func SaveManifest(path string, manifest model.Manifest) error {
+func SaveManifest(path string, manifest targetmodel.Manifest) error {
 	return writeJSON(path, manifest)
 }
 

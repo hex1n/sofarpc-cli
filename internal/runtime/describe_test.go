@@ -82,13 +82,13 @@ func TestClasspathContentKeyChangesOnContentChange(t *testing.T) {
 	}
 }
 
-func TestDescribeServiceUsesDaemonPathByDefault(t *testing.T) {
+func TestDescribeServiceLegacyFallbackUsesDaemonPathByDefault(t *testing.T) {
 	manager := testManager(t)
-	oldDescribe := describeViaDaemonRequest
-	oldDescribeWorker := describeWorker
+	oldDescribe := legacyDescribeViaDaemonRequest
+	oldDescribeWorker := legacyDescribeWorker
 	defer func() {
-		describeViaDaemonRequest = oldDescribe
-		describeWorker = oldDescribeWorker
+		legacyDescribeViaDaemonRequest = oldDescribe
+		legacyDescribeWorker = oldDescribeWorker
 	}()
 	spec := Spec{
 		RuntimeJar: "/tmp/runtime.jar",
@@ -97,7 +97,7 @@ func TestDescribeServiceUsesDaemonPathByDefault(t *testing.T) {
 	describeCallCount := 0
 	requestedService := ""
 	requestedRefresh := false
-	describeViaDaemonRequest = func(_ context.Context, _ *Manager, _ Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
+	legacyDescribeViaDaemonRequest = func(_ context.Context, _ *Manager, _ Spec, service string, opts DescribeOptions) (model.ServiceSchema, error) {
 		describeCallCount++
 		requestedService = service
 		requestedRefresh = opts.Refresh || opts.NoCache
@@ -106,14 +106,14 @@ func TestDescribeServiceUsesDaemonPathByDefault(t *testing.T) {
 			Methods: []model.MethodSchema{{Name: "foo"}},
 		}, nil
 	}
-	describeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
+	legacyDescribeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
 		t.Fatalf("describe worker fallback should not run when daemon describe succeeds")
 		return model.ServiceSchema{}, errors.New("should not run")
 	}
 
-	schema, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{Refresh: true})
+	schema, err := manager.DescribeServiceLegacyFallback(context.Background(), spec, "com.example.Service", DescribeOptions{Refresh: true})
 	if err != nil {
-		t.Fatalf("DescribeService() error = %v", err)
+		t.Fatalf("DescribeServiceLegacyFallback() error = %v", err)
 	}
 	if schema.Service != "com.example.Service" {
 		t.Fatalf("unexpected schema: %+v", schema)
@@ -129,19 +129,19 @@ func TestDescribeServiceUsesDaemonPathByDefault(t *testing.T) {
 	}
 }
 
-func TestDescribeServiceFallsBackToWorkerWhenDaemonPathFails(t *testing.T) {
+func TestDescribeServiceLegacyFallbackUsesDirectWorkerWhenDaemonPathFails(t *testing.T) {
 	manager := testManager(t)
-	oldDescribe := describeViaDaemonRequest
-	oldDescribeWorker := describeWorker
+	oldDescribe := legacyDescribeViaDaemonRequest
+	oldDescribeWorker := legacyDescribeWorker
 	defer func() {
-		describeViaDaemonRequest = oldDescribe
-		describeWorker = oldDescribeWorker
+		legacyDescribeViaDaemonRequest = oldDescribe
+		legacyDescribeWorker = oldDescribeWorker
 	}()
 	var fallbackCalled bool
-	describeViaDaemonRequest = func(_ context.Context, _ *Manager, _ Spec, _ string, _ DescribeOptions) (model.ServiceSchema, error) {
+	legacyDescribeViaDaemonRequest = func(_ context.Context, _ *Manager, _ Spec, _ string, _ DescribeOptions) (model.ServiceSchema, error) {
 		return model.ServiceSchema{}, errors.New("daemon unavailable")
 	}
-	describeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
+	legacyDescribeWorker = func(_ *Manager, _ context.Context, _ Spec, service string) (model.ServiceSchema, error) {
 		fallbackCalled = true
 		return model.ServiceSchema{
 			Service: service,
@@ -153,9 +153,9 @@ func TestDescribeServiceFallsBackToWorkerWhenDaemonPathFails(t *testing.T) {
 		JavaBin:    "java",
 	}
 
-	schema, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{})
+	schema, err := manager.DescribeServiceLegacyFallback(context.Background(), spec, "com.example.Service", DescribeOptions{})
 	if err != nil {
-		t.Fatalf("DescribeService() error = %v", err)
+		t.Fatalf("DescribeServiceLegacyFallback() error = %v", err)
 	}
 	if !fallbackCalled {
 		t.Fatal("expected fallback worker path to be used when daemon request fails")
@@ -165,15 +165,15 @@ func TestDescribeServiceFallsBackToWorkerWhenDaemonPathFails(t *testing.T) {
 	}
 }
 
-func TestDescribeServiceRefreshesWithNoCache(t *testing.T) {
+func TestDescribeServiceLegacyFallbackRefreshesWithNoCache(t *testing.T) {
 	manager := testManager(t)
-	oldDescribe := describeViaDaemonRequest
+	oldDescribe := legacyDescribeViaDaemonRequest
 	defer func() {
-		describeViaDaemonRequest = oldDescribe
+		legacyDescribeViaDaemonRequest = oldDescribe
 	}()
 
 	describeCalls := 0
-	describeViaDaemonRequest = func(_ context.Context, _ *Manager, _ Spec, _ string, opts DescribeOptions) (model.ServiceSchema, error) {
+	legacyDescribeViaDaemonRequest = func(_ context.Context, _ *Manager, _ Spec, _ string, opts DescribeOptions) (model.ServiceSchema, error) {
 		describeCalls++
 		if !opts.NoCache {
 			t.Fatalf("expected NoCache flag to be forwarded")
@@ -186,9 +186,9 @@ func TestDescribeServiceRefreshesWithNoCache(t *testing.T) {
 		RuntimeJar: "/tmp/runtime.jar",
 		JavaBin:    "java",
 	}
-	_, err := manager.DescribeService(context.Background(), spec, "com.example.Service", DescribeOptions{NoCache: true})
+	_, err := manager.DescribeServiceLegacyFallback(context.Background(), spec, "com.example.Service", DescribeOptions{NoCache: true})
 	if err != nil {
-		t.Fatalf("DescribeService() error = %v", err)
+		t.Fatalf("DescribeServiceLegacyFallback() error = %v", err)
 	}
 	if describeCalls != 1 {
 		t.Fatalf("expected one daemon request, got %d", describeCalls)

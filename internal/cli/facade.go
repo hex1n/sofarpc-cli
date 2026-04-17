@@ -7,10 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
+	"github.com/hex1n/sofarpc-cli/internal/facadeindex"
+	"github.com/hex1n/sofarpc-cli/internal/facadereplay"
+	"github.com/hex1n/sofarpc-cli/internal/facadeschema"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 )
 
-var loadFacadeServiceSummary = facadekit.LoadServiceSummary
+var loadFacadeServiceSummary = facadeindex.LoadServiceSummary
 
 // runFacade dispatches `sofarpc facade <sub>`.
 // It drives facade support workflows from the Go CLI, while delegating only
@@ -19,7 +23,7 @@ var loadFacadeServiceSummary = facadekit.LoadServiceSummary
 // Subcommands:
 //
 //	init      alias for `sofarpc skills init`
-//	discover  writes <project>/.sofarpc/config.json
+//	discover  writes optional facade workspace config under <project>/.sofarpc/config.json
 //	index     refreshes facade index/
 //	services  lists available facade services in the current project
 //	schema    prints generated DTO schema for a facade method
@@ -66,12 +70,13 @@ func (a *App) runFacadeStatus(args []string) error {
 	if errProject != nil {
 		return errProject
 	}
-	state := facadekit.InspectState(projectRoot)
-	cfg, cfgErr := facadekit.LoadConfig(projectRoot, true)
+	state := facadeconfig.InspectState(projectRoot)
+	cfg, cfgErr := facadeconfig.LoadConfig(projectRoot, true)
 
 	fmt.Fprintf(a.Stdout, "skill dir:      %s\n", fmtPathOrErr(skillDir, err))
 	fmt.Fprintf(a.Stdout, "project root:   %s\n", fmtPathOrErr(projectRoot, errProject))
 	fmt.Fprintf(a.Stdout, "state layout:   %s\n", state.Layout.Label())
+	fmt.Fprintf(a.Stdout, "state purpose:  optional facade workspace state (.sofarpc)\n")
 	fmt.Fprintf(a.Stdout, "state dir:      %s\n", state.StateDir)
 	fmt.Fprintf(a.Stdout, "config path:    %s\n", formatPathStatus(state.ConfigPath))
 	fmt.Fprintf(a.Stdout, "index dir:      %s\n", formatPathStatus(state.IndexDir))
@@ -124,9 +129,9 @@ func splitFacadeProjectArg(args []string) (string, []string, error) {
 func (a *App) resolveFacadeProjectRoot(project string) (string, error) {
 	root := strings.TrimSpace(project)
 	if root != "" {
-		return facadekit.ValidateProjectDir(root)
+		return facadeconfig.ValidateProjectDir(root)
 	}
-	return facadekit.ResolveProjectRoot(a.Cwd, a.Stderr)
+	return facadeconfig.ResolveProjectRoot(a.Cwd, a.Stderr)
 }
 
 func formatPathStatus(path string) string {
@@ -165,7 +170,7 @@ func (a *App) runFacadeDiscover(args []string) error {
 	if err != nil {
 		return err
 	}
-	return facadekit.DetectConfig(projectRoot, write, a.Stdout, a.Stderr)
+	return facadeconfig.DetectConfig(projectRoot, write, a.Stdout, a.Stderr)
 }
 
 func (a *App) runFacadeSchema(args []string) error {
@@ -193,19 +198,19 @@ func (a *App) runFacadeSchema(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := facadekit.LoadConfig(projectRoot, false)
+	cfg, err := facadeconfig.LoadConfig(projectRoot, false)
 	if err != nil {
 		return err
 	}
-	sourceRoots := facadekit.IterSourceRoots(cfg, projectRoot)
+	sourceRoots := facadeconfig.IterSourceRoots(cfg, projectRoot)
 	if len(sourceRoots) == 0 {
 		return fmt.Errorf("config has no facade source roots")
 	}
-	registry, err := facadekit.LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
+	registry, err := facadesemantic.LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
 	if err != nil {
 		return err
 	}
-	schema, err := facadekit.BuildMethodSchema(registry, service, method, parseCSV(types), cfg.RequiredMarkers)
+	schema, err := facadeschema.BuildMethodSchema(registry, service, method, parseCSV(types), cfg.RequiredMarkers)
 	if err != nil {
 		return err
 	}
@@ -247,7 +252,7 @@ func (a *App) runFacadeServices(args []string) error {
 	return printFacadeServices(a.Stdout, projectRoot, summary, filter)
 }
 
-func printFacadeSchema(out io.Writer, schema facadekit.MethodSchemaEnvelope) error {
+func printFacadeSchema(out io.Writer, schema facadeschema.MethodSchemaEnvelope) error {
 	method := schema.Method
 	if _, err := fmt.Fprintf(out, "service: %s\n", schema.Service); err != nil {
 		return err
@@ -309,12 +314,12 @@ func printFacadeSchema(out io.Writer, schema facadekit.MethodSchemaEnvelope) err
 	return nil
 }
 
-func filterFacadeServiceSummary(summary facadekit.IndexSummary, filter string) facadekit.IndexSummary {
+func filterFacadeServiceSummary(summary facadeindex.IndexSummary, filter string) facadeindex.IndexSummary {
 	needle := strings.TrimSpace(strings.ToLower(filter))
 	if needle == "" {
 		return summary
 	}
-	filtered := make([]facadekit.IndexSummaryService, 0, len(summary.Services))
+	filtered := make([]facadeindex.IndexSummaryService, 0, len(summary.Services))
 	for _, service := range summary.Services {
 		if strings.Contains(strings.ToLower(service.Service), needle) {
 			filtered = append(filtered, service)
@@ -331,7 +336,7 @@ func filterFacadeServiceSummary(summary facadekit.IndexSummary, filter string) f
 	return summary
 }
 
-func printFacadeServices(out io.Writer, projectRoot string, summary facadekit.IndexSummary, filter string) error {
+func printFacadeServices(out io.Writer, projectRoot string, summary facadeindex.IndexSummary, filter string) error {
 	if _, err := fmt.Fprintf(out, "project root: %s\n", projectRoot); err != nil {
 		return err
 	}
@@ -375,11 +380,11 @@ func (a *App) runFacadeIndex(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := facadekit.LoadConfig(projectRoot, false)
+	cfg, err := facadeconfig.LoadConfig(projectRoot, false)
 	if err != nil {
 		return err
 	}
-	return facadekit.RefreshIndex(projectRoot, cfg, a.Stdout, a.Stderr)
+	return facadeindex.RefreshIndex(projectRoot, cfg, a.Stdout, a.Stderr)
 }
 
 func (a *App) runFacadeReplay(args []string) error {
@@ -410,7 +415,7 @@ func (a *App) runFacadeReplay(args []string) error {
 	if err != nil {
 		return err
 	}
-	return facadekit.ReplayCalls(projectRoot, facadekit.ReplayOptions{
+	return facadereplay.ReplayCalls(projectRoot, facadereplay.ReplayOptions{
 		Filter:          filter,
 		OnlyNames:       parseCSV(onlyNamesCSV),
 		ContextOverride: contextName,

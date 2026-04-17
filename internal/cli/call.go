@@ -77,11 +77,11 @@ func (a *App) runCall(args []string) error {
 		return err
 	}
 	if contractSource == "" && (len(resolved.Request.ParamTypes) == 0 || resolved.Request.PayloadMode == model.PayloadSchema) {
-		schema, describeErr := a.resolveServiceSchema(ctx, resolved.ManifestPath, spec, resolved.Request.Service, runtime.DescribeOptions{NoCache: input.RefreshContract})
+		schemaResolution, describeErr := a.resolveServiceSchemaDetailed(ctx, resolved.ManifestPath, spec, resolved.Request.Service, runtime.DescribeOptions{NoCache: input.RefreshContract})
 		if describeErr != nil {
 			return fmt.Errorf("infer paramTypes via describe: %w", describeErr)
 		}
-		methodSchema, err := pickMethodSchema(schema, resolved.Request.Method, resolved.Request.Args, resolved.Request.ParamTypes)
+		methodSchema, err := pickMethodSchema(schemaResolution.Schema, resolved.Request.Method, resolved.Request.Args, resolved.Request.ParamTypes)
 		if err != nil {
 			return err
 		}
@@ -90,6 +90,15 @@ func (a *App) runCall(args []string) error {
 		}
 		if resolved.Request.PayloadMode == model.PayloadSchema {
 			resolved.Request.ParamTypeSignatures = methodSchema.ParamTypeSignatures
+		}
+		if contractSource == "" && schemaResolution.Source != "" {
+			contractSource = schemaResolution.Source
+		}
+		if !contractCacheHit && schemaResolution.CacheHit {
+			contractCacheHit = true
+		}
+		if len(contractNotes) == 0 && len(schemaResolution.Notes) > 0 {
+			contractNotes = append([]string{}, schemaResolution.Notes...)
 		}
 	}
 	if resolved.Request.PayloadMode == model.PayloadSchema && len(resolved.Request.ParamTypeSignatures) == 0 {

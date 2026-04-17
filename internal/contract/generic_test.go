@@ -5,34 +5,34 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 )
 
 func TestCompileProjectMethodArgsAddsNestedObjectTypes(t *testing.T) {
 	method := ProjectMethod{
-		ServiceInfo: facadekit.SemanticClassInfo{
+		ServiceInfo: facadesemantic.SemanticClassInfo{
 			FQN: "com.example.OrderFacade",
-			Methods: []facadekit.SemanticMethodInfo{
+			Methods: []facadesemantic.SemanticMethodInfo{
 				{
 					Name: "importAsset",
-					Parameters: []facadekit.SemanticParameterInfo{
+					Parameters: []facadesemantic.SemanticParameterInfo{
 						{Name: "request", Type: "com.example.OrderRequest"},
 					},
 				},
 			},
 		},
-		MethodInfo: facadekit.SemanticMethodInfo{
+		MethodInfo: facadesemantic.SemanticMethodInfo{
 			Name: "importAsset",
-			Parameters: []facadekit.SemanticParameterInfo{
+			Parameters: []facadesemantic.SemanticParameterInfo{
 				{Name: "request", Type: "com.example.OrderRequest"},
 			},
 		},
-		Registry: facadekit.Registry{
+		Registry: facadesemantic.Registry{
 			"com.example.OrderRequest": {
 				FQN:        "com.example.OrderRequest",
 				SimpleName: "OrderRequest",
 				Kind:       "class",
-				Fields: []facadekit.SemanticFieldInfo{
+				Fields: []facadesemantic.SemanticFieldInfo{
 					{Name: "items", JavaType: "java.util.List<com.example.OrderItem>"},
 					{Name: "meta", JavaType: "java.util.Map<java.lang.String, com.example.OrderMeta>"},
 					{Name: "child", JavaType: "com.example.ChildRequest"},
@@ -43,19 +43,19 @@ func TestCompileProjectMethodArgsAddsNestedObjectTypes(t *testing.T) {
 				FQN:        "com.example.OrderItem",
 				SimpleName: "OrderItem",
 				Kind:       "class",
-				Fields:     []facadekit.SemanticFieldInfo{{Name: "code", JavaType: "java.lang.String"}},
+				Fields:     []facadesemantic.SemanticFieldInfo{{Name: "code", JavaType: "java.lang.String"}},
 			},
 			"com.example.OrderMeta": {
 				FQN:        "com.example.OrderMeta",
 				SimpleName: "OrderMeta",
 				Kind:       "class",
-				Fields:     []facadekit.SemanticFieldInfo{{Name: "memo", JavaType: "java.lang.String"}},
+				Fields:     []facadesemantic.SemanticFieldInfo{{Name: "memo", JavaType: "java.lang.String"}},
 			},
 			"com.example.ChildRequest": {
 				FQN:        "com.example.ChildRequest",
 				SimpleName: "ChildRequest",
 				Kind:       "class",
-				Fields:     []facadekit.SemanticFieldInfo{{Name: "name", JavaType: "java.lang.String"}},
+				Fields:     []facadesemantic.SemanticFieldInfo{{Name: "name", JavaType: "java.lang.String"}},
 			},
 			"com.example.Status": {
 				FQN:           "com.example.Status",

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 )
 
 var (
@@ -77,7 +77,7 @@ func CompileProjectMethodArgs(raw json.RawMessage, method ProjectMethod) (json.R
 	return json.RawMessage(body), nil
 }
 
-func compileValue(value any, described javaType, registry facadekit.Registry) any {
+func compileValue(value any, described javaType, registry facadesemantic.Registry) any {
 	switch described.Category {
 	case "collection", "array":
 		items, ok := value.([]any)
@@ -143,7 +143,7 @@ func compileValue(value any, described javaType, registry facadekit.Registry) an
 	}
 }
 
-func collectSemanticFields(fqn string, registry facadekit.Registry) map[string]javaType {
+func collectSemanticFields(fqn string, registry facadesemantic.Registry) map[string]javaType {
 	if strings.TrimSpace(fqn) == "" {
 		return nil
 	}
@@ -158,9 +158,9 @@ func collectSemanticFields(fqn string, registry facadekit.Registry) map[string]j
 	return collected
 }
 
-func collectInheritedFields(classInfo facadekit.SemanticClassInfo, registry facadekit.Registry) []facadekit.SemanticFieldInfo {
+func collectInheritedFields(classInfo facadesemantic.SemanticClassInfo, registry facadesemantic.Registry) []facadesemantic.SemanticFieldInfo {
 	seen := map[string]struct{}{}
-	var chain []facadekit.SemanticClassInfo
+	var chain []facadesemantic.SemanticClassInfo
 	current := classInfo
 	for i := 0; i < 20; i++ {
 		chain = append(chain, current)
@@ -174,7 +174,7 @@ func collectInheritedFields(classInfo facadekit.SemanticClassInfo, registry faca
 		}
 		current = parent
 	}
-	var out []facadekit.SemanticFieldInfo
+	var out []facadesemantic.SemanticFieldInfo
 	for i := len(chain) - 1; i >= 0; i-- {
 		for _, field := range chain[i].Fields {
 			if _, ok := seen[field.Name]; ok {
@@ -187,7 +187,7 @@ func collectInheritedFields(classInfo facadekit.SemanticClassInfo, registry faca
 	return out
 }
 
-func describeJavaType(typeStr string, owner facadekit.SemanticClassInfo, registry facadekit.Registry) javaType {
+func describeJavaType(typeStr string, owner facadesemantic.SemanticClassInfo, registry facadesemantic.Registry) javaType {
 	text := stripWildcard(strings.TrimSpace(typeStr))
 	if text == "" {
 		return javaType{Category: "unknown", Raw: typeStr}

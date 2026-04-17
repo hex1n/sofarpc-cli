@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
-	"github.com/hex1n/sofarpc-cli/internal/model"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
 func (a *App) runContext(args []string) error {
@@ -30,7 +30,7 @@ func (a *App) runContext(args []string) error {
 
 func (a *App) runContextSet(args []string) error {
 	flags := failFlagSet("context set")
-	var contextValue model.Context
+	var contextValue targetmodel.Context
 	flags.StringVar(&contextValue.DirectURL, "direct-url", "", "direct target")
 	flags.StringVar(&contextValue.RegistryAddress, "registry-address", "", "registry address")
 	flags.StringVar(&contextValue.RegistryProtocol, "registry-protocol", "", "registry protocol")
@@ -55,9 +55,9 @@ func (a *App) runContextSet(args []string) error {
 	}
 	switch {
 	case contextValue.DirectURL != "":
-		contextValue.Mode = model.ModeDirect
+		contextValue.Mode = targetmodel.ModeDirect
 	case contextValue.RegistryAddress != "":
-		contextValue.Mode = model.ModeRegistry
+		contextValue.Mode = targetmodel.ModeRegistry
 	default:
 		return fmt.Errorf("context set requires either --direct-url or --registry-address")
 	}

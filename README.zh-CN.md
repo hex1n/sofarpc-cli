@@ -1,6 +1,6 @@
 # sofarpc-cli
 
-用于调用 SOFARPC 服务的 CLI。
+用于调用和调试 SOFARPC 服务的 CLI。
 
 结构（有意多语言，各自做自己最擅长的事）：
 
@@ -14,6 +14,22 @@
 
 - 使用说明和命令参考：[docs/usage.zh-CN.md](./docs/usage.zh-CN.md)
 - 设计文档：[docs/sofarpc-cli-design.md](./docs/sofarpc-cli-design.md)
+
+核心产品命令：
+
+- `call`
+- `describe`
+- `doctor`
+- `target`
+
+项目增强命令：
+
+- `facade discover`
+- `facade index`
+- `facade services`
+- `facade schema`
+- `facade replay`
+- `facade status`
 
 ## 运行流程
 
@@ -42,6 +58,9 @@ flowchart LR
 - contract 结果只放进进程内存，不写本地文件；
 - 本地 contract 可用时，长驻 invoke worker 只保留 runtime classpath，不再挂业务 jar；
 - 可通过 `call --refresh-contract`、`doctor --refresh-contract` 和 `describe --refresh` 强制刷新。
+- `.sofarpc/` 是可选的 facade workspace 状态目录，只服务于
+  discover/index/replay 这类项目辅助能力；核心
+  `call/describe/doctor/target` 主链不依赖它。
 
 ## 快速开始
 
@@ -58,7 +77,7 @@ go build -o bin/sofarpc ./cmd/sofarpc
 go run ./cmd/sofarpc help
 ```
 
-项目辅助命令：
+可选项目辅助命令：
 
 ```powershell
 sofarpc facade discover --write
@@ -69,14 +88,16 @@ sofarpc facade replay
 sofarpc facade status
 ```
 
-## Claude Code skill
+## Agent Skill
 
 仓库内置 `call-rpc` skill，安装后就是“触发 `sofarpc call` 的薄入口”。
 用户级安装一次即可：
 
 ```powershell
-sofarpc skills install          # 将 skills/call-rpc 复制到 ~/.claude/skills/
-sofarpc skills where            # 查看源路径 / 目标路径
+sofarpc skills install                    # 默认安装到 Claude
+sofarpc skills install --target codex     # 安装到 ~/.agents/skills/
+sofarpc skills install --target both      # 同时安装到 Claude 和 Codex
+sofarpc skills where                      # 查看源路径 / 目标路径
 ```
 
 该 skill 不负责：

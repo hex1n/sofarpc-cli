@@ -9,9 +9,10 @@ import (
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
 	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/projectscan"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
 type invocationInputs struct {
@@ -67,7 +68,7 @@ func (a *App) resolveInvocation(input invocationInputs) (resolvedInvocation, err
 	serviceConfig := manifest.Services[serviceName]
 	manifestTarget := manifest.DefaultTarget
 	defaults := defaultsTarget()
-	target := model.TargetConfig{
+	target := targetmodel.TargetConfig{
 		Mode:             firstNonEmpty(inputMode(input), activeContext.Mode, manifestTarget.Mode),
 		DirectURL:        firstNonEmpty(input.DirectURL, activeContext.DirectURL, manifestTarget.DirectURL),
 		RegistryAddress:  firstNonEmpty(input.RegistryAddress, activeContext.RegistryAddress, manifestTarget.RegistryAddress),
@@ -81,9 +82,9 @@ func (a *App) resolveInvocation(input invocationInputs) (resolvedInvocation, err
 	if target.Mode == "" {
 		switch {
 		case target.DirectURL != "":
-			target.Mode = model.ModeDirect
+			target.Mode = targetmodel.ModeDirect
 		case target.RegistryAddress != "":
-			target.Mode = model.ModeRegistry
+			target.Mode = targetmodel.ModeRegistry
 		}
 	}
 	methodName := input.Method
@@ -148,22 +149,22 @@ func resolveSofaRPCVersion(flagValue, manifestValue string) (string, string) {
 func inputMode(input invocationInputs) string {
 	switch {
 	case input.DirectURL != "":
-		return model.ModeDirect
+		return targetmodel.ModeDirect
 	case input.RegistryAddress != "":
-		return model.ModeRegistry
+		return targetmodel.ModeRegistry
 	default:
 		return ""
 	}
 }
 
-func resolveActiveContext(store model.ContextStore, explicitContextName, manifestContextName, cwd, manifestPath string) (string, model.Context) {
+func resolveActiveContext(store targetmodel.ContextStore, explicitContextName, manifestContextName, cwd, manifestPath string) (string, targetmodel.Context) {
 	contextName := firstNonEmpty(explicitContextName, manifestContextName)
 	if contextName != "" {
 		ctx, ok := store.Contexts[contextName]
 		if ok {
 			return contextName, ctx
 		}
-		return contextName, model.Context{}
+		return contextName, targetmodel.Context{}
 	}
 	projectMatchedName, projectMatchedContext := resolveProjectContext(store.Contexts, projectAwareRoot(cwd, manifestPath))
 	if projectMatchedName != "" {
@@ -172,11 +173,11 @@ func resolveActiveContext(store model.ContextStore, explicitContextName, manifes
 	if store.Active != "" {
 		activeContext, ok := store.Contexts[store.Active]
 		if !ok {
-			return store.Active, model.Context{}
+			return store.Active, targetmodel.Context{}
 		}
 		return store.Active, activeContext
 	}
-	return "", model.Context{}
+	return "", targetmodel.Context{}
 }
 
 func resolveStubPaths(cwd, manifestPath string, manifestPaths []string, rawCSV, service string) ([]string, error) {
@@ -228,13 +229,13 @@ func projectAwareRoot(cwd, manifestPath string) string {
 	return filepath.Clean(cwd)
 }
 
-func resolveProjectContext(contexts map[string]model.Context, projectRoot string) (string, model.Context) {
+func resolveProjectContext(contexts map[string]targetmodel.Context, projectRoot string) (string, targetmodel.Context) {
 	projectRoot, err := filepath.Abs(projectRoot)
 	if err != nil {
 		projectRoot = filepath.Clean(projectRoot)
 	}
 	bestName := ""
-	bestContext := model.Context{}
+	bestContext := targetmodel.Context{}
 	bestWeight := -1
 	for name, contextValue := range contexts {
 		if strings.TrimSpace(contextValue.ProjectRoot) == "" {
@@ -275,7 +276,7 @@ func autoResolveStubPaths(cwd, manifestPath, service string) ([]string, error) {
 			return normalizeStubPaths(paths)
 		}
 	}
-	cfg, err := facadekit.LoadConfig(projectStart, true)
+	cfg, err := facadeconfig.LoadConfig(projectStart, true)
 	if err != nil {
 		return nil, nil
 	}
@@ -291,7 +292,7 @@ func resolveProjectRootForAutoStub(cwd, manifestPath string) string {
 	return base
 }
 
-func discoverStubPathsFromConfig(projectRoot string, cfg facadekit.Config) []string {
+func discoverStubPathsFromConfig(projectRoot string, cfg facadeconfig.Config) []string {
 	return discoverStubPathsFromModules(projectRoot, cfg.FacadeModules)
 }
 

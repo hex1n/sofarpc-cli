@@ -24,7 +24,7 @@
   "_requiredMarkers": "Substrings in Javadoc that mark a field/param as required. '|必传|' convention in SOFA Javadoc is detected automatically.",
   "requiredMarkers": ["必传", "必填", "required"],
 
-  "_defaultContext": "Name of the sofarpc context to use when none is specified. Must exist in ~/.sofarpc/contexts.json. Leave blank until the project's real default is known.",
+  "_defaultContext": "Name of the sofarpc context to use when none is specified. Must exist in the user-level sofarpc context store managed by `sofarpc context ...` (see `sofarpc skills where` or docs/usage.md for the exact path on your OS). Leave blank until the project's real default is known.",
   "defaultContext": "",
 
   "_manifestPath": "Path to sofarpc.manifest.json relative to project root.",

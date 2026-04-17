@@ -1,4 +1,4 @@
-package facadekit
+package facadeconfig
 
 import (
 	"bytes"

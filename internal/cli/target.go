@@ -8,41 +8,42 @@ import (
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
-	"github.com/hex1n/sofarpc-cli/internal/facadekit"
+	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
 	"github.com/hex1n/sofarpc-cli/internal/model"
 	"github.com/hex1n/sofarpc-cli/internal/runtime"
+	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
 
 type targetReport struct {
-	ProjectRoot    string             `json:"projectRoot,omitempty"`
-	ManifestPath   string             `json:"manifestPath,omitempty"`
-	ManifestLoaded bool               `json:"manifestLoaded"`
-	ActiveContext  string             `json:"activeContext,omitempty"`
-	Service        string             `json:"service,omitempty"`
-	Target         model.TargetConfig `json:"target"`
-	Reachability   model.ProbeResult  `json:"reachability"`
-	Candidates     []targetCandidate  `json:"candidates,omitempty"`
-	Layers         []targetLayer      `json:"layers,omitempty"`
-	Explain        []string           `json:"explain,omitempty"`
+	ProjectRoot    string                   `json:"projectRoot,omitempty"`
+	ManifestPath   string                   `json:"manifestPath,omitempty"`
+	ManifestLoaded bool                     `json:"manifestLoaded"`
+	ActiveContext  string                   `json:"activeContext,omitempty"`
+	Service        string                   `json:"service,omitempty"`
+	Target         targetmodel.TargetConfig `json:"target"`
+	Reachability   model.ProbeResult        `json:"reachability"`
+	Candidates     []targetCandidate        `json:"candidates,omitempty"`
+	Layers         []targetLayer            `json:"layers,omitempty"`
+	Explain        []string                 `json:"explain,omitempty"`
 }
 
 type targetCandidate struct {
-	Name     string             `json:"name,omitempty"`
-	Roles    []string           `json:"roles,omitempty"`
-	Selected bool               `json:"selected,omitempty"`
-	Target   model.TargetConfig `json:"target"`
+	Name     string                   `json:"name,omitempty"`
+	Roles    []string                 `json:"roles,omitempty"`
+	Selected bool                     `json:"selected,omitempty"`
+	Target   targetmodel.TargetConfig `json:"target"`
 }
 
 type targetLayer struct {
-	Name          string             `json:"name,omitempty"`
-	Kind          string             `json:"kind,omitempty"`
-	AppliedFields []string           `json:"appliedFields,omitempty"`
-	Target        model.TargetConfig `json:"target"`
+	Name          string                   `json:"name,omitempty"`
+	Kind          string                   `json:"kind,omitempty"`
+	AppliedFields []string                 `json:"appliedFields,omitempty"`
+	Target        targetmodel.TargetConfig `json:"target"`
 }
 
 type contextDecision struct {
 	SelectedName    string
-	SelectedContext model.Context
+	SelectedContext targetmodel.Context
 	SelectedReason  string
 	Candidates      []targetCandidate
 	ProjectMatches  []string
@@ -125,7 +126,7 @@ func (a *App) resolveTargetReport(project string, input invocationInputs, showAl
 	serviceConfig := manifest.Services[input.Service]
 	manifestTarget := manifest.DefaultTarget
 	defaults := defaultsTarget()
-	target := model.TargetConfig{
+	target := targetmodel.TargetConfig{
 		Mode:             firstNonEmpty(inputMode(input), decision.SelectedContext.Mode, manifestTarget.Mode),
 		DirectURL:        firstNonEmpty(input.DirectURL, decision.SelectedContext.DirectURL, manifestTarget.DirectURL),
 		RegistryAddress:  firstNonEmpty(input.RegistryAddress, decision.SelectedContext.RegistryAddress, manifestTarget.RegistryAddress),
@@ -139,9 +140,9 @@ func (a *App) resolveTargetReport(project string, input invocationInputs, showAl
 	if target.Mode == "" {
 		switch {
 		case target.DirectURL != "":
-			target.Mode = model.ModeDirect
+			target.Mode = targetmodel.ModeDirect
 		case target.RegistryAddress != "":
-			target.Mode = model.ModeRegistry
+			target.Mode = targetmodel.ModeRegistry
 		}
 	}
 	if target.Mode == "" {
@@ -188,11 +189,11 @@ func printTargetReport(out io.Writer, report targetReport) error {
 		return err
 	}
 	switch report.Target.Mode {
-	case model.ModeDirect:
+	case targetmodel.ModeDirect:
 		if _, err := fmt.Fprintf(out, "direct url:        %s\n", emptyFallback(report.Target.DirectURL, "(not set)")); err != nil {
 			return err
 		}
-	case model.ModeRegistry:
+	case targetmodel.ModeRegistry:
 		if _, err := fmt.Fprintf(out, "registry:          %s://%s\n", emptyFallback(report.Target.RegistryProtocol, "(not set)"), emptyFallback(report.Target.RegistryAddress, "(not set)")); err != nil {
 			return err
 		}
@@ -233,11 +234,11 @@ func printTargetReport(out io.Writer, report targetReport) error {
 			if _, err := fmt.Fprintf(out, "%s %s [%s]\n", marker, candidate.Name, strings.Join(candidate.Roles, ", ")); err != nil {
 				return err
 			}
-			if candidate.Target.Mode == model.ModeDirect {
+			if candidate.Target.Mode == targetmodel.ModeDirect {
 				if _, err := fmt.Fprintf(out, "  direct url: %s\n", emptyFallback(candidate.Target.DirectURL, "(not set)")); err != nil {
 					return err
 				}
-			} else if candidate.Target.Mode == model.ModeRegistry {
+			} else if candidate.Target.Mode == targetmodel.ModeRegistry {
 				if _, err := fmt.Fprintf(out, "  registry:   %s://%s\n", emptyFallback(candidate.Target.RegistryProtocol, "(not set)"), emptyFallback(candidate.Target.RegistryAddress, "(not set)")); err != nil {
 					return err
 				}
@@ -280,25 +281,25 @@ func printTargetReport(out io.Writer, report targetReport) error {
 func resolveTargetProjectRoot(cwd, project string) (string, bool, error) {
 	root := strings.TrimSpace(project)
 	if root != "" {
-		validated, err := facadekit.ValidateProjectDir(root)
+		validated, err := facadeconfig.ValidateProjectDir(root)
 		return validated, true, err
 	}
-	if abs, err := facadekit.ResolveProjectRoot(cwd, nil); err == nil {
+	if abs, err := facadeconfig.ResolveProjectRoot(cwd, nil); err == nil {
 		return abs, true, nil
 	}
-	if abs, err := facadekit.ValidateProjectDir(cwd); err == nil {
+	if abs, err := facadeconfig.ValidateProjectDir(cwd); err == nil {
 		return abs, true, nil
 	}
 	return "", false, nil
 }
 
-func resolveContextDecision(store model.ContextStore, explicitContextName, manifestContextName, projectRoot string) (contextDecision, error) {
+func resolveContextDecision(store targetmodel.ContextStore, explicitContextName, manifestContextName, projectRoot string) (contextDecision, error) {
 	decision := contextDecision{}
 	candidateMap := map[string]*targetCandidate{}
-	addCandidate := func(name, role string, ctx model.Context) {
+	addCandidate := func(name, role string, ctx targetmodel.Context) {
 		entry, ok := candidateMap[name]
 		if !ok {
-			target := model.TargetConfig{
+			target := targetmodel.TargetConfig{
 				Mode:             ctx.Mode,
 				DirectURL:        ctx.DirectURL,
 				RegistryAddress:  ctx.RegistryAddress,
@@ -385,11 +386,11 @@ func resolveContextDecision(store model.ContextStore, explicitContextName, manif
 
 type namedContext struct {
 	Name    string
-	Context model.Context
+	Context targetmodel.Context
 	Weight  int
 }
 
-func collectProjectContextMatches(contexts map[string]model.Context, projectRoot string) []namedContext {
+func collectProjectContextMatches(contexts map[string]targetmodel.Context, projectRoot string) []namedContext {
 	projectRoot, err := filepath.Abs(projectRoot)
 	if err != nil {
 		projectRoot = filepath.Clean(projectRoot)
@@ -435,7 +436,7 @@ func projectSelectionReason(matches []namedContext, projectRoot string) string {
 	return fmt.Sprintf("selected project-scoped context %q because it is the most specific projectRoot match for %s", matches[0].Name, projectRoot)
 }
 
-func buildTargetExplanation(input invocationInputs, manifest model.Manifest, decision contextDecision, target model.TargetConfig) []string {
+func buildTargetExplanation(input invocationInputs, manifest targetmodel.Manifest, decision contextDecision, target targetmodel.TargetConfig) []string {
 	lines := make([]string, 0, 4)
 	if decision.SelectedName != "" {
 		lines = append(lines, decision.SelectedReason)
@@ -485,18 +486,18 @@ func collectTargetOverrides(input invocationInputs) []string {
 	return out
 }
 
-func describeResolvedTarget(target model.TargetConfig) string {
+func describeResolvedTarget(target targetmodel.TargetConfig) string {
 	switch target.Mode {
-	case model.ModeDirect:
+	case targetmodel.ModeDirect:
 		return fmt.Sprintf("direct target %s", emptyFallback(target.DirectURL, "(not set)"))
-	case model.ModeRegistry:
+	case targetmodel.ModeRegistry:
 		return fmt.Sprintf("registry target %s://%s", emptyFallback(target.RegistryProtocol, "(not set)"), emptyFallback(target.RegistryAddress, "(not set)"))
 	default:
 		return "an unresolved target"
 	}
 }
 
-func buildTargetLayers(input invocationInputs, decision contextDecision, serviceConfig model.ServiceConfig, manifestTarget, defaults, final model.TargetConfig) []targetLayer {
+func buildTargetLayers(input invocationInputs, decision contextDecision, serviceConfig targetmodel.ServiceConfig, manifestTarget, defaults, final targetmodel.TargetConfig) []targetLayer {
 	layers := make([]targetLayer, 0, 6)
 	if explicit := targetConfigFromInput(input); hasVisibleTargetFields(explicit) {
 		layers = append(layers, targetLayer{
@@ -507,7 +508,7 @@ func buildTargetLayers(input invocationInputs, decision contextDecision, service
 		})
 	}
 	if strings.TrimSpace(serviceConfig.UniqueID) != "" {
-		serviceLayer := model.TargetConfig{UniqueID: serviceConfig.UniqueID}
+		serviceLayer := targetmodel.TargetConfig{UniqueID: serviceConfig.UniqueID}
 		layers = append(layers, targetLayer{
 			Name:          "manifest.service",
 			Kind:          "service-config",
@@ -547,8 +548,8 @@ func buildTargetLayers(input invocationInputs, decision contextDecision, service
 	return layers
 }
 
-func targetConfigFromInput(input invocationInputs) model.TargetConfig {
-	return model.TargetConfig{
+func targetConfigFromInput(input invocationInputs) targetmodel.TargetConfig {
+	return targetmodel.TargetConfig{
 		Mode:             inputMode(input),
 		DirectURL:        input.DirectURL,
 		RegistryAddress:  input.RegistryAddress,
@@ -561,8 +562,8 @@ func targetConfigFromInput(input invocationInputs) model.TargetConfig {
 	}
 }
 
-func targetConfigFromContext(ctx model.Context) model.TargetConfig {
-	return model.TargetConfig{
+func targetConfigFromContext(ctx targetmodel.Context) targetmodel.TargetConfig {
+	return targetmodel.TargetConfig{
 		Mode:             ctx.Mode,
 		DirectURL:        ctx.DirectURL,
 		RegistryAddress:  ctx.RegistryAddress,
@@ -575,11 +576,11 @@ func targetConfigFromContext(ctx model.Context) model.TargetConfig {
 	}
 }
 
-func hasVisibleTargetFields(target model.TargetConfig) bool {
+func hasVisibleTargetFields(target targetmodel.TargetConfig) bool {
 	return len(targetFieldNames(target)) > 0
 }
 
-func targetFieldNames(target model.TargetConfig) []string {
+func targetFieldNames(target targetmodel.TargetConfig) []string {
 	fields := make([]string, 0, 8)
 	if strings.TrimSpace(target.Mode) != "" {
 		fields = append(fields, "mode")
@@ -611,7 +612,7 @@ func targetFieldNames(target model.TargetConfig) []string {
 	return fields
 }
 
-func printIndentedTarget(out io.Writer, indent string, target model.TargetConfig) error {
+func printIndentedTarget(out io.Writer, indent string, target targetmodel.TargetConfig) error {
 	if strings.TrimSpace(target.Mode) != "" {
 		if _, err := fmt.Fprintf(out, "%smode: %s\n", indent, target.Mode); err != nil {
 			return err

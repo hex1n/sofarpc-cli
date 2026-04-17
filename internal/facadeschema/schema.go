@@ -1,4 +1,4 @@
-package facadekit
+package facadeschema
 
 import (
 	"fmt"
@@ -107,6 +107,10 @@ func BuildMethodSchema(registry Registry, service, method string, preferredParam
 		File:    serviceInfo.File,
 		Method:  result,
 	}, nil
+}
+
+func BuildMethodSchemaResult(registry Registry, serviceInfo SemanticClassInfo, methodInfo SemanticMethodInfo, markers []string) MethodSchemaResult {
+	return buildMethodSchemaResult(registry, serviceInfo, methodInfo, markers)
 }
 
 func buildMethodSchemaResult(registry Registry, serviceInfo SemanticClassInfo, methodInfo SemanticMethodInfo, markers []string) MethodSchemaResult {
