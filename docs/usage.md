@@ -39,7 +39,7 @@ Current runtime features:
 - `internal/config`: local config and manifest persistence
 - `internal/runtime`: runtime selection, daemon pool, source resolution, diagnostics
 - `runtime-worker-java`: Java worker runtime
-- `internal/rpctest`: Go implementation of detect-config, schema/index generation, and case replay
+- `internal/facadekit`: Go implementation of project discovery, schema/index generation, and saved-call replay
 - `spoon-indexer-java`: Spoon-based facade indexer
 - `skills/`: Claude Code skills bundled with the CLI (currently `call-rpc`)
 
@@ -123,7 +123,7 @@ sofarpc skills where                    # show source / target paths
 sofarpc skills list                     # list bundled skills
 ```
 
-The skill does not bootstrap projects, build indexes, or run cases.
+The skill does not bootstrap projects, run facade discovery, build indexes, or replay saved calls.
 Use CLI facade subcommands directly when needed.
 
 ### Typical invocation

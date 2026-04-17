@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 import (
 	"fmt"
@@ -24,7 +24,7 @@ type StatePaths struct {
 	StateDir    string
 	ConfigPath  string
 	IndexDir    string
-	CasesDir    string
+	ReplayDir   string
 }
 
 func (l Layout) Label() string {
@@ -98,8 +98,8 @@ func EffectiveIndexDir(projectRoot string) string {
 	return filepath.Join(EffectiveStateDir(projectRoot), "index")
 }
 
-func EffectiveCasesDir(projectRoot string) string {
-	return filepath.Join(EffectiveStateDir(projectRoot), "cases")
+func EffectiveReplayDir(projectRoot string) string {
+	return filepath.Join(EffectiveStateDir(projectRoot), "replays")
 }
 
 func InspectState(projectRoot string) StatePaths {
@@ -111,7 +111,7 @@ func InspectState(projectRoot string) StatePaths {
 		StateDir:    stateDir,
 		ConfigPath:  configPath,
 		IndexDir:    filepath.Join(stateDir, "index"),
-		CasesDir:    filepath.Join(stateDir, "cases"),
+		ReplayDir:   filepath.Join(stateDir, "replays"),
 	}
 }
 

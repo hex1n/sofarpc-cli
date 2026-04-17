@@ -9,8 +9,9 @@ import (
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/config"
+	"github.com/hex1n/sofarpc-cli/internal/facadekit"
 	"github.com/hex1n/sofarpc-cli/internal/model"
-	"github.com/hex1n/sofarpc-cli/internal/rpctest"
+	"github.com/hex1n/sofarpc-cli/internal/projectscan"
 )
 
 type invocationInputs struct {
@@ -33,6 +34,7 @@ type invocationInputs struct {
 	SofaRPCVersion   string
 	JavaBin          string
 	RuntimeJar       string
+	RefreshContract  bool
 }
 
 type resolvedInvocation struct {
@@ -98,7 +100,7 @@ func (a *App) resolveInvocation(input invocationInputs) (resolvedInvocation, err
 	if !json.Valid([]byte(argsJSON)) {
 		return resolvedInvocation{}, fmt.Errorf("--args must be valid JSON")
 	}
-	stubPaths, err := resolveStubPaths(a.Cwd, manifestPath, manifest.StubPaths, input.StubPathCSV)
+	stubPaths, err := resolveStubPaths(a.Cwd, manifestPath, manifest.StubPaths, input.StubPathCSV, serviceName)
 	if err != nil {
 		return resolvedInvocation{}, err
 	}
@@ -177,7 +179,7 @@ func resolveActiveContext(store model.ContextStore, explicitContextName, manifes
 	return "", model.Context{}
 }
 
-func resolveStubPaths(cwd, manifestPath string, manifestPaths []string, rawCSV string) ([]string, error) {
+func resolveStubPaths(cwd, manifestPath string, manifestPaths []string, rawCSV, service string) ([]string, error) {
 	var candidates []string
 	switch {
 	case strings.TrimSpace(rawCSV) != "":
@@ -186,7 +188,7 @@ func resolveStubPaths(cwd, manifestPath string, manifestPaths []string, rawCSV s
 		candidates = manifestPaths
 	}
 	if len(candidates) == 0 {
-		autoCandidates, err := autoResolveStubPaths(cwd, manifestPath)
+		autoCandidates, err := autoResolveStubPaths(cwd, manifestPath, service)
 		if err != nil {
 			return nil, nil
 		}
@@ -264,13 +266,20 @@ func isUnderPath(path, root string) bool {
 	return relative == "." || (!strings.HasPrefix(relative, "..") && relative != "")
 }
 
-func autoResolveStubPaths(cwd, manifestPath string) ([]string, error) {
-	projectRoot := resolveProjectRootForAutoStub(cwd, manifestPath)
-	cfg, err := rpctest.LoadConfig(projectRoot, true)
+func autoResolveStubPaths(cwd, manifestPath, service string) ([]string, error) {
+	projectStart := resolveProjectRootForAutoStub(cwd, manifestPath)
+	layout, err := projectscan.DiscoverProject(projectStart)
+	if err == nil {
+		paths := discoverStubPathsFromModules(layout.Root, narrowedModules(layout.Root, service, layout.FacadeModules))
+		if len(paths) > 0 {
+			return normalizeStubPaths(paths)
+		}
+	}
+	cfg, err := facadekit.LoadConfig(projectStart, true)
 	if err != nil {
 		return nil, nil
 	}
-	paths := discoverStubPathsFromConfig(projectRoot, cfg)
+	paths := discoverStubPathsFromConfig(projectStart, cfg)
 	return normalizeStubPaths(paths)
 }
 
@@ -282,18 +291,19 @@ func resolveProjectRootForAutoStub(cwd, manifestPath string) string {
 	return base
 }
 
-func discoverStubPathsFromConfig(projectRoot string, cfg rpctest.Config) []string {
+func discoverStubPathsFromConfig(projectRoot string, cfg facadekit.Config) []string {
+	return discoverStubPathsFromModules(projectRoot, cfg.FacadeModules)
+}
+
+func discoverStubPathsFromModules(projectRoot string, modules []projectscan.FacadeModule) []string {
 	seen := map[string]struct{}{}
-	for _, module := range cfg.FacadeModules {
-		if module.JarGlob != "" {
-			for _, path := range resolveFacadeGlob(projectRoot, module.JarGlob) {
-				seen[filepath.Clean(path)] = struct{}{}
-			}
+	for _, module := range modules {
+		artifacts, err := projectscan.DiscoverArtifacts(projectRoot, module)
+		if err != nil {
+			continue
 		}
-		if module.DepsDir != "" {
-			for _, path := range resolveFacadeDeps(projectRoot, module.DepsDir) {
-				seen[filepath.Clean(path)] = struct{}{}
-			}
+		for _, path := range append(artifacts.PrimaryJars, artifacts.DependencyJars...) {
+			seen[filepath.Clean(path)] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -301,6 +311,17 @@ func discoverStubPathsFromConfig(projectRoot string, cfg rpctest.Config) []strin
 		out = append(out, item)
 	}
 	return out
+}
+
+func narrowedModules(projectRoot, service string, modules []projectscan.FacadeModule) []projectscan.FacadeModule {
+	if len(modules) == 0 || strings.TrimSpace(service) == "" {
+		return modules
+	}
+	match, err := projectscan.MatchService(projectRoot, service, modules)
+	if err != nil {
+		return modules
+	}
+	return []projectscan.FacadeModule{match.Module}
 }
 
 func normalizeStubPaths(paths []string) ([]string, error) {
@@ -322,38 +343,4 @@ func normalizeStubPaths(paths []string) ([]string, error) {
 	}
 	sort.Strings(normalized)
 	return normalized, nil
-}
-
-func resolveFacadeGlob(projectRoot, pattern string) []string {
-	patternPath := pattern
-	if !filepath.IsAbs(patternPath) {
-		patternPath = filepath.Join(projectRoot, patternPath)
-	}
-	matches, err := filepath.Glob(patternPath)
-	if err != nil {
-		return nil
-	}
-	return matches
-}
-
-func resolveFacadeDeps(projectRoot, depsDir string) []string {
-	root := depsDir
-	if !filepath.IsAbs(root) {
-		root = filepath.Join(projectRoot, depsDir)
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-	var jarFiles []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if !strings.HasSuffix(strings.ToLower(entry.Name()), ".jar") {
-			continue
-		}
-		jarFiles = append(jarFiles, filepath.Join(root, entry.Name()))
-	}
-	return jarFiles
 }

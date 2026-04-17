@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 import (
 	"fmt"

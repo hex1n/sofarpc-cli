@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestRunCasesDryRunPrintsCommands(t *testing.T) {
+func TestReplayCallsDryRunPrintsCommands(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "proj")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("MkdirAll root: %v", err)
@@ -20,17 +20,17 @@ func TestRunCasesDryRunPrintsCommands(t *testing.T) {
 	if err := SaveJSON(ConfigPath(root), cfg); err != nil {
 		t.Fatalf("SaveJSON config: %v", err)
 	}
-	casesDir := EffectiveCasesDir(root)
-	if err := os.MkdirAll(casesDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll cases: %v", err)
+	replayDir := EffectiveReplayDir(root)
+	if err := os.MkdirAll(replayDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll replays: %v", err)
 	}
 	payload := map[string]any{
 		"service": "com.example.UserFacade",
 		"method":  "getUser",
-		"cases": []map[string]any{
+		"calls": []map[string]any{
 			{
 				"name":        "happy",
-				"context":     "from-case",
+				"context":     "from-replay",
 				"payloadMode": "generic",
 				"params": []map[string]any{
 					{"id": 1},
@@ -38,18 +38,18 @@ func TestRunCasesDryRunPrintsCommands(t *testing.T) {
 			},
 		},
 	}
-	if err := SaveJSON(filepath.Join(casesDir, "UserFacade_getUser.json"), payload); err != nil {
-		t.Fatalf("SaveJSON case: %v", err)
+	if err := SaveJSON(filepath.Join(replayDir, "UserFacade_getUser.json"), payload); err != nil {
+		t.Fatalf("SaveJSON replay: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := RunCases(root, RunCasesOptions{
+	err := ReplayCalls(root, ReplayOptions{
 		Filter:          "UserFacade",
 		ContextOverride: "from-override",
 		DryRun:          true,
 	}, &stdout, &stderr)
 	if err != nil {
-		t.Fatalf("RunCases error = %v", err)
+		t.Fatalf("ReplayCalls error = %v", err)
 	}
 
 	out := stdout.String()
@@ -74,7 +74,7 @@ func TestRunCasesDryRunPrintsCommands(t *testing.T) {
 	}
 }
 
-func TestRunCasesSavesResultsAndReturnsSilentErrorOnRPCFail(t *testing.T) {
+func TestReplayCallsSavesResultsAndReturnsSilentErrorOnRPCFail(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "proj")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("MkdirAll root: %v", err)
@@ -86,29 +86,29 @@ func TestRunCasesSavesResultsAndReturnsSilentErrorOnRPCFail(t *testing.T) {
 	if err := SaveJSON(ConfigPath(root), cfg); err != nil {
 		t.Fatalf("SaveJSON config: %v", err)
 	}
-	casesDir := EffectiveCasesDir(root)
-	if err := os.MkdirAll(casesDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll cases: %v", err)
+	replayDir := EffectiveReplayDir(root)
+	if err := os.MkdirAll(replayDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll replays: %v", err)
 	}
-	if err := SaveJSON(filepath.Join(casesDir, "UserFacade_getUser.json"), map[string]any{
+	if err := SaveJSON(filepath.Join(replayDir, "UserFacade_getUser.json"), map[string]any{
 		"service": "com.example.UserFacade",
 		"method":  "getUser",
-		"cases": []map[string]any{
+		"calls": []map[string]any{
 			{
 				"name":   "rpc_fail",
 				"params": []map[string]any{{"id": 1}},
 			},
 		},
 	}); err != nil {
-		t.Fatalf("SaveJSON case: %v", err)
+		t.Fatalf("SaveJSON replay: %v", err)
 	}
 
-	originalRunner := runCasesCommand
-	defer func() { runCasesCommand = originalRunner }()
+	originalRunner := runReplayCommand
+	defer func() { runReplayCommand = originalRunner }()
 
 	var seenBin, seenCwd, tempPath string
 	var seenArgs []string
-	runCasesCommand = func(bin string, args []string, cwd string) (int, string, string, error) {
+	runReplayCommand = func(bin string, args []string, cwd string) (int, string, string, error) {
 		seenBin = bin
 		seenArgs = append([]string{}, args...)
 		seenCwd = cwd
@@ -133,9 +133,9 @@ func TestRunCasesSavesResultsAndReturnsSilentErrorOnRPCFail(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := RunCases(root, RunCasesOptions{Save: true}, &stdout, &stderr)
+	err := ReplayCalls(root, ReplayOptions{Save: true}, &stdout, &stderr)
 	if err == nil {
-		t.Fatal("RunCases error = nil, want silent rpc-fail exit")
+		t.Fatal("ReplayCalls error = nil, want silent rpc-fail exit")
 	}
 	silent, ok := err.(interface{ Silent() bool })
 	if !ok || !silent.Silent() {
@@ -156,7 +156,7 @@ func TestRunCasesSavesResultsAndReturnsSilentErrorOnRPCFail(t *testing.T) {
 	if _, statErr := os.Stat(tempPath); !os.IsNotExist(statErr) {
 		t.Fatalf("temp payload still exists: %v", statErr)
 	}
-	runFile := filepath.Join(casesDir, "_runs", "UserFacade_getUser__rpc_fail.json")
+	runFile := filepath.Join(replayDir, "_runs", "UserFacade_getUser__rpc_fail.json")
 	body, err := os.ReadFile(runFile)
 	if err != nil {
 		t.Fatalf("ReadFile saved run: %v", err)

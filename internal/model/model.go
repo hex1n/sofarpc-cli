@@ -102,6 +102,9 @@ type DiagnosticInfo struct {
 	ResolvedTarget   string `json:"resolvedTarget,omitempty"`
 	InvokeStyle      string `json:"invokeStyle,omitempty"`
 	PayloadMode      string `json:"payloadMode,omitempty"`
+	ContractSource   string `json:"contractSource,omitempty"`
+	ContractCacheHit bool   `json:"contractCacheHit,omitempty"`
+	WorkerClasspath  string `json:"workerClasspath,omitempty"`
 	RuntimeVersion   string `json:"runtimeVersion,omitempty"`
 	RuntimeJar       string `json:"runtimeJar,omitempty"`
 	JavaBin          string `json:"javaBin,omitempty"`
@@ -180,6 +183,9 @@ type DoctorReport struct {
 type RuntimeSnapshot struct {
 	SofaRPCVersion       string `json:"sofaRpcVersion,omitempty"`
 	SofaRPCVersionSource string `json:"sofaRpcVersionSource,omitempty"`
+	ContractSource       string `json:"contractSource,omitempty"`
+	ContractCacheHit     bool   `json:"contractCacheHit,omitempty"`
+	WorkerClasspath      string `json:"workerClasspath,omitempty"`
 	RuntimeJar           string `json:"runtimeJar,omitempty"`
 	JavaBin              string `json:"javaBin,omitempty"`
 	JavaMajor            string `json:"javaMajor,omitempty"`

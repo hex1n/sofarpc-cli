@@ -7,62 +7,62 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hex1n/sofarpc-cli/internal/rpctest"
+	"github.com/hex1n/sofarpc-cli/internal/facadekit"
 )
 
-// runRPCTest dispatches `sofarpc facade <sub>`.
-// facade-testing workflow from the Go CLI, while delegating only Java source
-// semantics to the Spoon indexer.
+// runFacade dispatches `sofarpc facade <sub>`.
+// It drives facade support workflows from the Go CLI, while delegating only
+// Java source semantics to the Spoon indexer.
 //
 // Subcommands:
 //
-//	init            alias for `sofarpc skills init`
-//	detect-config   writes <project>/.sofarpc/config.json
-//	build-index     refreshes facade index/
-//	schema          prints generated DTO schema for a facade method
-//	run-cases       replays saved cases under cases/
-//	where           prints resolved tools dir + project state paths
-func (a *App) runRPCTest(args []string) error {
+//	init      alias for `sofarpc skills init`
+//	discover  writes <project>/.sofarpc/config.json
+//	index     refreshes facade index/
+//	schema    prints generated DTO schema for a facade method
+//	replay    replays saved calls under replays/
+//	status    prints resolved tools dir + project state paths
+func (a *App) runFacade(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("facade subcommand required: init, detect-config, build-index, schema, run-cases, where")
+		return fmt.Errorf("facade subcommand required: init, discover, index, schema, replay, status")
 	}
-	switch normalizeRPCTestSubcommand(args[0]) {
+	switch normalizeFacadeSubcommand(args[0]) {
 	case "init":
 		return a.runSkillsInit(args[1:])
-	case "detect-config":
-		return a.runRPCTestDetectConfig(args[1:])
-	case "build-index":
-		return a.runRPCTestBuildIndex(args[1:])
+	case "discover":
+		return a.runFacadeDiscover(args[1:])
+	case "index":
+		return a.runFacadeIndex(args[1:])
 	case "schema":
-		return a.runRPCTestSchema(args[1:])
-	case "run-cases":
-		return a.runRPCTestRunCases(args[1:])
-	case "where":
-		return a.runRPCTestWhere(args[1:])
+		return a.runFacadeSchema(args[1:])
+	case "replay":
+		return a.runFacadeReplay(args[1:])
+	case "status":
+		return a.runFacadeStatus(args[1:])
 	default:
 		return fmt.Errorf("unknown facade subcommand %q", args[0])
 	}
 }
 
-func normalizeRPCTestSubcommand(command string) string {
+func normalizeFacadeSubcommand(command string) string {
 	return strings.ToLower(strings.TrimSpace(command))
 }
 
-func (a *App) runRPCTestWhere(args []string) error {
-	project, passthrough, err := splitRPCTestProjectArg(args)
+func (a *App) runFacadeStatus(args []string) error {
+	project, passthrough, err := splitFacadeProjectArg(args)
 	if err != nil {
 		return err
 	}
 	if len(passthrough) > 0 {
-		return fmt.Errorf("unknown facade where args: %s", strings.Join(passthrough, " "))
+		return fmt.Errorf("unknown facade status args: %s", strings.Join(passthrough, " "))
 	}
-	skillDir, err := rpcTestSkillDir()
-	projectRoot, errProject := a.resolveRPCTestProjectRoot(project)
+	skillDir, err := facadeSkillDir()
+	projectRoot, errProject := a.resolveFacadeProjectRoot(project)
 	if errProject != nil {
 		return errProject
 	}
-	state := rpctest.InspectState(projectRoot)
-	cfg, cfgErr := rpctest.LoadConfig(projectRoot, true)
+	state := facadekit.InspectState(projectRoot)
+	cfg, cfgErr := facadekit.LoadConfig(projectRoot, true)
 
 	fmt.Fprintf(a.Stdout, "skill dir:      %s\n", fmtPathOrErr(skillDir, err))
 	fmt.Fprintf(a.Stdout, "project root:   %s\n", fmtPathOrErr(projectRoot, errProject))
@@ -70,7 +70,7 @@ func (a *App) runRPCTestWhere(args []string) error {
 	fmt.Fprintf(a.Stdout, "state dir:      %s\n", state.StateDir)
 	fmt.Fprintf(a.Stdout, "config path:    %s\n", formatPathStatus(state.ConfigPath))
 	fmt.Fprintf(a.Stdout, "index dir:      %s\n", formatPathStatus(state.IndexDir))
-	fmt.Fprintf(a.Stdout, "cases dir:      %s\n", formatPathStatus(state.CasesDir))
+	fmt.Fprintf(a.Stdout, "replay dir:     %s\n", formatPathStatus(state.ReplayDir))
 	if cfgErr == nil {
 		fmt.Fprintf(a.Stdout, "sofarpcBin:     %s\n", emptyFallback(cfg.SofaRPCBin, "(not set)"))
 		fmt.Fprintf(a.Stdout, "defaultContext: %s\n", emptyFallback(cfg.DefaultContext, "(not set)"))
@@ -81,7 +81,7 @@ func (a *App) runRPCTestWhere(args []string) error {
 	return nil
 }
 
-func splitRPCTestProjectArg(args []string) (string, []string, error) {
+func splitFacadeProjectArg(args []string) (string, []string, error) {
 	var project string
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -116,12 +116,12 @@ func splitRPCTestProjectArg(args []string) (string, []string, error) {
 	return project, rest, nil
 }
 
-func (a *App) resolveRPCTestProjectRoot(project string) (string, error) {
+func (a *App) resolveFacadeProjectRoot(project string) (string, error) {
 	root := strings.TrimSpace(project)
 	if root != "" {
-		return rpctest.ValidateProjectDir(root)
+		return facadekit.ValidateProjectDir(root)
 	}
-	return rpctest.ResolveProjectRoot(a.Cwd, a.Stderr)
+	return facadekit.ResolveProjectRoot(a.Cwd, a.Stderr)
 }
 
 func formatPathStatus(path string) string {
@@ -142,8 +142,8 @@ func emptyFallback(value, fallback string) string {
 	return value
 }
 
-func (a *App) runRPCTestDetectConfig(args []string) error {
-	flags := failFlagSet("facade detect-config")
+func (a *App) runFacadeDiscover(args []string) error {
+	flags := failFlagSet("facade discover")
 	var (
 		project string
 		write   bool
@@ -154,16 +154,16 @@ func (a *App) runRPCTestDetectConfig(args []string) error {
 		return err
 	}
 	if len(flags.Args()) > 0 {
-		return fmt.Errorf("unknown facade detect-config args: %s", strings.Join(flags.Args(), " "))
+		return fmt.Errorf("unknown facade discover args: %s", strings.Join(flags.Args(), " "))
 	}
-	projectRoot, err := a.resolveRPCTestProjectRoot(project)
+	projectRoot, err := a.resolveFacadeProjectRoot(project)
 	if err != nil {
 		return err
 	}
-	return rpctest.DetectConfig(projectRoot, write, a.Stdout, a.Stderr)
+	return facadekit.DetectConfig(projectRoot, write, a.Stdout, a.Stderr)
 }
 
-func (a *App) runRPCTestSchema(args []string) error {
+func (a *App) runFacadeSchema(args []string) error {
 	flags := failFlagSet("facade schema")
 	var (
 		project string
@@ -184,23 +184,23 @@ func (a *App) runRPCTestSchema(args []string) error {
 	if err != nil {
 		return err
 	}
-	projectRoot, err := a.resolveRPCTestProjectRoot(project)
+	projectRoot, err := a.resolveFacadeProjectRoot(project)
 	if err != nil {
 		return err
 	}
-	cfg, err := rpctest.LoadConfig(projectRoot, false)
+	cfg, err := facadekit.LoadConfig(projectRoot, false)
 	if err != nil {
 		return err
 	}
-	sourceRoots := rpctest.IterSourceRoots(cfg, projectRoot)
+	sourceRoots := facadekit.IterSourceRoots(cfg, projectRoot)
 	if len(sourceRoots) == 0 {
 		return fmt.Errorf("config has no facade source roots")
 	}
-	registry, err := rpctest.LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
+	registry, err := facadekit.LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
 	if err != nil {
 		return err
 	}
-	schema, err := rpctest.BuildMethodSchema(registry, service, method, parseCSV(types), cfg.RequiredMarkers)
+	schema, err := facadekit.BuildMethodSchema(registry, service, method, parseCSV(types), cfg.RequiredMarkers)
 	if err != nil {
 		return err
 	}
@@ -208,10 +208,10 @@ func (a *App) runRPCTestSchema(args []string) error {
 	if asJSON {
 		return printJSON(a.Stdout, schema)
 	}
-	return printRPCTestingSchema(a.Stdout, schema)
+	return printFacadeSchema(a.Stdout, schema)
 }
 
-func printRPCTestingSchema(out io.Writer, schema rpctest.MethodSchemaEnvelope) error {
+func printFacadeSchema(out io.Writer, schema facadekit.MethodSchemaEnvelope) error {
 	method := schema.Method
 	if _, err := fmt.Fprintf(out, "service: %s\n", schema.Service); err != nil {
 		return err
@@ -273,27 +273,27 @@ func printRPCTestingSchema(out io.Writer, schema rpctest.MethodSchemaEnvelope) e
 	return nil
 }
 
-func (a *App) runRPCTestBuildIndex(args []string) error {
-	project, passthrough, err := splitRPCTestProjectArg(args)
+func (a *App) runFacadeIndex(args []string) error {
+	project, passthrough, err := splitFacadeProjectArg(args)
 	if err != nil {
 		return err
 	}
 	if len(passthrough) > 0 {
-		return fmt.Errorf("unknown facade build-index args: %s", strings.Join(passthrough, " "))
+		return fmt.Errorf("unknown facade index args: %s", strings.Join(passthrough, " "))
 	}
-	projectRoot, err := a.resolveRPCTestProjectRoot(project)
+	projectRoot, err := a.resolveFacadeProjectRoot(project)
 	if err != nil {
 		return err
 	}
-	cfg, err := rpctest.LoadConfig(projectRoot, false)
+	cfg, err := facadekit.LoadConfig(projectRoot, false)
 	if err != nil {
 		return err
 	}
-	return rpctest.RefreshIndex(projectRoot, cfg, a.Stdout, a.Stderr)
+	return facadekit.RefreshIndex(projectRoot, cfg, a.Stdout, a.Stderr)
 }
 
-func (a *App) runRPCTestRunCases(args []string) error {
-	flags := failFlagSet("facade run-cases")
+func (a *App) runFacadeReplay(args []string) error {
+	flags := failFlagSet("facade replay")
 	var (
 		project      string
 		filter       string
@@ -309,18 +309,18 @@ func (a *App) runRPCTestRunCases(args []string) error {
 	flags.StringVar(&contextName, "context", "", "override sofarpc context for every case")
 	flags.StringVar(&sofarpcBin, "sofarpc", "", "override sofarpc binary (else from config.json)")
 	flags.BoolVar(&dryRun, "dry-run", false, "print commands, do not execute")
-	flags.BoolVar(&save, "save", false, "save per-case results under cases/_runs/")
+	flags.BoolVar(&save, "save", false, "save per-call results under replays/_runs/")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if len(flags.Args()) > 0 {
-		return fmt.Errorf("unknown facade run-cases args: %s", strings.Join(flags.Args(), " "))
+		return fmt.Errorf("unknown facade replay args: %s", strings.Join(flags.Args(), " "))
 	}
-	projectRoot, err := a.resolveRPCTestProjectRoot(project)
+	projectRoot, err := a.resolveFacadeProjectRoot(project)
 	if err != nil {
 		return err
 	}
-	return rpctest.RunCases(projectRoot, rpctest.RunCasesOptions{
+	return facadekit.ReplayCalls(projectRoot, facadekit.ReplayOptions{
 		Filter:          filter,
 		OnlyNames:       parseCSV(onlyNamesCSV),
 		ContextOverride: contextName,
@@ -330,11 +330,11 @@ func (a *App) runRPCTestRunCases(args []string) error {
 	}, a.Stdout, a.Stderr)
 }
 
-// rpcTestSkillDir returns the installed call-rpc skill directory. Resolution order:
+// facadeSkillDir returns the installed call-rpc skill directory. Resolution order:
 //  1. ~/.claude/skills/call-rpc/     (current Claude install)
 //  2. ~/.agents/skills/call-rpc/     (current Codex install)
 //  3. <cli-install-root>/skills/call-rpc/ (bundled source fallback)
-func rpcTestSkillDir() (string, error) {
+func facadeSkillDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err == nil {
 		names := bundledSkillNameCandidates(callRPCSkillName)

@@ -25,6 +25,7 @@ func (a *App) runDoctor(args []string) error {
 	flags.StringVar(&input.SofaRPCVersion, "sofa-rpc-version", "", "runtime SOFARPC version")
 	flags.StringVar(&input.JavaBin, "java-bin", "", "java executable")
 	flags.StringVar(&input.RuntimeJar, "runtime-jar", "", "worker runtime jar")
+	flags.BoolVar(&input.RefreshContract, "refresh-contract", false, "bypass local contract cache and re-resolve source/jar metadata")
 	flags.StringVar(&input.Service, "service", "doctor.ProbeService", "optional service marker")
 	flags.StringVar(&input.Method, "method", "doctor", "optional method marker")
 	if err := flags.Parse(args); err != nil {
@@ -33,6 +34,11 @@ func (a *App) runDoctor(args []string) error {
 	input.ArgsJSON = "[]"
 	input.PayloadMode = model.PayloadRaw
 	resolved, err := a.resolveInvocation(input)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	contractSource, contractCacheHit, err := a.applyProjectMethodContract(ctx, &resolved, input.RefreshContract)
 	if err != nil {
 		return err
 	}
@@ -49,6 +55,9 @@ func (a *App) runDoctor(args []string) error {
 		report.Runtime = model.RuntimeSnapshot{
 			SofaRPCVersion:       spec.SofaRPCVersion,
 			SofaRPCVersionSource: resolved.SofaRPCVersionSource,
+			ContractSource:       contractSourceLabel(contractSource),
+			ContractCacheHit:     contractCacheHit,
+			WorkerClasspath:      workerClasspathMode(resolved.StubPaths),
 			RuntimeJar:           spec.RuntimeJar,
 			JavaBin:              spec.JavaBin,
 			JavaMajor:            spec.JavaMajor,
@@ -74,6 +83,9 @@ func (a *App) runDoctor(args []string) error {
 		report.Runtime = model.RuntimeSnapshot{
 			SofaRPCVersion:       resolved.SofaRPCVersion,
 			SofaRPCVersionSource: resolved.SofaRPCVersionSource,
+			ContractSource:       contractSourceLabel(contractSource),
+			ContractCacheHit:     contractCacheHit,
+			WorkerClasspath:      workerClasspathMode(resolved.StubPaths),
 		}
 		report.Daemon = model.DaemonSnapshot{Ready: false, Error: err.Error()}
 	}

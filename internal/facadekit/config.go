@@ -1,4 +1,4 @@
-package rpctest
+package facadekit
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/hex1n/sofarpc-cli/internal/projectscan"
 )
 
 type Config struct {
@@ -20,13 +22,7 @@ type Config struct {
 	ManifestPath      string         `json:"manifestPath"`
 }
 
-type FacadeModule struct {
-	Name            string `json:"name"`
-	SourceRoot      string `json:"sourceRoot"`
-	MavenModulePath string `json:"mavenModulePath"`
-	JarGlob         string `json:"jarGlob"`
-	DepsDir         string `json:"depsDir"`
-}
+type FacadeModule = projectscan.FacadeModule
 
 func DefaultConfig() Config {
 	mvnCommand := "./mvnw"
@@ -53,7 +49,7 @@ func LoadConfig(projectRoot string, optional bool) (Config, error) {
 			return cfg, nil
 		}
 		return Config{}, fmt.Errorf(
-			"[facade] no config found at %s.\n  Run `sofarpc facade detect-config --write` to generate one at %s.\n  Project root used: %s",
+			"[facade] no config found at %s.\n  Run `sofarpc facade discover --write` to generate one at %s.\n  Project root used: %s",
 			ConfigPath(projectRoot),
 			ConfigPath(projectRoot),
 			projectRoot,

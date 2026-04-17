@@ -41,6 +41,7 @@ func (a *App) runCall(args []string) error {
 	flags.StringVar(&input.SofaRPCVersion, "sofa-rpc-version", "", "runtime SOFARPC version")
 	flags.StringVar(&input.JavaBin, "java-bin", "", "java executable")
 	flags.StringVar(&input.RuntimeJar, "runtime-jar", "", "worker runtime jar")
+	flags.BoolVar(&input.RefreshContract, "refresh-contract", false, "bypass local contract cache and re-resolve source/jar metadata")
 	flags.BoolVar(&fullResponse, "full-response", false, "print full structured response")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -66,13 +67,17 @@ func (a *App) runCall(args []string) error {
 	if err != nil {
 		return err
 	}
+	ctx := context.Background()
+	contractSource, contractCacheHit, err := a.applyProjectMethodContract(ctx, &resolved, input.RefreshContract)
+	if err != nil {
+		return err
+	}
 	spec, err := a.Runtime.ResolveSpec(resolved.JavaBin, resolved.RuntimeJar, resolved.SofaRPCVersion, resolved.StubPaths)
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
-	if len(spec.StubPaths) > 0 && (len(resolved.Request.ParamTypes) == 0 || resolved.Request.PayloadMode == model.PayloadSchema) {
-		schema, describeErr := a.Runtime.DescribeService(ctx, spec, resolved.Request.Service, runtime.DescribeOptions{})
+	if contractSource == "" && (len(resolved.Request.ParamTypes) == 0 || resolved.Request.PayloadMode == model.PayloadSchema) {
+		schema, describeErr := a.resolveServiceSchema(ctx, resolved.ManifestPath, spec, resolved.Request.Service, runtime.DescribeOptions{NoCache: input.RefreshContract})
 		if describeErr != nil {
 			return fmt.Errorf("infer paramTypes via describe: %w", describeErr)
 		}
@@ -90,8 +95,10 @@ func (a *App) runCall(args []string) error {
 	if resolved.Request.PayloadMode == model.PayloadSchema && len(resolved.Request.ParamTypeSignatures) == 0 {
 		resolved.Request.ParamTypeSignatures = append([]string{}, resolved.Request.ParamTypes...)
 	}
-	if wrapped, ok := maybeWrapSingleArg(resolved.Request.Args, len(resolved.Request.ParamTypes)); ok {
-		resolved.Request.Args = wrapped
+	if contractSource == "" {
+		if wrapped, ok := maybeWrapSingleArg(resolved.Request.Args, len(resolved.Request.ParamTypes)); ok {
+			resolved.Request.Args = wrapped
+		}
 	}
 	resolved.Request.RequestID = randomID()
 	metadata, err := a.Runtime.EnsureDaemon(ctx, spec)
@@ -107,6 +114,9 @@ func (a *App) runCall(args []string) error {
 	response.Diagnostics.JavaBin = spec.JavaBin
 	response.Diagnostics.JavaMajor = spec.JavaMajor
 	response.Diagnostics.DaemonKey = spec.DaemonKey
+	response.Diagnostics.ContractSource = contractSourceLabel(contractSource)
+	response.Diagnostics.ContractCacheHit = contractCacheHit
+	response.Diagnostics.WorkerClasspath = workerClasspathMode(resolved.StubPaths)
 	if !response.OK {
 		if err := printJSON(a.Stderr, response); err != nil {
 			return err
