@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,24 +32,36 @@ func ProbeTarget(target model.TargetConfig) model.ProbeResult {
 }
 
 func ScanStubWarnings(stubPaths []string) []string {
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)guava-`),
-		regexp.MustCompile(`(?i)logback-`),
-		regexp.MustCompile(`(?i)slf4j-`),
-		regexp.MustCompile(`(?i)jackson-`),
-		regexp.MustCompile(`(?i)spring-boot`),
+	patterns := map[string]*regexp.Regexp{
+		"guava":       regexp.MustCompile(`(?i)guava-`),
+		"logback":     regexp.MustCompile(`(?i)logback-`),
+		"slf4j":       regexp.MustCompile(`(?i)slf4j-`),
+		"jackson":     regexp.MustCompile(`(?i)jackson-`),
+		"spring-boot": regexp.MustCompile(`(?i)spring-boot`),
 	}
-	var warnings []string
+	total := 0
+	families := map[string]struct{}{}
 	for _, path := range stubPaths {
 		base := filepath.Base(path)
-		for _, pattern := range patterns {
+		for family, pattern := range patterns {
 			if pattern.MatchString(base) {
-				warnings = append(warnings, fmt.Sprintf("high-risk classpath entry: %s", base))
+				total++
+				families[family] = struct{}{}
 				break
 			}
 		}
 	}
-	return warnings
+	if total == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(families))
+	for family := range families {
+		names = append(names, family)
+	}
+	sort.Strings(names)
+	return []string{
+		fmt.Sprintf("high-risk classpath entries detected (%d across %s)", total, strings.Join(names, ", ")),
+	}
 }
 
 func configuredTarget(target model.TargetConfig) string {

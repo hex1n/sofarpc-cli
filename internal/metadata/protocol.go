@@ -41,6 +41,7 @@ type resolveResponse struct {
 	Error    string                  `json:"error,omitempty"`
 	Source   string                  `json:"source,omitempty"`
 	CacheHit bool                    `json:"cacheHit,omitempty"`
+	Notes    []string                `json:"notes,omitempty"`
 	Schema   *model.ServiceSchema    `json:"schema,omitempty"`
 	Method   *contract.ProjectMethod `json:"method,omitempty"`
 	Metadata *daemonMetadata         `json:"metadata,omitempty"`

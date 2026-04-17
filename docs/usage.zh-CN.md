@@ -16,6 +16,7 @@
 - `call`
 - `describe`
 - `doctor`
+- `target`
 - `context`
 - `manifest`
 - `runtime`
@@ -123,6 +124,17 @@ sofarpc skills list                     # 列出仓库内 skill
 
 skill 不做项目接入、索引构建或用例回放；这些仍然是 `sofarpc facade ...` 的范围。
 
+facade 辅助命令：
+
+```powershell
+sofarpc facade discover --write
+sofarpc facade index
+sofarpc facade services
+sofarpc facade schema com.example.UserFacade.getUser
+sofarpc facade replay
+sofarpc facade status
+```
+
 ### 常见调用
 
 ```powershell
@@ -181,6 +193,15 @@ go run ./cmd/sofarpc context show dev-direct
 
 ```powershell
 go run ./cmd/sofarpc doctor --context dev-direct
+```
+
+如果只想简洁地看当前实际解析到的 target，而不关心 runtime/daemon 细节：
+
+```powershell
+go run ./cmd/sofarpc target
+go run ./cmd/sofarpc target --service com.example.OrderFacade
+go run ./cmd/sofarpc target --project C:\code\project-a
+go run ./cmd/sofarpc target --project C:\code\project-a --all --explain
 ```
 
 `doctor` 会输出：
@@ -283,7 +304,7 @@ sequenceDiagram
 
 ### 简单请求 — 基础类型参数
 
-一个 `Long` 入参，位置参数形式。配置了 stub jar 时 CLI 会反射推断 `--types`，因此下面这样就够了：
+一个 `Long` 入参，位置参数形式。只要本地项目或本地产物能解析到方法元信息，CLI 会自动推断 `--types`，因此下面这样就够了：
 
 ```powershell
 sofarpc call com.example.UserService.getUser "[123]"
@@ -295,7 +316,7 @@ sofarpc call com.example.UserService.getUser "[123]"
 sofarpc call com.example.UserService.getUser "123"
 ```
 
-显式 flag 等价写法 — 没有 stub jar 或想指定具体重载时更稳：
+显式 flag 等价写法 — 本地解析不到元信息或想锁定具体重载时更稳：
 
 ```powershell
 sofarpc call `
@@ -307,9 +328,18 @@ sofarpc call `
 
 成功时 CLI 只打印解码后的 `result`。加 `--full-response` 可以看到诊断信息（runtime jar、daemon key、Java 版本等）。
 
-### 复杂请求 — DTO 入参 + stub jar
+### 复杂请求 — 已发现项目中的 DTO 入参
 
-worker classpath 必须能解析业务 DTO，通过 `--stub-path` 把业务的 API jar 提供出来；body 用 `-d @file` 直接从文件读，避开 shell 转义：
+在正常的项目 checkout 里，优先走默认路径：让 `sofarpc` 自动从项目源码或本地产物解析 contract。这样命令更短，也不会把一长串业务 jar 暴露到主命令面里：
+
+```powershell
+sofarpc call `
+  --service com.example.OrderService `
+  --method createOrder `
+  -d @order.json
+```
+
+只有在本地 contract 解析失败、并且你明确在排查 classpath 问题时，才回退到手工 `--stub-path`：
 
 ```powershell
 sofarpc call `
@@ -333,7 +363,7 @@ sofarpc call `
 - `--timeout-ms 15000` — 调大调用超时
 - `--full-response` — 同时打印 runtime/daemon 诊断信息
 
-如果同一组服务要反复调用，把服务元信息和 stub path 写进 `sofarpc.manifest.json`（见 [Manifest](#manifest)），这样位置参数形式就足够了。
+如果同一组服务要反复调用，把服务元信息写进 `sofarpc.manifest.json`（见 [Manifest](#manifest)），这样位置参数形式就足够了。手工 `stubPaths` 只建议作为 fallback 持久化，而不是默认路径。
 
 ### Body 输入形式
 
@@ -383,19 +413,35 @@ sequenceDiagram
     end
 ```
 
-反射 stub jar 里的接口，打印方法签名。schema 结果由 runtime daemon 进程内存缓存，共享给使用同一 `daemon-key` 的 CLI 进程（按 service 与 classpath digest 缓存）。
+默认情况下，`describe` 会先从本地项目源码或本地产物解析 schema。手工 `--stub-path` 只用于本地解析失败后的 fallback 调试。schema 结果保存在 runtime daemon 的进程内存里，共享给使用同一 `daemon-key` 的 CLI 进程。
+
+```powershell
+sofarpc describe com.example.OrderService
+```
+
+flag 必须放在位置参数 FQCN 前面（Go 的 flag 解析器遇到第一个非 flag 参数就会停止）。
+
+绕开缓存并重新解析本地 contract 元信息：
+
+```powershell
+sofarpc describe --refresh com.example.OrderService
+```
+
+如果你是在显式排查 classpath/stub 问题，仍然可以手工传：
 
 ```powershell
 sofarpc describe --stub-path target\order-api.jar com.example.OrderService
 ```
 
-flag 必须放在位置参数 FQCN 前面（Go 的 flag 解析器遇到第一个非 flag 参数就会停止）。
-
-绕开缓存重新跑 worker：
+如果你想把 schema 和 fallback 诊断信息一起拿到，可以加
+`--full-response`：
 
 ```powershell
-sofarpc describe --refresh --stub-path target\order-api.jar com.example.OrderService
+sofarpc describe --full-response com.example.OrderService
 ```
+
+这样默认输出仍然保持紧凑，只有在显式需要时才会看到
+`contractSource`、`contractCacheHit`、`contractNotes` 以及 worker runtime 细节。
 
 schema 结果不会落盘，不写本地文件，只保留在 daemon 进程内存中；daemon 退出即失效。
 daemon key 也使用同一份 stub 内容摘要；stub jar 内容变化会触发新的 `daemon-key`，自动拉起新 worker，避免复用旧进程。新 worker 启动后，同一 runtime profile 下的历史 loopback worker 会被自动停止，减少旧进程留存。
@@ -433,6 +479,8 @@ daemon key 也使用同一份 stub 内容摘要；stub jar 内容变化会触发
 
 ### Stub path 优先级
 
+`stubPaths` 现在是 fallback/debug 机制，不再是默认 happy path。默认用户视角只需要关注 `contractSource` 与 `workerClasspath`，而不是具体 jar 列表。
+
 - `--stub-path`
 - `manifest.stubPaths`
 - 若两者都未配置，自动从 `<project>/.sofarpc/config.json` 的 `jarGlob` / `depsDir` 发现 jar
@@ -441,7 +489,7 @@ daemon key 也使用同一份 stub 内容摘要；stub jar 内容变化会触发
 
 - `--service`、`--method`、`--types`、`--payload-mode`
 - `manifest.services` 中匹配的条目
-- 对 `--types`：上述都没给且配了 stub jar 时，CLI 会反射接口并取该方法的 `paramTypes`（遇到重载歧义会报错 —— 显式传 `--types` 指定一个）
+- 对 `--types`：上述都没给且本地元信息可解析时，CLI 会自动推断该方法的 `paramTypes`；遇到重载歧义时显式传 `--types`
 
 注意事项：
 

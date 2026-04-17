@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/contract"
@@ -61,7 +62,7 @@ func TestApplyProjectMethodContractSetsGenericAndClearsStubPaths(t *testing.T) {
 		StubPaths: []string{"a.jar", "b.jar"},
 	}
 
-	source, cacheHit, err := app.applyProjectMethodContract(context.Background(), &resolved, false)
+	source, cacheHit, notes, err := app.applyProjectMethodContract(context.Background(), &resolved, false)
 	if err != nil {
 		t.Fatalf("applyProjectMethodContract() error = %v", err)
 	}
@@ -70,6 +71,9 @@ func TestApplyProjectMethodContractSetsGenericAndClearsStubPaths(t *testing.T) {
 	}
 	if cacheHit {
 		t.Fatal("cacheHit should be false without metadata daemon")
+	}
+	if len(notes) != 0 {
+		t.Fatalf("notes = %v, want none", notes)
 	}
 	if resolved.Request.PayloadMode != model.PayloadGeneric {
 		t.Fatalf("PayloadMode = %q", resolved.Request.PayloadMode)
@@ -123,7 +127,7 @@ func TestApplyProjectMethodContractFallsBackToArtifacts(t *testing.T) {
 		StubPaths: []string{"api.jar"},
 	}
 
-	source, cacheHit, err := app.applyProjectMethodContract(context.Background(), &resolved, false)
+	source, cacheHit, notes, err := app.applyProjectMethodContract(context.Background(), &resolved, false)
 	if err != nil {
 		t.Fatalf("applyProjectMethodContract() error = %v", err)
 	}
@@ -132,6 +136,9 @@ func TestApplyProjectMethodContractFallsBackToArtifacts(t *testing.T) {
 	}
 	if cacheHit {
 		t.Fatal("cacheHit should be false without metadata daemon")
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "project-source: source miss") {
+		t.Fatalf("notes = %v", notes)
 	}
 	if resolved.Request.PayloadMode != model.PayloadGeneric || len(resolved.StubPaths) != 0 {
 		t.Fatalf("resolved = %+v", resolved)

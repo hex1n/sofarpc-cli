@@ -48,7 +48,7 @@ func classpathContentKeyWithPolicy(stubPaths []string, allowMissing bool) (strin
 		digest, err := fileDigest(path)
 		if err != nil {
 			if !allowMissing {
-				return "", fmt.Errorf("digest stub %s: %w", path, err)
+				return "", fmt.Errorf("digest stub %s: %w", filepath.Base(path), err)
 			}
 			digest = "missing"
 		}

@@ -73,6 +73,8 @@ func (a *App) Run(args []string) error {
 		return a.runDescribe(args[1:])
 	case "doctor":
 		return a.runDoctor(args[1:])
+	case "target":
+		return a.runTarget(args[1:])
 	case "daemon":
 		return a.runDaemon(args[1:])
 	case "runtime":
@@ -101,14 +103,15 @@ sofarpc — SOFARPC CLI
 
 Commands:
   call      invoke a SOFARPC service through the Java runtime daemon
-  describe  print a service method schema from project source or stub jars
+  describe  print a service method schema from project source or local artifacts
   doctor    show resolved config, runtime, target reachability, and daemon state
+  target    show the currently resolved direct/registry target
   daemon    inspect and manage local Java runtime daemons
   runtime   install and inspect locally cached Java worker runtimes
   context   manage reusable target contexts
   manifest  initialize or generate a project manifest
   skills    install or inspect bundled agent skills (call-rpc, ...)
-	  facade   bootstrap + drive facade invocation helpers (init/discover/index/schema/replay/status)
+	  facade   bootstrap + drive facade invocation helpers (init/discover/index/services/schema/replay/status)
 `))
 }
 

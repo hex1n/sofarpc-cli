@@ -106,3 +106,50 @@ func TestSwitchIndexDirReplacesIndexDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadServiceSummaryUsesCachedIndexWhenCompatible(t *testing.T) {
+	root := t.TempDir()
+	cfg := DefaultConfig()
+	cfg.InterfaceSuffixes = []string{"Facade"}
+	cfg.FacadeModules = []FacadeModule{
+		{Name: "fixture-facade", SourceRoot: "src/main/java"},
+	}
+	if err := SaveJSON(ConfigPath(root), cfg); err != nil {
+		t.Fatalf("SaveJSON(config) error = %v", err)
+	}
+	cached := IndexSummary{
+		SourceRoots:       []string{"src/main/java"},
+		InterfaceSuffixes: []string{"Facade"},
+		Services: []IndexSummaryService{
+			{Service: "com.example.UserFacade", Methods: []string{"getUser"}},
+		},
+	}
+	if err := SaveJSON(filepath.Join(EffectiveIndexDir(root), "_index.json"), cached); err != nil {
+		t.Fatalf("SaveJSON(index) error = %v", err)
+	}
+
+	summary, err := LoadServiceSummary(root)
+	if err != nil {
+		t.Fatalf("LoadServiceSummary error = %v", err)
+	}
+	if len(summary.Services) != 1 || summary.Services[0].Service != "com.example.UserFacade" {
+		t.Fatalf("summary.Services = %+v", summary.Services)
+	}
+}
+
+func TestIndexSummaryCompatibleRejectsConfigDrift(t *testing.T) {
+	root := t.TempDir()
+	cfg := DefaultConfig()
+	cfg.InterfaceSuffixes = []string{"Facade"}
+	cfg.FacadeModules = []FacadeModule{
+		{Name: "fixture-facade", SourceRoot: "src/main/java"},
+	}
+	summary := IndexSummary{
+		SourceRoots:       []string{"src/main/java"},
+		InterfaceSuffixes: []string{"Api"},
+		Services:          []IndexSummaryService{{Service: "com.example.UserFacade"}},
+	}
+	if indexSummaryCompatible(summary, cfg, root) {
+		t.Fatal("expected summary compatibility check to fail when interface suffixes drift")
+	}
+}
