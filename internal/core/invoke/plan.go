@@ -70,7 +70,7 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 		return Plan{}, err
 	}
 
-	args, argSource, err := resolveArgs(in.Args, resolved.Method.ParamTypes, facade)
+	args, argSource, err := resolveArgs(in.Service, in.Method, in.Args, resolved.Method.ParamTypes, facade)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -98,7 +98,12 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 //
 // argSource is "user" or "skeleton" so the MCP output can say which path
 // was taken without re-deriving it.
-func resolveArgs(userArgs []any, paramTypes []string, facade contract.Store) ([]any, string, error) {
+//
+// service/method are threaded through only to pre-fill the hint's
+// NextArgs on arity errors — passing empty strings would give the agent
+// a hint it can't follow, so an empty value is dropped from NextArgs
+// rather than emitted.
+func resolveArgs(service, method string, userArgs []any, paramTypes []string, facade contract.Store) ([]any, string, error) {
 	if userArgs == nil {
 		skeleton := contract.BuildSkeleton(paramTypes, facade)
 		return decodeSkeleton(skeleton), "skeleton", nil
@@ -107,10 +112,27 @@ func resolveArgs(userArgs []any, paramTypes []string, facade contract.Store) ([]
 		return nil, "", errcode.New(errcode.ArgsInvalid, "invoke",
 			fmt.Sprintf("arity mismatch: got %d args, method takes %d", len(userArgs), len(paramTypes))).
 			WithHint("sofarpc_describe",
-				map[string]any{"service": "", "method": ""},
+				describeHintArgs(service, method),
 				"describe the method to see its paramTypes")
 	}
 	return userArgs, "user", nil
+}
+
+// describeHintArgs builds the NextArgs payload for a describe hint. We
+// only include fields that are non-empty — a hint the agent can actually
+// run — and return nil when there is nothing useful to pre-fill.
+func describeHintArgs(service, method string) map[string]any {
+	if service == "" && method == "" {
+		return nil
+	}
+	args := map[string]any{}
+	if service != "" {
+		args["service"] = service
+	}
+	if method != "" {
+		args["method"] = method
+	}
+	return args
 }
 
 // decodeSkeleton converts []json.RawMessage into []any so the MCP

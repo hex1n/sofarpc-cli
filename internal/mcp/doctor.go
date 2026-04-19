@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
@@ -46,14 +47,20 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 		Name:        "sofarpc_doctor",
 		Description: "Run end-to-end self-diagnosis: config resolution, indexer status, worker pool health, target reachability. The catch-all fallback when other tools return an unresolved error.",
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DoctorInput) (*sdkmcp.CallToolResult, DoctorOutput, error) {
-		out := DoctorOutput{
-			Checks: []DoctorCheck{
-				checkTarget(in, sources),
-				checkIndexer(holder.Get(), canReindex),
-				checkWorker(ctx, client),
-				checkSessions(sessions),
-			},
-		}
+		// Run the four checks in parallel. Worst-case serial latency is
+		// probe-timeout (1s default) + ping-timeout (2s) + fast checks —
+		// which stacks on top of the agent's request budget. The checks
+		// are independent (no shared mutable state), so fanning out
+		// collapses that to the slowest single check.
+		checks := make([]DoctorCheck, 4)
+		var wg sync.WaitGroup
+		wg.Add(4)
+		go func() { defer wg.Done(); checks[0] = checkTarget(in, sources) }()
+		go func() { defer wg.Done(); checks[1] = checkIndexer(holder.Get(), canReindex) }()
+		go func() { defer wg.Done(); checks[2] = checkWorker(ctx, client) }()
+		go func() { defer wg.Done(); checks[3] = checkSessions(sessions) }()
+		wg.Wait()
+		out := DoctorOutput{Checks: checks}
 		out.Ok = allOk(out.Checks)
 		out.Summary = summarizeDoctor(out.Checks)
 
@@ -193,8 +200,24 @@ func checkWorker(ctx context.Context, client *worker.Client) DoctorCheck {
 	return DoctorCheck{
 		Name:   "worker",
 		Ok:     true,
-		Detail: "worker ready",
+		Detail: workerReadyDetail(client),
 	}
+}
+
+// workerReadyDetail composes the Ok-path detail. Surfacing pool
+// size/cap mirrors checkSessions so a multi-profile server can see
+// when LRU is about to start evicting JVMs. Zero cap means unbounded —
+// rendered as a lone size, matching the sessions format.
+func workerReadyDetail(client *worker.Client) string {
+	if client == nil || client.Pool == nil {
+		return "worker ready"
+	}
+	size := client.Pool.Size()
+	capacity := client.Pool.Cap()
+	if capacity <= 0 {
+		return fmt.Sprintf("worker ready; %d worker(s); capacity unbounded", size)
+	}
+	return fmt.Sprintf("worker ready; %d/%d worker(s); LRU evicts on overflow", size, capacity)
 }
 
 // checkSessions reports the session store's current load relative to its

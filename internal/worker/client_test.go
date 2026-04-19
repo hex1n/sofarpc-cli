@@ -137,11 +137,12 @@ func TestClient_WireErrorLifted(t *testing.T) {
 	}
 }
 
-// fakeDyingProcess returns a Process whose server side hangs up after
-// reading exactly one request, simulating a worker that crashed mid-
-// call. The client's Send observes ErrConnClosed, which triggers the
-// Invoke retry path.
-func fakeDyingProcess(t *testing.T, profile Profile) *Process {
+// fakeMidFlightDyingProcess returns a Process whose server side hangs
+// up after reading exactly one request. The client successfully
+// flushes the request, then observes the close while waiting for a
+// response — that's the ErrConnLost / InvocationUncertain path, not a
+// safe-to-retry pre-send close.
+func fakeMidFlightDyingProcess(t *testing.T, profile Profile) *Process {
 	t.Helper()
 	serverSide, clientSide := net.Pipe()
 	go func() {
@@ -156,12 +157,29 @@ func fakeDyingProcess(t *testing.T, profile Profile) *Process {
 	}
 }
 
-func TestClient_RetriesAfterConnClosed(t *testing.T) {
+// fakePreSendDeadProcess returns a Process whose Conn is already
+// closed on arrival. Send's pre-write gate catches this and returns
+// ErrConnClosed before the request hits the wire — safe to retry, and
+// the behaviour the client's self-heal path is designed for.
+func fakePreSendDeadProcess(t *testing.T, profile Profile) *Process {
+	t.Helper()
+	serverSide, clientSide := net.Pipe()
+	serverSide.Close()
+	conn := NewConn(clientSide)
+	conn.Close()
+	return &Process{
+		spec:   Spec{Profile: profile, Jar: "fake", StopGrace: 10 * time.Millisecond},
+		conn:   conn,
+		exited: make(chan struct{}),
+	}
+}
+
+func TestClient_RetriesOnPreSendClose(t *testing.T) {
 	var counter atomic.Int32
 	sp := func(context.Context, Spec) (*Process, error) {
 		n := counter.Add(1)
 		if n == 1 {
-			return fakeDyingProcess(t, fullProfile("x")), nil
+			return fakePreSendDeadProcess(t, fullProfile("x")), nil
 		}
 		proc, _ := fakeProcess(t, fullProfile("x"))
 		return proc, nil
@@ -172,7 +190,7 @@ func TestClient_RetriesAfterConnClosed(t *testing.T) {
 
 	resp, err := c.Invoke(context.Background(), Request{Action: ActionInvoke})
 	if err != nil {
-		t.Fatalf("invoke should self-heal, got error: %v", err)
+		t.Fatalf("invoke should self-heal on a pre-send close, got: %v", err)
 	}
 	if !resp.Ok {
 		t.Fatalf("expected Ok=true after retry, got %+v", resp)
@@ -182,13 +200,35 @@ func TestClient_RetriesAfterConnClosed(t *testing.T) {
 	}
 }
 
+// The mid-flight case MUST NOT retry: the worker may have processed
+// the request before it died, and a silent replay would double-apply
+// a non-idempotent action. The client evicts the dead slot and
+// surfaces InvocationUncertain so the agent can decide.
+func TestClient_MidFlightLossIsUncertainNoRetry(t *testing.T) {
+	var counter atomic.Int32
+	sp := func(context.Context, Spec) (*Process, error) {
+		counter.Add(1)
+		return fakeMidFlightDyingProcess(t, fullProfile("x")), nil
+	}
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	c := &Client{Pool: pool, Profile: fullProfile("x")}
+	defer c.Close(context.Background())
+
+	_, err := c.Invoke(context.Background(), Request{Action: ActionInvoke})
+	assertErrcode(t, err, errcode.InvocationUncertain)
+	if got := counter.Load(); got != 1 {
+		t.Fatalf("spawn count: got %d want 1 (no retry on mid-flight loss)", got)
+	}
+}
+
 func TestClient_RetryExhaustedSurfacesDaemonUnavailable(t *testing.T) {
 	var counter atomic.Int32
 	sp := func(context.Context, Spec) (*Process, error) {
 		counter.Add(1)
-		// Both spawns return dying workers; the retry should give up
-		// and surface DaemonUnavailable rather than loop forever.
-		return fakeDyingProcess(t, fullProfile("x")), nil
+		// Both spawns return pre-send-dead workers, so the retry path
+		// fires but the second attempt also fails. The client must
+		// give up with DaemonUnavailable rather than loop forever.
+		return fakePreSendDeadProcess(t, fullProfile("x")), nil
 	}
 	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
 	c := &Client{Pool: pool, Profile: fullProfile("x")}

@@ -144,6 +144,18 @@ func TestInvoke_ArgsWrongTypeIsErrcode(t *testing.T) {
 	if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
 		t.Fatalf("expected ArgsInvalid, got %+v", out.Error)
 	}
+	// The hint must preserve service/method so the agent can follow it
+	// verbatim — an empty NextArgs would force it to remember the failed
+	// call's inputs, defeating the "follow this" contract.
+	if out.Error.Hint == nil || out.Error.Hint.NextTool != "sofarpc_describe" {
+		t.Fatalf("hint should route to sofarpc_describe, got %+v", out.Error.Hint)
+	}
+	if svc, _ := out.Error.Hint.NextArgs["service"].(string); svc != "com.foo.Svc" {
+		t.Fatalf("hint.NextArgs.service: got %q want com.foo.Svc", svc)
+	}
+	if m, _ := out.Error.Hint.NextArgs["method"].(string); m != "doThing" {
+		t.Fatalf("hint.NextArgs.method: got %q want doThing", m)
+	}
 }
 
 func TestInvoke_ArgsAtFileLoadsJSONArray(t *testing.T) {

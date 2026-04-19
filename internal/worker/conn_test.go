@@ -174,7 +174,10 @@ func TestConn_ContextCancelUnblocksSend(t *testing.T) {
 	}
 }
 
-func TestConn_RemoteCloseUnblocksSend(t *testing.T) {
+// A close observed after Send has already flushed the request is a
+// mid-flight loss: surface ErrConnLost so callers can distinguish
+// "outcome unknown" from "never left the process".
+func TestConn_RemoteCloseMidFlightReturnsErrConnLost(t *testing.T) {
 	fw := startFakeWorker(t, func(Request) (Response, bool) { return Response{}, false })
 
 	c := dial(t, fw.addr())
@@ -192,15 +195,17 @@ func TestConn_RemoteCloseUnblocksSend(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("expected error after remote close, got nil")
+		if !errors.Is(err, ErrConnLost) {
+			t.Fatalf("expected ErrConnLost after remote mid-flight close, got %v", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Send did not unblock after remote close")
 	}
 }
 
-func TestConn_SendAfterCloseFails(t *testing.T) {
+// A Close before any Send takes the pre-write gate and must report
+// ErrConnClosed — the request never hit the wire, so retrying is safe.
+func TestConn_SendAfterCloseReturnsErrConnClosed(t *testing.T) {
 	fw := startFakeWorker(t, func(Request) (Response, bool) { return Response{Ok: true}, true })
 	defer fw.stop()
 
@@ -210,5 +215,8 @@ func TestConn_SendAfterCloseFails(t *testing.T) {
 	_, err := c.Send(context.Background(), Request{Action: ActionInvoke})
 	if !errors.Is(err, ErrConnClosed) {
 		t.Fatalf("expected ErrConnClosed, got %v", err)
+	}
+	if errors.Is(err, ErrConnLost) {
+		t.Fatal("pre-send close should NOT alias to ErrConnLost")
 	}
 }

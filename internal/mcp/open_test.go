@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 	"github.com/hex1n/sofarpc-cli/internal/indexer"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -42,6 +45,27 @@ func TestOpen_SessionIsStoredAndRetrievable(t *testing.T) {
 	}
 	if session.ProjectRoot != dir {
 		t.Fatalf("stored session projectRoot: got %q want %q", session.ProjectRoot, dir)
+	}
+}
+
+func TestOpen_ReindexCapabilityTracksOptions(t *testing.T) {
+	dir := t.TempDir()
+
+	// No reindexer wired → capability is false so the agent skips
+	// refresh=true as a recovery path.
+	out := callOpen(t, Options{}, map[string]any{"cwd": dir})
+	if out.Capabilities.Reindex {
+		t.Fatal("capabilities.reindex should be false when no Reindexer is wired")
+	}
+
+	// With a Reindexer present → capability is true. We don't care what
+	// it would return; the banner only promises a refresh path exists.
+	reindexer := ReindexerFunc(func(context.Context) (contract.Store, error) {
+		return contract.NewInMemoryStore(), nil
+	})
+	out = callOpen(t, Options{Reindexer: reindexer}, map[string]any{"cwd": dir})
+	if !out.Capabilities.Reindex {
+		t.Fatal("capabilities.reindex should be true when a Reindexer is wired")
 	}
 }
 
@@ -103,6 +127,42 @@ func TestOpen_FacadeBannerReflectsLoadedIndex(t *testing.T) {
 	}
 	if !out.Capabilities.FacadeIndex {
 		t.Fatal("capabilities.facadeIndex should be true")
+	}
+}
+
+// summarizeOpen pushes the one "here's how to self-heal" signal we can
+// give the agent without waiting for a describe failure. Four cases
+// cover the cartesian product of indexed × reindex-capable.
+func TestSummarizeOpen_SuggestsRefreshOnlyWhenActionable(t *testing.T) {
+	cases := []struct {
+		name        string
+		indexed     bool
+		canReindex  bool
+		wantSuggest bool
+	}{
+		{"empty facade + reindexer wired → suggest", false, true, true},
+		{"empty facade + no reindexer → stay quiet (nothing the agent can do)", false, false, false},
+		{"populated facade + reindexer → no suggestion needed", true, true, false},
+		{"populated facade + no reindexer → no suggestion needed", true, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := OpenOutput{
+				SessionID:   "ws_x",
+				ProjectRoot: "/p",
+				Target:      target.Config{Mode: target.ModeDirect, DirectURL: "bolt://h:12200"},
+				Facade:      FacadeState{Indexed: tc.indexed},
+				Capabilities: Capabilities{
+					FacadeIndex: tc.indexed,
+					Reindex:     tc.canReindex,
+				},
+			}
+			text := summarizeOpen(out)
+			gotSuggest := strings.Contains(text, "refresh=true")
+			if gotSuggest != tc.wantSuggest {
+				t.Fatalf("suggest=%v want %v; summary=%q", gotSuggest, tc.wantSuggest, text)
+			}
+		})
 	}
 }
 

@@ -45,6 +45,12 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 			}, out, nil
 		}
 
+		if client == nil {
+			werr := workerNotWiredError("replay")
+			out := ReplayOutput{Plan: plan, Source: source, Error: werr}
+			return errorReplayResult(werr), out, nil
+		}
+
 		resp, werr := client.Invoke(ctx, planToWireRequest(*plan))
 		if werr != nil {
 			out := ReplayOutput{Plan: plan, Source: source, Error: asErrcodeError(werr)}

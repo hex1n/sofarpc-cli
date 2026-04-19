@@ -113,6 +113,21 @@ func TestBuildPlan_ArgsArityMismatch(t *testing.T) {
 		target.Sources{},
 	)
 	assertCode(t, err, errcode.ArgsInvalid)
+	// Hint must carry the real service/method so the agent can follow
+	// it directly — empty values would leave describe unable to run.
+	var ecerr *errcode.Error
+	if !errors.As(err, &ecerr) {
+		t.Fatalf("err is not *errcode.Error: %T", err)
+	}
+	if ecerr.Hint == nil || ecerr.Hint.NextTool != "sofarpc_describe" {
+		t.Fatalf("hint should route to sofarpc_describe, got %+v", ecerr.Hint)
+	}
+	if svc, _ := ecerr.Hint.NextArgs["service"].(string); svc != "com.foo.Svc" {
+		t.Fatalf("hint.NextArgs.service: got %q want com.foo.Svc", svc)
+	}
+	if m, _ := ecerr.Hint.NextArgs["method"].(string); m != "doThing" {
+		t.Fatalf("hint.NextArgs.method: got %q want doThing", m)
+	}
 }
 
 func TestBuildPlan_TargetMissing(t *testing.T) {

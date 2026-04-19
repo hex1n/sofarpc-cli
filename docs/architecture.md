@@ -23,42 +23,107 @@ It describes the target state — not a migration path (that lives in
 
 ## 2. Process topology
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│ agent (Claude / other MCP client)                              │
-└────────────────────────┬───────────────────────────────────────┘
-                         │ stdio / JSON-RPC (MCP)
-                         ▼
-┌────────────────────────────────────────────────────────────────┐
-│ cmd/sofarpc-mcp (Go)                                           │
-│   ├── mcp.Server (6 tools)                                     │
-│   ├── core.contract  (javatype.Classify + @type injection)     │
-│   ├── core.target    (input > mcp-env > defaults precedence)   │
-│   ├── indexer        ← spawns Java indexer on demand           │
-│   └── worker         ← keeps Java worker pool by profile       │
-└───────────┬────────────────────────────────┬───────────────────┘
-            │ stdin/stdout JSON              │ loopback TCP
-            │ (exit on EOF)                  │ (line-delimited JSON)
-            ▼                                ▼
-   ┌────────────────────┐           ┌────────────────────────────┐
-   │ spoon-indexer-java │           │ runtime-worker-java        │
-   │ (ephemeral)        │           │ (long-running, per profile)│
-   │ Spoon source AST → │           │ SOFARPC generic invoke     │
-   │ shard JSON index   │           │ + URLClassLoader per-req   │
-   └────────────────────┘           └────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph ClientSide["Client"]
+        Agent([Agent / MCP Client])
+    end
+
+    subgraph MCPLayer["MCP layer · internal/mcp"]
+        Server[server.go · 6 tools]
+        Holder[facadeHolder · RWMutex store]
+        Sessions[SessionStore · TTL + LRU]
+    end
+
+    subgraph Core["Core · internal/core"]
+        ContractR[contract/resolve · overload pick]
+        ContractS[contract/skeleton · generics + arrays + wildcards]
+        TargetR[target · precedence chain]
+        TargetP[target/probe · reachability]
+        Plan[invoke/plan · BuildPlan]
+    end
+
+    subgraph Sub["Subsystems"]
+        Worker[worker · JVM pool + wire]
+        Indexer[indexer · Spoon driver + shards]
+        Errcode[errcode · codes + Hint]
+        Javatype[javatype · role + placeholder]
+    end
+
+    subgraph External["Out-of-process"]
+        SpoonJar[(spoon-indexer.jar · one-shot)]
+        WorkerJar[(runtime-worker.jar · long-running)]
+        IndexFS[(.sofarpc/index · manifest + shards)]
+        SOFARPC[(SOFARPC service)]
+    end
+
+    Agent -- stdio MCP --> Server
+    Server --> Holder & Sessions
+    Server --> ContractR & Plan & TargetR
+    ContractR --> ContractS --> Javatype
+    Plan --> ContractR & TargetR
+    Plan -- failure --> Errcode
+    TargetR --> TargetP
+    Server --> Worker --> WorkerJar -- Hessian2 generic --> SOFARPC
+    Server -. refresh=true .-> Indexer --> SpoonJar --> IndexFS
+    Holder -. startup load / hot-swap .-> IndexFS
 ```
 
 - The Go process is the only component the user or agent sees.
 - The indexer runs **once per source change**, reads `.java`, writes JSON.
   No daemon mode — simpler to reason about, trivially restartable.
-- The worker runs **once per JVM profile**, serves many requests.
-  Restarting it is rare and controlled.
+- The worker runs **once per JVM profile**, serves many requests. Workers
+  with idle TTL expired or outside the pool cap are evicted (LRU). Restarting
+  is rare and controlled.
+- `facadeHolder` is the single hot-swap point for the on-disk index: loaded
+  once at startup, atomically replaced by `sofarpc_describe refresh=true`,
+  and read via `RWMutex` so in-flight reads never race the swap.
 
 ## 3. MCP tool surface (6 tools)
 
 Tool names intentionally share the `sofarpc_` prefix so agent tool lists
 cluster. All inputs and outputs are JSON. Every tool can return an error
 object with `code` and `nextStep`.
+
+Runtime sequence for the canonical happy path (open → describe → invoke):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Agent
+    participant S as sofarpc_* tools
+    participant H as facadeHolder
+    participant C as contract.Resolve+Skeleton
+    participant P as worker.Pool
+    participant W as runtime-worker.jar
+    participant R as SOFARPC service
+
+    A->>S: sofarpc_open {projectRoot}
+    S->>H: load .sofarpc/index
+    S-->>A: projectRoot / target / facade / sessionId
+
+    A->>S: sofarpc_describe {service, method}
+    S->>H: Get()
+    H->>C: ResolveMethod + BuildSkeleton
+    Note over C: generic expansion:<br/>List<Order> → [{@type:Order,...}]<br/>Map<K,V> → {"<key>": <V skel>}<br/>Foo[] → [<Foo skel>]<br/>? extends T → T
+    S-->>A: overloads + fill-and-send skeleton
+
+    A->>S: sofarpc_invoke {service, method, args, target}
+    S->>C: BuildPlan (target + overload + args)
+    S->>P: Get(profile)
+    alt profile not in pool
+        P->>W: spawn JVM
+        W-->>P: READY (loopback TCP)
+    else hit
+        P-->>S: reuse existing worker
+    end
+    S->>W: Request{requestId, service, method, args}
+    W->>R: Hessian2 generic invoke
+    R-->>W: response bytes
+    W-->>S: Response{requestId, ok, result}
+    S-->>A: ok / result / diagnostics
+    Note over S: session.UpdatePlan(plan)<br/>future replay without rebuilding args
+```
 
 ### 3.1 `sofarpc_open`
 
@@ -159,6 +224,32 @@ error without a `nextStep`.
 
 ## 4. Error taxonomy
 
+Every failure carries a stable `code` plus a `nextTool` hint whose `NextArgs`
+are pre-filled with the inputs the next tool needs (`service`, `method`,
+`sessionId`, `refresh=true`, …). The agent follows the hint verbatim —
+no prose parsing, no re-deriving context from the failed call.
+
+```mermaid
+flowchart LR
+    E1[describe: FacadeNotConfigured<br/>hint → describe refresh=true<br/>NextArgs: service, method]
+    E2[describe refresh: IndexerFailed<br/>hint → doctor]
+    E3[invoke: TargetMissing<br/>hint → target explain=true]
+    E4[invoke: ArgsInvalid arity<br/>hint → describe<br/>NextArgs: service, method]
+    E5[invoke: DaemonUnavailable<br/>hint → doctor]
+    E6[invoke: WorkerError / InvocationUncertain<br/>hint → doctor]
+    E7[replay: session not found<br/>hint → open]
+
+    E1 -->|refresh=true| E2
+    E1 -.on success.-> OK1[skeleton in hand]
+    E2 --> Dr((sofarpc_doctor))
+    E3 --> Tg((sofarpc_target))
+    E4 --> De((sofarpc_describe))
+    E5 --> Dr
+    E6 --> Dr
+    E7 --> Op((sofarpc_open))
+    Dr -->|per-check nextStep<br/>target / indexer / worker / sessions| Fix[agent or human fixes the specific check]
+```
+
 All tool errors use `internal/errcode.Error`:
 
 ```json
@@ -177,11 +268,31 @@ Codes are grouped by phase:
 | input     | `input.service-missing`, `input.method-missing`, `input.args-invalid` |
 | target    | `target.missing`, `target.unreachable` |
 | contract  | `contract.method-ambiguous`, `contract.method-not-found`, `contract.unresolvable` |
-| workspace | `workspace.facade-not-configured`, `workspace.index-stale` |
-| runtime   | `runtime.daemon-unavailable`, `runtime.worker-error`, `runtime.deserialize-failed`, `runtime.timeout`, `runtime.rejected` |
+| workspace | `workspace.facade-not-configured`, `workspace.index-stale`, `workspace.indexer-failed` |
+| runtime   | `runtime.daemon-unavailable`, `runtime.worker-error`, `runtime.deserialize-failed`, `runtime.timeout`, `runtime.rejected`, `runtime.invocation-uncertain` |
 
 New codes are added by extending `errcode.Code` constants; every new code
 MUST define a default `nextStep` at the emitting site.
+
+Two codes in the runtime group deserve a note on semantics:
+
+- `workspace.index-stale` vs `workspace.indexer-failed`: the former means
+  the existing index is out of date and another `describe refresh=true`
+  is likely to fix it; the latter means the indexer subprocess itself
+  failed (jar path wrong, Spoon crash, timeout) and the agent should
+  route the human at `sofarpc_doctor` rather than retry refresh.
+- `runtime.invocation-uncertain` is surfaced when the worker connection
+  dropped *after* the request was flushed but before a response came
+  back. The outcome is unobservable from the client side, so the agent
+  MUST NOT retry automatically — replay is only safe when the called
+  method is idempotent. Distinct from `runtime.daemon-unavailable`
+  (worker never reached) and `runtime.worker-error` (worker answered
+  with a typed failure).
+
+The capability banner returned by `sofarpc_open.capabilities` exposes
+`facadeIndex`, `worker`, and `reindex` so the agent can skip recovery
+paths that aren't wired in the current process — e.g. don't suggest
+`describe refresh=true` when `reindex=false`.
 
 ## 5. Contract resolution
 
@@ -344,19 +455,23 @@ SOFARPC_TIMEOUT_MS=3000
 cmd/
   sofarpc-mcp/             single MCP entrypoint
 internal/
-  errcode/                 stable error codes + NextStep hints   (done)
-  javatype/                Role + Placeholder                     (done)
+  errcode/                 stable error codes + NextStep hints
+  javatype/                Role + Placeholder (type classifier)
   facadesemantic/          shapes mirroring indexer output
   mcp/                     tool registration + handler shims
+                           (server, open, target, describe, invoke,
+                            replay, doctor, reindex, facade, session)
   core/
-    contract/              Classify + @type injection
-    target/                precedence chain + probe
-    describe/              overload pick + skeleton render
-    invoke/                plan + execute
-  indexer/                 Java indexer subprocess driver
-  worker/                  Java worker pool + classloader cache
-spoon-indexer-java/        Spoon-based source analyzer
-runtime-worker-java/       SOFARPC bridge (bolt + hessian2)
+    contract/              Resolve + BuildSkeleton (generic expansion,
+                           array wrap, wildcard bounds, cycle guard)
+    target/                precedence chain + reachability probe
+    invoke/                BuildPlan (target + contract + args)
+    workspace/             project root resolution
+  indexer/                 Spoon subprocess driver + shard reader
+  worker/                  JVM pool (TTL + LRU) + wire protocol
+                           (client, pool, process, conn, profile, wire)
+spoon-indexer-java/        Spoon-based source analyzer (not in this repo yet)
+runtime-worker-java/       SOFARPC bridge — bolt + hessian2 (not in this repo yet)
 docs/                      this dir
 ```
 
