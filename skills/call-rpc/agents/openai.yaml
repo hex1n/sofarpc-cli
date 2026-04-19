@@ -1,3 +1,0 @@
-interface:
-  display_name: "Call RPC"
-  short_description: "Execute SOFARPC facade calls via `sofarpc call`"

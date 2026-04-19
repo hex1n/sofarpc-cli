@@ -1,0 +1,309 @@
+package worker
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// fakeProcess constructs a Process whose Conn is wired to an in-memory
+// pipe served by a local goroutine. We skip exec.Cmd entirely —
+// process_test.go covers the real subprocess path.
+func fakeProcess(t *testing.T, profile Profile) (*Process, func()) {
+	t.Helper()
+	serverSide, clientSide := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverSide.Close()
+		reader := bufio.NewReader(serverSide)
+		writer := bufio.NewWriter(serverSide)
+		for {
+			line, err := reader.ReadBytes('\n')
+			if len(line) > 0 {
+				var req Request
+				if json.Unmarshal(line, &req) == nil {
+					resp, _ := json.Marshal(Response{RequestID: req.RequestID, Ok: true})
+					writer.Write(resp)
+					writer.WriteByte('\n')
+					writer.Flush()
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// exited starts open so Pool.Get's liveness check sees the fake as
+	// alive. StopGrace is tiny so the bounded waits in Stop return fast
+	// for tests that rely on pool.Close to tear down workers.
+	exited := make(chan struct{})
+	proc := &Process{
+		spec:   Spec{Profile: profile, Jar: "fake", StopGrace: 10 * time.Millisecond},
+		cmd:    nil, // tested path in Stop tolerates nil cmd
+		conn:   NewConn(clientSide),
+		ready:  ReadyMessage{Ready: true, Port: 1, PID: 2},
+		exited: exited,
+	}
+	return proc, func() {
+		// Close exited before Stop so Stop's grace-period waits return
+		// immediately. Guarded so double-close from tests that already
+		// simulated a crash is a no-op.
+		select {
+		case <-exited:
+		default:
+			close(exited)
+		}
+		proc.Stop(context.Background())
+		<-done
+	}
+}
+
+func newFakeSpawner(t *testing.T) (*atomic.Int32, spawner) {
+	var count atomic.Int32
+	return &count, func(ctx context.Context, spec Spec) (*Process, error) {
+		count.Add(1)
+		proc, _ := fakeProcess(t, spec.Profile)
+		return proc, nil
+	}
+}
+
+func fullProfile(tag string) Profile {
+	return Profile{SOFARPCVersion: "5.12.0", RuntimeJarDigest: tag, JavaMajor: 17}
+}
+
+func TestPool_GetReusesSameWorker(t *testing.T) {
+	count, sp := newFakeSpawner(t)
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	defer pool.Close(context.Background())
+
+	ctx := context.Background()
+	a, err := pool.Get(ctx, fullProfile("x"))
+	if err != nil {
+		t.Fatalf("get 1: %v", err)
+	}
+	b, err := pool.Get(ctx, fullProfile("x"))
+	if err != nil {
+		t.Fatalf("get 2: %v", err)
+	}
+	if a != b {
+		t.Fatal("same profile must return the same Process")
+	}
+	if got := count.Load(); got != 1 {
+		t.Fatalf("spawn count: got %d want 1", got)
+	}
+}
+
+func TestPool_ConcurrentGetsShareOneSpawn(t *testing.T) {
+	count, sp := newFakeSpawner(t)
+	// Slow the spawner so the race window is obvious.
+	slow := func(ctx context.Context, spec Spec) (*Process, error) {
+		time.Sleep(20 * time.Millisecond)
+		return sp(ctx, spec)
+	}
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(slow)
+	defer pool.Close(context.Background())
+
+	const n = 16
+	results := make([]*Process, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			p, err := pool.Get(context.Background(), fullProfile("x"))
+			if err != nil {
+				t.Errorf("get %d: %v", i, err)
+				return
+			}
+			results[i] = p
+		}(i)
+	}
+	wg.Wait()
+
+	first := results[0]
+	for i, p := range results {
+		if p != first {
+			t.Fatalf("result %d differed — pool double-spawned", i)
+		}
+	}
+	if got := count.Load(); got != 1 {
+		t.Fatalf("spawn count: got %d want 1 (concurrent Gets must dedupe)", got)
+	}
+}
+
+func TestPool_DifferentProfilesSpawnIndependently(t *testing.T) {
+	count, sp := newFakeSpawner(t)
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	defer pool.Close(context.Background())
+
+	a, err := pool.Get(context.Background(), fullProfile("a"))
+	if err != nil {
+		t.Fatalf("get a: %v", err)
+	}
+	b, err := pool.Get(context.Background(), fullProfile("b"))
+	if err != nil {
+		t.Fatalf("get b: %v", err)
+	}
+	if a == b {
+		t.Fatal("different profiles should give different workers")
+	}
+	if got := count.Load(); got != 2 {
+		t.Fatalf("spawn count: got %d want 2", got)
+	}
+	if pool.Size() != 2 {
+		t.Fatalf("pool Size: got %d want 2", pool.Size())
+	}
+}
+
+func TestPool_GetRejectsEmptyProfile(t *testing.T) {
+	pool := NewPool(Spec{Jar: "fake.jar"})
+	_, err := pool.Get(context.Background(), Profile{})
+	if err == nil {
+		t.Fatal("empty profile should fail")
+	}
+}
+
+func TestPool_GetFailsWhenBaseSpecHasNoJar(t *testing.T) {
+	pool := NewPool(Spec{}).withSpawner(func(context.Context, Spec) (*Process, error) {
+		t.Fatal("spawner should not run when base spec is invalid")
+		return nil, nil
+	})
+	_, err := pool.Get(context.Background(), fullProfile("x"))
+	if err == nil {
+		t.Fatal("missing Jar should fail Get")
+	}
+}
+
+func TestPool_SpawnFailureIsNotCached(t *testing.T) {
+	var attempts atomic.Int32
+	sp := func(context.Context, Spec) (*Process, error) {
+		n := attempts.Add(1)
+		if n == 1 {
+			return nil, errors.New("first attempt fails")
+		}
+		proc, _ := fakeProcess(t, Profile{})
+		return proc, nil
+	}
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	defer pool.Close(context.Background())
+
+	if _, err := pool.Get(context.Background(), fullProfile("x")); err == nil {
+		t.Fatal("first Get should fail")
+	}
+	if _, err := pool.Get(context.Background(), fullProfile("x")); err != nil {
+		t.Fatalf("second Get should succeed after failure cleared: %v", err)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("expected 2 spawn attempts, got %d", got)
+	}
+}
+
+func TestPool_GetRespectsContext(t *testing.T) {
+	block := make(chan struct{})
+	sp := func(ctx context.Context, spec Spec) (*Process, error) {
+		<-block
+		return nil, errors.New("never")
+	}
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	defer func() { close(block); pool.Close(context.Background()) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := pool.Get(ctx, fullProfile("x"))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
+	}
+}
+
+func TestPool_GetReplacesExitedWorker(t *testing.T) {
+	count, sp := newFakeSpawner(t)
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	defer pool.Close(context.Background())
+
+	a, err := pool.Get(context.Background(), fullProfile("x"))
+	if err != nil {
+		t.Fatalf("get 1: %v", err)
+	}
+	// Simulate the worker crashing: close the exit channel so the
+	// pool's next liveness check evicts the cached slot.
+	close(a.exited)
+
+	b, err := pool.Get(context.Background(), fullProfile("x"))
+	if err != nil {
+		t.Fatalf("get 2: %v", err)
+	}
+	if a == b {
+		t.Fatal("Get should respawn after the cached worker exits")
+	}
+	if got := count.Load(); got != 2 {
+		t.Fatalf("spawn count: got %d want 2", got)
+	}
+}
+
+func TestPool_EvictRemovesSlot(t *testing.T) {
+	count, sp := newFakeSpawner(t)
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	defer pool.Close(context.Background())
+
+	if _, err := pool.Get(context.Background(), fullProfile("x")); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if pool.Size() != 1 {
+		t.Fatalf("Size after Get: got %d want 1", pool.Size())
+	}
+	pool.Evict(fullProfile("x"))
+	if pool.Size() != 0 {
+		t.Fatalf("Size after Evict: got %d want 0", pool.Size())
+	}
+	if _, err := pool.Get(context.Background(), fullProfile("x")); err != nil {
+		t.Fatalf("get after evict: %v", err)
+	}
+	if got := count.Load(); got != 2 {
+		t.Fatalf("spawn count: got %d want 2 (original + post-evict respawn)", got)
+	}
+}
+
+func TestPool_EvictUnknownProfileIsNoop(t *testing.T) {
+	_, sp := newFakeSpawner(t)
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	defer pool.Close(context.Background())
+
+	// Never spawned — Evict must be a silent no-op.
+	pool.Evict(fullProfile("nobody"))
+	if pool.Size() != 0 {
+		t.Fatalf("Size: got %d want 0", pool.Size())
+	}
+}
+
+func TestPool_CloseStopsAllWorkers(t *testing.T) {
+	_, sp := newFakeSpawner(t)
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+
+	for _, tag := range []string{"a", "b", "c"} {
+		if _, err := pool.Get(context.Background(), fullProfile(tag)); err != nil {
+			t.Fatalf("get %s: %v", tag, err)
+		}
+	}
+	if pool.Size() != 3 {
+		t.Fatalf("Size before close: got %d want 3", pool.Size())
+	}
+	if err := pool.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if pool.Size() != 0 {
+		t.Fatalf("Size after close: got %d want 0", pool.Size())
+	}
+}
+
+// sanity import guard — net.Pipe is the kernel of fakeProcess
+var _ = io.EOF
+var _ = (net.Conn)(nil)

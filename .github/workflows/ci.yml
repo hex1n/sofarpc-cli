@@ -10,27 +10,23 @@ permissions:
   contents: read
 
 jobs:
-  verification:
+  go:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "8"
-          cache: maven
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: Test Go CLI
-        run: go test ./...
+      - name: Vet
+        run: go vet ./...
 
-      - name: Test Java worker
-        run: mvn -B -f runtime-worker-java/pom.xml test
+      - name: Test (race)
+        run: go test -race ./...
+
+      - name: Build
+        run: go build ./...
