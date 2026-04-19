@@ -140,17 +140,117 @@ func TestBuildPlan_TargetMissing(t *testing.T) {
 	assertCode(t, err, errcode.TargetMissing)
 }
 
-func TestBuildPlan_FacadeNil(t *testing.T) {
+func TestBuildPlan_TrustedMode_HappyPath(t *testing.T) {
+	plan, err := BuildPlan(
+		Input{
+			Service:    "com.foo.Svc",
+			Method:     "doThing",
+			ParamTypes: []string{"java.lang.String", "com.foo.Req"},
+			Args:       []any{"hello", map[string]any{"@type": "com.foo.Req", "id": 1}},
+			Target:     target.Input{DirectURL: "bolt://h:1"},
+		},
+		nil,
+		target.Sources{},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if plan.ContractSource != "trusted" {
+		t.Fatalf("contractSource: got %q want trusted", plan.ContractSource)
+	}
+	if plan.ArgSource != "user" {
+		t.Fatalf("argSource: got %q want user", plan.ArgSource)
+	}
+	if len(plan.ParamTypes) != 2 {
+		t.Fatalf("paramTypes arity: got %d want 2", len(plan.ParamTypes))
+	}
+	if plan.Args[0] != "hello" {
+		t.Fatalf("args[0]: got %v want hello", plan.Args[0])
+	}
+	if len(plan.Overloads) != 0 {
+		t.Fatalf("overloads should be empty in trusted mode, got %d", len(plan.Overloads))
+	}
+}
+
+func TestBuildPlan_TrustedMode_MissingParamTypes(t *testing.T) {
 	_, err := BuildPlan(
 		Input{
 			Service: "com.foo.Svc",
 			Method:  "doThing",
+			Args:    []any{"hello"},
 			Target:  target.Input{DirectURL: "bolt://h:1"},
 		},
 		nil,
 		target.Sources{},
 	)
 	assertCode(t, err, errcode.FacadeNotConfigured)
+}
+
+func TestBuildPlan_TrustedMode_MissingArgs(t *testing.T) {
+	_, err := BuildPlan(
+		Input{
+			Service:    "com.foo.Svc",
+			Method:     "doThing",
+			ParamTypes: []string{"java.lang.String"},
+			Target:     target.Input{DirectURL: "bolt://h:1"},
+		},
+		nil,
+		target.Sources{},
+	)
+	assertCode(t, err, errcode.FacadeNotConfigured)
+}
+
+func TestBuildPlan_TrustedMode_ArityMismatch(t *testing.T) {
+	_, err := BuildPlan(
+		Input{
+			Service:    "com.foo.Svc",
+			Method:     "doThing",
+			ParamTypes: []string{"java.lang.String", "java.lang.Long"},
+			Args:       []any{"only-one"},
+			Target:     target.Input{DirectURL: "bolt://h:1"},
+		},
+		nil,
+		target.Sources{},
+	)
+	assertCode(t, err, errcode.ArgsInvalid)
+	var ecerr *errcode.Error
+	if !errors.As(err, &ecerr) {
+		t.Fatalf("err is not *errcode.Error: %T", err)
+	}
+	if ecerr.Hint == nil || ecerr.Hint.NextTool != "sofarpc_describe" {
+		t.Fatalf("hint should route to sofarpc_describe, got %+v", ecerr.Hint)
+	}
+	if svc, _ := ecerr.Hint.NextArgs["service"].(string); svc != "com.foo.Svc" {
+		t.Fatalf("hint.NextArgs.service: got %q", svc)
+	}
+}
+
+func TestBuildPlan_TrustedMode_MissingService(t *testing.T) {
+	_, err := BuildPlan(
+		Input{
+			Method:     "doThing",
+			ParamTypes: []string{"java.lang.String"},
+			Args:       []any{"hello"},
+			Target:     target.Input{DirectURL: "bolt://h:1"},
+		},
+		nil,
+		target.Sources{},
+	)
+	assertCode(t, err, errcode.ServiceMissing)
+}
+
+func TestBuildPlan_TrustedMode_MissingMethod(t *testing.T) {
+	_, err := BuildPlan(
+		Input{
+			Service:    "com.foo.Svc",
+			ParamTypes: []string{"java.lang.String"},
+			Args:       []any{"hello"},
+			Target:     target.Input{DirectURL: "bolt://h:1"},
+		},
+		nil,
+		target.Sources{},
+	)
+	assertCode(t, err, errcode.MethodMissing)
 }
 
 func TestBuildPlan_PropagatesContractErrors(t *testing.T) {

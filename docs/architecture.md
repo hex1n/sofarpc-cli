@@ -418,7 +418,67 @@ On error:
 { "requestId": "...", "ok": false, "error": { "code": "runtime.worker-error", "message": "...", "hint": {...} } }
 ```
 
-### 7.4 Lifecycle
+### 7.4 Describe action
+
+`sofarpc_describe` can be served by the worker via reflection instead of
+(or in addition to) the Spoon index. The worker loads
+`SOFARPC_FACADE_CLASSPATH` (colon-separated jars / dirs) into a child
+`URLClassLoader` at spawn, then answers per-class describe requests.
+
+Request:
+```json
+{ "requestId": "...", "action": "describe", "service": "com.foo.Facade" }
+```
+
+Response (success):
+```json
+{
+  "requestId": "...",
+  "ok": true,
+  "result": {
+    "fqn": "com.foo.Facade",
+    "simpleName": "Facade",
+    "kind": "interface",
+    "superclass": "",
+    "interfaces": [],
+    "methods": [
+      { "name": "getUser", "paramTypes": ["com.foo.Req"], "returnType": "com.foo.Resp" }
+    ],
+    "fields": [],
+    "enumConstants": []
+  }
+}
+```
+
+Response (class absent from facade classpath):
+```json
+{
+  "requestId": "...",
+  "ok": false,
+  "error": { "code": "contract.unresolvable", "message": "com.foo.Missing not on facade classpath" }
+}
+```
+
+Implementation notes:
+
+- The result shape mirrors `facadesemantic.Class` 1:1. The Go client
+  round-trips `result` through JSON into that struct.
+- `paramTypes` / `returnType` use `java.lang.reflect.Type.getTypeName()`
+  so generics survive erasure (`java.util.List<com.foo.Req>`, not
+  `java.util.List`). The Go-side skeleton builder already handles
+  generics, so preserving them here is the only reason the reflection
+  path has parity with the Spoon path.
+- Enum classes emit their `values()` into `enumConstants`.
+- Classes outside the facade classpath MUST surface as
+  `contract.unresolvable` — the Go adapter converts that into a Store
+  miss (`ok=false`), matching the Spoon path.
+
+The worker-reflection path and the Spoon path are mutually exclusive at
+startup: if a local `.sofarpc/index` exists, it wins; otherwise if
+`SOFARPC_FACADE_CLASSPATH` is set, the reflection store takes over.
+See §6 for Spoon, §8 for precedence.
+
+### 7.5 Lifecycle
 
 - Spawn: on first request that needs a profile.
 - Ready signal: worker writes `{"ready":true,"port":N,"pid":P}` to

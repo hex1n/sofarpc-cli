@@ -99,11 +99,14 @@ export SOFARPC_VERSION=5.12.0          # optional, default "unknown"
 export SOFARPC_JAVA_MAJOR=17           # optional, default 17
 export SOFARPC_JAVA=/path/to/java      # optional, default "java" on PATH
 
-# Indexer (enables sofarpc_describe refresh=true)
-export SOFARPC_INDEXER_JAR=/abs/path/spoon-indexer.jar
-# export SOFARPC_INDEXER_SOURCES=/abs/src1:/abs/src2   # default: <root>/src/main/java
-# export SOFARPC_INDEXER_JAVA=/path/to/jdk11/bin/java  # default: SOFARPC_JAVA; set when indexer needs a newer JDK than the worker
-export SOFARPC_PROJECT_ROOT=/abs/project/root          # default: CWD
+# Facade metadata — pick one (or neither and fall back to trusted mode):
+#   A) Spoon indexer:   scans Java source to build .sofarpc/index.
+#   B) Worker reflection: loads facade jars and reflects — no source required.
+export SOFARPC_INDEXER_JAR=/abs/path/spoon-indexer.jar                  # A
+# export SOFARPC_INDEXER_SOURCES=/abs/src1:/abs/src2                    # A: default <root>/src/main/java
+# export SOFARPC_INDEXER_JAVA=/path/to/jdk11/bin/java                   # A: default SOFARPC_JAVA; set if indexer needs newer JDK
+export SOFARPC_FACADE_CLASSPATH=/abs/facade.jar:/abs/common.jar         # B
+export SOFARPC_PROJECT_ROOT=/abs/project/root                           # default: CWD
 ```
 
 Run:
@@ -122,6 +125,25 @@ The server speaks stdio MCP. Point any MCP-capable agent at it.
 4. `sofarpc_invoke` — send the call (or `dryRun=true` first to inspect the plan)
 5. `sofarpc_replay` — re-run from the session without rebuilding args
 6. `sofarpc_doctor` — when anything goes wrong, the catch-all diagnostic
+
+### Facade metadata — three supported paths
+
+The facade store behind `sofarpc_describe` is picked at startup in priority order:
+
+1. **Spoon index** (`<projectRoot>/.sofarpc/index` exists) — richest metadata,
+   produced by the Spoon indexer subprocess. Requires Java source locally.
+2. **Worker reflection** (no local index, but worker + `SOFARPC_FACADE_CLASSPATH` set)
+   — the worker JVM loads the facade jars into a child ClassLoader and answers
+   `describe` via reflection. Works on bytecode only, no source required.
+   The class shape is lazily fetched on first lookup and cached per-process.
+3. **Trusted mode** (no index, no worker classpath) — `sofarpc_invoke` still runs
+   as long as the agent passes a complete `service / method / paramTypes / args`
+   tuple. The plan is marked `contractSource: "trusted"`; no overload
+   disambiguation or skeleton rendering happens.
+
+The agent doesn't need to know which is in effect — the store shape is identical.
+Pick the path that matches your source availability: monorepo checkout → Spoon;
+jar-only consumer → reflection; zero-context automation → trusted.
 
 ```mermaid
 sequenceDiagram

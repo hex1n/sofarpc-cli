@@ -8,6 +8,7 @@ package invoke
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
@@ -46,10 +47,21 @@ type Plan struct {
 // It never performs I/O — callers have already materialised target.Sources
 // and plugged a contract.Store.
 //
+// Two modes:
+//   - facade-store: facade != nil, standard path with overload
+//     disambiguation and skeleton rendering.
+//   - trusted: facade == nil, the agent supplies a complete
+//     service/method/paramTypes/args tuple and we hand it straight to
+//     the worker. This is the fallback when the project has no
+//     `.sofarpc/index` and no indexer configured, so the agent is
+//     expected to know the wire shape from elsewhere (Swagger, IDL,
+//     prior describe output, etc.).
+//
 // Failure modes (all *errcode.Error):
 //   - target.missing: no layer supplied a target mode.
-//   - workspace.facade-not-configured: facade is nil.
-//   - contract.*: propagated from contract.ResolveMethod.
+//   - workspace.facade-not-configured: trusted mode is missing paramTypes
+//     or args — without a facade we cannot synthesize either.
+//   - contract.*: propagated from contract.ResolveMethod (facade mode only).
 //   - input.args-invalid: args provided with the wrong arity.
 func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, error) {
 	report := target.Resolve(in.Target, sources)
@@ -60,9 +72,7 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 				"inspect config layers to see which field is missing")
 	}
 	if facade == nil {
-		return Plan{}, errcode.New(errcode.FacadeNotConfigured, "invoke",
-			"facade index is not configured").
-			WithHint("sofarpc_doctor", nil, "run doctor to inspect facade state")
+		return buildTrustedPlan(in, report)
 	}
 
 	resolved, err := contract.ResolveMethod(facade, in.Service, in.Method, in.ParamTypes)
@@ -87,6 +97,56 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 		ContractSource: "facade-store",
 		TargetLayers:   report.Layers,
 		ArgSource:      argSource,
+	}, nil
+}
+
+// buildTrustedPlan is the facade-less path. The agent must supply
+// service/method plus complete paramTypes + args — we cannot synthesize
+// a skeleton or disambiguate overloads without an index. The error
+// shapes deliberately mirror the facade-mode errors so MCP callers
+// branch on the same codes regardless of which mode ran.
+func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
+	if strings.TrimSpace(in.Service) == "" {
+		return Plan{}, errcode.New(errcode.ServiceMissing, "invoke",
+			"service is required").
+			WithHint("sofarpc_open", nil,
+				"open a workspace or pass service on the invoke call")
+	}
+	if strings.TrimSpace(in.Method) == "" {
+		return Plan{}, errcode.New(errcode.MethodMissing, "invoke",
+			"method is required").
+			WithHint("sofarpc_describe",
+				map[string]any{"service": in.Service},
+				"describe the service to see its methods")
+	}
+	if len(in.ParamTypes) == 0 {
+		return Plan{}, errcode.New(errcode.FacadeNotConfigured, "invoke",
+			"facade index is not configured; pass paramTypes on the invoke call to proceed without an index").
+			WithHint("sofarpc_doctor", nil,
+				"doctor reports how to wire the indexer — or pass paramTypes directly alongside args")
+	}
+	if in.Args == nil {
+		return Plan{}, errcode.New(errcode.FacadeNotConfigured, "invoke",
+			"facade index is not configured; pass args on the invoke call — no index means no skeleton to render").
+			WithHint("sofarpc_doctor", nil,
+				"doctor reports how to wire the indexer — or pass args matching paramTypes")
+	}
+	if len(in.Args) != len(in.ParamTypes) {
+		return Plan{}, errcode.New(errcode.ArgsInvalid, "invoke",
+			fmt.Sprintf("arity mismatch: got %d args, paramTypes has %d", len(in.Args), len(in.ParamTypes))).
+			WithHint("sofarpc_describe",
+				describeHintArgs(in.Service, in.Method),
+				"align args length with paramTypes")
+	}
+	return Plan{
+		Service:        in.Service,
+		Method:         in.Method,
+		ParamTypes:     in.ParamTypes,
+		Args:           in.Args,
+		Target:         report.Target,
+		ContractSource: "trusted",
+		TargetLayers:   report.Layers,
+		ArgSource:      "user",
 	}, nil
 }
 

@@ -80,4 +80,15 @@ const (
 	ActionInvoke   = "invoke"
 	ActionShutdown = "shutdown"
 	ActionPing     = "ping"
+	// ActionDescribe asks the worker to reflect on a class loaded from
+	// the facade classpath and return its facadesemantic.Class shape.
+	// Request carries `service` (the FQN to describe); Response.Result
+	// is the JSON-marshalled facadesemantic.Class. Missing classes
+	// surface as WireError with code "contract.unresolvable" so the
+	// Go-side Store adapter can translate to ok=false.
+	//
+	// This lets sofarpc_describe work without a local Spoon index —
+	// the worker reflects on the same classes it would otherwise invoke,
+	// so describe and invoke see exactly the same wire shape.
+	ActionDescribe = "describe"
 )
