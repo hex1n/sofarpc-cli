@@ -7,11 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	appfacade "github.com/hex1n/sofarpc-cli/internal/app/facade"
 	"github.com/hex1n/sofarpc-cli/internal/facadeconfig"
 	"github.com/hex1n/sofarpc-cli/internal/facadeindex"
-	"github.com/hex1n/sofarpc-cli/internal/facadereplay"
 	"github.com/hex1n/sofarpc-cli/internal/facadeschema"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
 )
 
 var loadFacadeServiceSummary = facadeindex.LoadServiceSummary
@@ -65,28 +64,29 @@ func (a *App) runFacadeStatus(args []string) error {
 	if len(passthrough) > 0 {
 		return fmt.Errorf("unknown facade status args: %s", strings.Join(passthrough, " "))
 	}
-	skillDir, err := facadeSkillDir()
-	projectRoot, errProject := a.resolveFacadeProjectRoot(project)
-	if errProject != nil {
-		return errProject
+	result, err := a.newFacadeService().Status(appfacade.StatusRequest{
+		Cwd:     a.Cwd,
+		Project: project,
+	})
+	if err != nil {
+		return err
 	}
-	state := facadeconfig.InspectState(projectRoot)
-	cfg, cfgErr := facadeconfig.LoadConfig(projectRoot, true)
 
-	fmt.Fprintf(a.Stdout, "skill dir:      %s\n", fmtPathOrErr(skillDir, err))
-	fmt.Fprintf(a.Stdout, "project root:   %s\n", fmtPathOrErr(projectRoot, errProject))
-	fmt.Fprintf(a.Stdout, "state layout:   %s\n", state.Layout.Label())
+	fmt.Fprintf(a.Stdout, "skill dir:      %s\n", fmtPathOrErr(result.SkillDir, result.SkillDirError))
+	fmt.Fprintf(a.Stdout, "project root:   %s\n", result.ProjectRoot)
+	fmt.Fprintf(a.Stdout, "state layout:   %s\n", result.State.Layout.Label())
 	fmt.Fprintf(a.Stdout, "state purpose:  optional facade workspace state (.sofarpc)\n")
-	fmt.Fprintf(a.Stdout, "state dir:      %s\n", state.StateDir)
-	fmt.Fprintf(a.Stdout, "config path:    %s\n", formatPathStatus(state.ConfigPath))
-	fmt.Fprintf(a.Stdout, "index dir:      %s\n", formatPathStatus(state.IndexDir))
-	fmt.Fprintf(a.Stdout, "replay dir:     %s\n", formatPathStatus(state.ReplayDir))
-	if cfgErr == nil {
+	fmt.Fprintf(a.Stdout, "state dir:      %s\n", result.State.StateDir)
+	fmt.Fprintf(a.Stdout, "config path:    %s\n", formatPathStatus(result.State.ConfigPath))
+	fmt.Fprintf(a.Stdout, "index dir:      %s\n", formatPathStatus(result.State.IndexDir))
+	fmt.Fprintf(a.Stdout, "replay dir:     %s\n", formatPathStatus(result.State.ReplayDir))
+	if result.Config != nil {
+		cfg := result.Config
 		fmt.Fprintf(a.Stdout, "sofarpcBin:     %s\n", emptyFallback(cfg.SofaRPCBin, "(not set)"))
 		fmt.Fprintf(a.Stdout, "defaultContext: %s\n", emptyFallback(cfg.DefaultContext, "(not set)"))
 		fmt.Fprintf(a.Stdout, "manifestPath:   %s\n", emptyFallback(cfg.ManifestPath, "(not set)"))
-	} else if !os.IsNotExist(cfgErr) && !strings.Contains(cfgErr.Error(), "no config found") {
-		fmt.Fprintf(a.Stdout, "config parse:   (unavailable: %v)\n", cfgErr)
+	} else if appfacade.ConfigPrintableError(result.ConfigError) {
+		fmt.Fprintf(a.Stdout, "config parse:   (unavailable: %v)\n", result.ConfigError)
 	}
 	return nil
 }
@@ -127,11 +127,15 @@ func splitFacadeProjectArg(args []string) (string, []string, error) {
 }
 
 func (a *App) resolveFacadeProjectRoot(project string) (string, error) {
+	return resolveFacadeProjectRoot(a.Cwd, a.Stderr, project)
+}
+
+func resolveFacadeProjectRoot(cwd string, stderr io.Writer, project string) (string, error) {
 	root := strings.TrimSpace(project)
 	if root != "" {
 		return facadeconfig.ValidateProjectDir(root)
 	}
-	return facadeconfig.ResolveProjectRoot(a.Cwd, a.Stderr)
+	return facadeconfig.ResolveProjectRoot(cwd, stderr)
 }
 
 func formatPathStatus(path string) string {
@@ -166,11 +170,14 @@ func (a *App) runFacadeDiscover(args []string) error {
 	if len(flags.Args()) > 0 {
 		return fmt.Errorf("unknown facade discover args: %s", strings.Join(flags.Args(), " "))
 	}
-	projectRoot, err := a.resolveFacadeProjectRoot(project)
-	if err != nil {
-		return err
-	}
-	return facadeconfig.DetectConfig(projectRoot, write, a.Stdout, a.Stderr)
+	_, err := a.newFacadeService().Discover(appfacade.DiscoverRequest{
+		Cwd:     a.Cwd,
+		Project: project,
+		Write:   write,
+		Stdout:  a.Stdout,
+		Stderr:  a.Stderr,
+	})
+	return err
 }
 
 func (a *App) runFacadeSchema(args []string) error {
@@ -194,31 +201,21 @@ func (a *App) runFacadeSchema(args []string) error {
 	if err != nil {
 		return err
 	}
-	projectRoot, err := a.resolveFacadeProjectRoot(project)
-	if err != nil {
-		return err
-	}
-	cfg, err := facadeconfig.LoadConfig(projectRoot, false)
-	if err != nil {
-		return err
-	}
-	sourceRoots := facadeconfig.IterSourceRoots(cfg, projectRoot)
-	if len(sourceRoots) == 0 {
-		return fmt.Errorf("config has no facade source roots")
-	}
-	registry, err := facadesemantic.LoadSemanticRegistry(projectRoot, sourceRoots, cfg.RequiredMarkers)
-	if err != nil {
-		return err
-	}
-	schema, err := facadeschema.BuildMethodSchema(registry, service, method, parseCSV(types), cfg.RequiredMarkers)
+	result, err := a.newFacadeService().Schema(appfacade.SchemaRequest{
+		Cwd:        a.Cwd,
+		Project:    project,
+		Service:    service,
+		Method:     method,
+		ParamTypes: parseCSV(types),
+	})
 	if err != nil {
 		return err
 	}
 	_ = asJSON
 	if asJSON {
-		return printJSON(a.Stdout, schema)
+		return printJSON(a.Stdout, result.Schema)
 	}
-	return printFacadeSchema(a.Stdout, schema)
+	return printFacadeSchema(a.Stdout, result.Schema)
 }
 
 func (a *App) runFacadeServices(args []string) error {
@@ -237,19 +234,18 @@ func (a *App) runFacadeServices(args []string) error {
 	if len(flags.Args()) > 0 {
 		return fmt.Errorf("unknown facade services args: %s", strings.Join(flags.Args(), " "))
 	}
-	projectRoot, err := a.resolveFacadeProjectRoot(project)
+	result, err := a.newFacadeService().Services(appfacade.ServicesRequest{
+		Cwd:     a.Cwd,
+		Project: project,
+		Filter:  filter,
+	})
 	if err != nil {
 		return err
 	}
-	summary, err := loadFacadeServiceSummary(projectRoot)
-	if err != nil {
-		return err
-	}
-	summary = filterFacadeServiceSummary(summary, filter)
 	if asJSON {
-		return printJSON(a.Stdout, summary)
+		return printJSON(a.Stdout, result.Summary)
 	}
-	return printFacadeServices(a.Stdout, projectRoot, summary, filter)
+	return printFacadeServices(a.Stdout, result.ProjectRoot, result.Summary, filter)
 }
 
 func printFacadeSchema(out io.Writer, schema facadeschema.MethodSchemaEnvelope) error {
@@ -314,28 +310,6 @@ func printFacadeSchema(out io.Writer, schema facadeschema.MethodSchemaEnvelope) 
 	return nil
 }
 
-func filterFacadeServiceSummary(summary facadeindex.IndexSummary, filter string) facadeindex.IndexSummary {
-	needle := strings.TrimSpace(strings.ToLower(filter))
-	if needle == "" {
-		return summary
-	}
-	filtered := make([]facadeindex.IndexSummaryService, 0, len(summary.Services))
-	for _, service := range summary.Services {
-		if strings.Contains(strings.ToLower(service.Service), needle) {
-			filtered = append(filtered, service)
-			continue
-		}
-		for _, method := range service.Methods {
-			if strings.Contains(strings.ToLower(method), needle) {
-				filtered = append(filtered, service)
-				break
-			}
-		}
-	}
-	summary.Services = filtered
-	return summary
-}
-
 func printFacadeServices(out io.Writer, projectRoot string, summary facadeindex.IndexSummary, filter string) error {
 	if _, err := fmt.Fprintf(out, "project root: %s\n", projectRoot); err != nil {
 		return err
@@ -376,15 +350,13 @@ func (a *App) runFacadeIndex(args []string) error {
 	if len(passthrough) > 0 {
 		return fmt.Errorf("unknown facade index args: %s", strings.Join(passthrough, " "))
 	}
-	projectRoot, err := a.resolveFacadeProjectRoot(project)
-	if err != nil {
-		return err
-	}
-	cfg, err := facadeconfig.LoadConfig(projectRoot, false)
-	if err != nil {
-		return err
-	}
-	return facadeindex.RefreshIndex(projectRoot, cfg, a.Stdout, a.Stderr)
+	_, err = a.newFacadeService().Index(appfacade.IndexRequest{
+		Cwd:     a.Cwd,
+		Project: project,
+		Stdout:  a.Stdout,
+		Stderr:  a.Stderr,
+	})
+	return err
 }
 
 func (a *App) runFacadeReplay(args []string) error {
@@ -411,18 +383,19 @@ func (a *App) runFacadeReplay(args []string) error {
 	if len(flags.Args()) > 0 {
 		return fmt.Errorf("unknown facade replay args: %s", strings.Join(flags.Args(), " "))
 	}
-	projectRoot, err := a.resolveFacadeProjectRoot(project)
-	if err != nil {
-		return err
-	}
-	return facadereplay.ReplayCalls(projectRoot, facadereplay.ReplayOptions{
-		Filter:          filter,
-		OnlyNames:       parseCSV(onlyNamesCSV),
-		ContextOverride: contextName,
-		DryRun:          dryRun,
-		Save:            save,
-		SofaRPCBin:      sofarpcBin,
-	}, a.Stdout, a.Stderr)
+	_, err := a.newFacadeService().Replay(appfacade.ReplayRequest{
+		Cwd:         a.Cwd,
+		Project:     project,
+		Filter:      filter,
+		OnlyNames:   parseCSV(onlyNamesCSV),
+		ContextName: contextName,
+		SofaRPCBin:  sofarpcBin,
+		DryRun:      dryRun,
+		Save:        save,
+		Stdout:      a.Stdout,
+		Stderr:      a.Stderr,
+	})
+	return err
 }
 
 // facadeSkillDir returns the installed call-rpc skill directory. Resolution order:
