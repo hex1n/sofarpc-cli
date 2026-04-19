@@ -98,11 +98,14 @@ export SOFARPC_VERSION=5.12.0          # 可选，默认 "unknown"
 export SOFARPC_JAVA_MAJOR=17           # 可选，默认 17
 export SOFARPC_JAVA=/path/to/java      # 可选，默认使用 PATH 中的 "java"
 
-# Indexer（启用 sofarpc_describe refresh=true）
-export SOFARPC_INDEXER_JAR=/abs/path/spoon-indexer.jar
-# export SOFARPC_INDEXER_SOURCES=/abs/src1:/abs/src2   # 默认 <root>/src/main/java
-# export SOFARPC_INDEXER_JAVA=/path/to/jdk11/bin/java  # 默认回落到 SOFARPC_JAVA；indexer 需要比 worker 更新的 JDK 时单独指定
-export SOFARPC_PROJECT_ROOT=/abs/project/root          # 默认当前工作目录
+# Facade 元数据——二选一或都不选（不选则走信任模式）：
+#   A) Spoon indexer：扫 Java 源码生成 .sofarpc/index。
+#   B) Worker 反射：把 facade jar 加到 worker 类路径，反射取元数据——不需要源码。
+export SOFARPC_INDEXER_JAR=/abs/path/spoon-indexer.jar                  # A
+# export SOFARPC_INDEXER_SOURCES=/abs/src1:/abs/src2                    # A：默认 <root>/src/main/java
+# export SOFARPC_INDEXER_JAVA=/path/to/jdk11/bin/java                   # A：默认回落到 SOFARPC_JAVA；indexer 需要更新 JDK 时单独指定
+export SOFARPC_FACADE_CLASSPATH=/abs/facade.jar:/abs/common.jar         # B
+export SOFARPC_PROJECT_ROOT=/abs/project/root                           # 默认当前工作目录
 ```
 
 启动：
@@ -121,6 +124,22 @@ Server 使用 stdio MCP 协议，把任意支持 MCP 的 Agent 接上即可。
 4. `sofarpc_invoke`——真正发起调用（或先 `dryRun=true` 看 plan）
 5. `sofarpc_replay`——基于 session 再次执行，无需重建参数
 6. `sofarpc_doctor`——兜底自检，任何问题都可以走这里
+
+### Facade 元数据——三条路径
+
+`sofarpc_describe` 背后的 store 在启动时按优先级选择：
+
+1. **Spoon 索引**（`<projectRoot>/.sofarpc/index` 存在）——元数据最丰富，
+   由 Spoon indexer 子进程生成，需要本地 Java 源码。
+2. **Worker 反射**（没有本地索引，但配置了 worker + `SOFARPC_FACADE_CLASSPATH`）
+   ——worker JVM 用子 ClassLoader 加载 facade jar，通过反射回答 `describe`。
+   只需要字节码，不要源码。类信息按需拉取，进程内缓存。
+3. **信任模式**（没有索引，也没有 worker 类路径）——只要 Agent 传全
+   `service / method / paramTypes / args` 四元组，`sofarpc_invoke` 照常运行。
+   plan 标记 `contractSource: "trusted"`，跳过重载消歧和骨架渲染。
+
+Agent 不需要知道当前走的是哪条路——store 的对外形状一致。按源码可用性选择：
+monorepo 有源码 → Spoon；只有 jar → 反射；完全外部拿签名 → 信任模式。
 
 ```mermaid
 sequenceDiagram

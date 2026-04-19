@@ -42,7 +42,7 @@ func run(ctx context.Context) error {
 	workerClient := loadWorker()
 	server := mcpserver.New(mcpserver.Options{
 		TargetSources: target.Sources{Env: envConfig(), ProjectRoot: projectRoot},
-		Facade:        loadFacade(projectRoot),
+		Facade:        loadFacade(ctx, projectRoot, workerClient),
 		Worker:        workerClient,
 		Reindexer:     loadReindexer(projectRoot),
 	})
@@ -72,22 +72,33 @@ func projectRootFromEnv() string {
 	return wd
 }
 
-// loadFacade tries to load the on-disk index at startup. A missing
-// index is expected (indexer hasn't run yet) and degrades gracefully
-// to nil; describe will surface errcode.FacadeNotConfigured.
-func loadFacade(projectRoot string) contract.Store {
-	if projectRoot == "" {
-		return nil
-	}
-	idx, err := indexer.Load(projectRoot)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
+// loadFacade picks the facade store for this process, in priority order:
+//
+//  1. On-disk Spoon index at <projectRoot>/.sofarpc/index — used as long
+//     as it exists. Richest metadata, including javadoc-derived fields.
+//  2. Worker-backed reflection store — when no local index is present,
+//     a running worker is configured, and SOFARPC_FACADE_CLASSPATH
+//     names at least one jar/dir to load. Works without any source code.
+//  3. nil — describe surfaces errcode.FacadeNotConfigured; invoke still
+//     runs in trusted mode if the agent supplies paramTypes + args.
+//
+// The three options map cleanly to three deployment situations:
+// monorepo checkout, jar-only consumer, zero-context agent. The agent
+// doesn't have to know which is in effect — the store shape is the same.
+func loadFacade(ctx context.Context, projectRoot string, workerClient *worker.Client) contract.Store {
+	if projectRoot != "" {
+		idx, err := indexer.Load(projectRoot)
+		if err == nil {
+			return idx
 		}
-		fmt.Fprintf(os.Stderr, "warning: could not load facade index: %v\n", err)
-		return nil
+		if !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "warning: could not load facade index: %v\n", err)
+		}
 	}
-	return idx
+	if workerClient != nil && os.Getenv("SOFARPC_FACADE_CLASSPATH") != "" {
+		return mcpserver.NewWorkerStore(ctx, workerClient)
+	}
+	return nil
 }
 
 // envConfig reads the SOFARPC_* environment into a target.Config. Only
@@ -222,8 +233,25 @@ func loadWorker() *worker.Client {
 	spec := worker.Spec{
 		Java:         os.Getenv("SOFARPC_JAVA"),
 		Jar:          jar,
+		Env:          workerEnvFromHost(),
 		ReadyTimeout: 30 * time.Second,
 		StopGrace:    2 * time.Second,
 	}
 	return &worker.Client{Pool: worker.NewPool(spec), Profile: profile}
+}
+
+// workerEnvFromHost forwards a small, deliberate subset of SOFARPC_* env
+// vars into the worker JVM. We pass only what the worker needs to
+// actually run — forwarding everything would risk leaking irrelevant
+// host state (e.g. INDEXER_JAR) into the JVM's ClassLoader behavior.
+//
+// SOFARPC_FACADE_CLASSPATH names the jars the worker should load via a
+// child URLClassLoader so sofarpc_describe can reflect on facade
+// classes and sofarpc_invoke can resolve user-type args.
+func workerEnvFromHost() []string {
+	var out []string
+	if v := os.Getenv("SOFARPC_FACADE_CLASSPATH"); v != "" {
+		out = append(out, "SOFARPC_FACADE_CLASSPATH="+v)
+	}
+	return out
 }

@@ -72,7 +72,7 @@ func TestInvoke_NonDryRunReturnsDaemonUnavailable(t *testing.T) {
 	}
 }
 
-func TestInvoke_FacadeNilSurfacesErrcode(t *testing.T) {
+func TestInvoke_FacadeNilWithoutParamTypesSurfacesErrcode(t *testing.T) {
 	out := callInvoke(t, Options{}, map[string]any{
 		"service":   "com.foo.Svc",
 		"method":    "doThing",
@@ -80,6 +80,36 @@ func TestInvoke_FacadeNilSurfacesErrcode(t *testing.T) {
 	})
 	if out.Error == nil || out.Error.Code != errcode.FacadeNotConfigured {
 		t.Fatalf("expected FacadeNotConfigured, got %+v", out.Error)
+	}
+}
+
+// Trusted mode: no facade index, but agent supplies a complete
+// service/method/paramTypes/args tuple. Plan should build cleanly with
+// contractSource=trusted so downstream consumers (dryRun / worker)
+// still work without an indexer configured.
+func TestInvoke_FacadeNilWithTrustedArgsDryRunSucceeds(t *testing.T) {
+	out := callInvoke(t, Options{}, map[string]any{
+		"service":    "com.foo.Svc",
+		"method":     "doThing",
+		"directUrl":  "bolt://host:12200",
+		"types":      []any{"java.lang.String"},
+		"args":       []any{"hello"},
+		"dryRun":     true,
+	})
+	if !out.Ok {
+		t.Fatalf("trusted dry-run should succeed; got error=%+v", out.Error)
+	}
+	if out.Plan == nil {
+		t.Fatal("plan should be populated")
+	}
+	if out.Plan.ContractSource != "trusted" {
+		t.Fatalf("contractSource: got %q want trusted", out.Plan.ContractSource)
+	}
+	if out.Plan.ArgSource != "user" {
+		t.Fatalf("argSource: got %q want user", out.Plan.ArgSource)
+	}
+	if out.Plan.Args[0] != "hello" {
+		t.Fatalf("user arg should pass through, got %v", out.Plan.Args[0])
 	}
 }
 

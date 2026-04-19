@@ -248,6 +248,122 @@ func TestClient_CloseIsNilSafe(t *testing.T) {
 	}
 }
 
+// fakeDescribeProcess answers ActionDescribe by synthesising a Class
+// payload keyed on the requested service. Any other action or an
+// unknown service surfaces a WireError so the client's decode path
+// gets exercised.
+func fakeDescribeProcess(t *testing.T, known map[string]map[string]any) (*Process, func()) {
+	t.Helper()
+	serverSide, clientSide := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverSide.Close()
+		reader := bufio.NewReader(serverSide)
+		writer := bufio.NewWriter(serverSide)
+		for {
+			line, err := reader.ReadBytes('\n')
+			if len(line) > 0 {
+				var req Request
+				if json.Unmarshal(line, &req) == nil {
+					var resp Response
+					resp.RequestID = req.RequestID
+					if req.Action != ActionDescribe {
+						resp.Ok = false
+						resp.Error = &WireError{Code: "runtime.worker-error", Message: "unexpected action"}
+					} else if cls, ok := known[req.Service]; ok {
+						resp.Ok = true
+						resp.Result = cls
+					} else {
+						resp.Ok = false
+						resp.Error = &WireError{
+							Code:    string(errcode.ContractUnresolvable),
+							Message: "class not on facade classpath: " + req.Service,
+						}
+					}
+					body, _ := json.Marshal(resp)
+					writer.Write(body)
+					writer.WriteByte('\n')
+					writer.Flush()
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	exited := make(chan struct{})
+	proc := &Process{
+		spec:   Spec{Jar: "fake", StopGrace: 10 * time.Millisecond},
+		conn:   NewConn(clientSide),
+		exited: exited,
+	}
+	return proc, func() {
+		select {
+		case <-exited:
+		default:
+			close(exited)
+		}
+		proc.Stop(context.Background())
+		<-done
+	}
+}
+
+func TestClient_DescribeDecodesClass(t *testing.T) {
+	known := map[string]map[string]any{
+		"com.foo.Svc": {
+			"fqn":        "com.foo.Svc",
+			"simpleName": "Svc",
+			"kind":       "interface",
+			"methods": []map[string]any{
+				{"name": "doThing", "paramTypes": []string{"java.lang.String"}, "returnType": "java.lang.Long"},
+			},
+		},
+	}
+	sp := func(context.Context, Spec) (*Process, error) {
+		proc, _ := fakeDescribeProcess(t, known)
+		return proc, nil
+	}
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	c := &Client{Pool: pool, Profile: fullProfile("x")}
+	defer c.Close(context.Background())
+
+	cls, ok, err := c.Describe(context.Background(), "com.foo.Svc")
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if cls.FQN != "com.foo.Svc" {
+		t.Fatalf("fqn: got %q", cls.FQN)
+	}
+	if len(cls.Methods) != 1 || cls.Methods[0].Name != "doThing" {
+		t.Fatalf("methods: got %+v", cls.Methods)
+	}
+	if cls.Methods[0].ReturnType != "java.lang.Long" {
+		t.Fatalf("returnType: got %q", cls.Methods[0].ReturnType)
+	}
+}
+
+func TestClient_DescribeUnresolvableIsMiss(t *testing.T) {
+	sp := func(context.Context, Spec) (*Process, error) {
+		proc, _ := fakeDescribeProcess(t, nil)
+		return proc, nil
+	}
+	pool := NewPool(Spec{Jar: "fake.jar"}).withSpawner(sp)
+	c := &Client{Pool: pool, Profile: fullProfile("x")}
+	defer c.Close(context.Background())
+
+	_, ok, err := c.Describe(context.Background(), "com.unknown.Type")
+	if err != nil {
+		t.Fatalf("unresolvable should be a silent miss, got err=%v", err)
+	}
+	if ok {
+		t.Fatal("ok should be false for unresolvable")
+	}
+}
+
 // --- helpers --------------------------------------------------------
 
 func assertErrcode(t *testing.T, err error, want errcode.Code) {
