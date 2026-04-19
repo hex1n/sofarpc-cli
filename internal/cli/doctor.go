@@ -2,11 +2,9 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/model"
-	"github.com/hex1n/sofarpc-cli/internal/runtime"
 )
 
 const (
@@ -39,63 +37,9 @@ func (a *App) runDoctor(args []string) error {
 	}
 	input.ArgsJSON = "[]"
 	input.PayloadMode = model.PayloadRaw
-	resolved, err := a.resolveInvocation(input)
+	report, err := a.newDoctorService().Execute(context.Background(), input)
 	if err != nil {
 		return err
-	}
-	ctx := context.Background()
-	contractSource, contractCacheHit, contractNotes, err := a.prepareDoctorInvocation(ctx, &resolved, input)
-	if err != nil {
-		return err
-	}
-	spec, err := a.Runtime.ResolveSpec(resolved.JavaBin, resolved.RuntimeJar, resolved.SofaRPCVersion, resolved.StubPaths)
-	report := model.DoctorReport{
-		ManifestPath:   resolved.ManifestPath,
-		ManifestLoaded: resolved.ManifestFound,
-		ActiveContext:  resolved.ActiveContext,
-		Target:         resolved.Request.Target,
-		StubWarnings:   runtime.ScanStubWarnings(resolved.StubPaths),
-		Reachability:   runtime.ProbeTarget(resolved.Request.Target),
-	}
-	if err == nil {
-		report.Runtime = model.RuntimeSnapshot{
-			SofaRPCVersion:       spec.SofaRPCVersion,
-			SofaRPCVersionSource: resolved.SofaRPCVersionSource,
-			ContractSource:       contractSourceLabel(contractSource),
-			ContractCacheHit:     contractCacheHit,
-			ContractNotes:        contractNotes,
-			WorkerClasspath:      workerClasspathMode(resolved.StubPaths),
-			RuntimeJar:           spec.RuntimeJar,
-			JavaBin:              spec.JavaBin,
-			JavaMajor:            spec.JavaMajor,
-			DaemonKey:            spec.DaemonKey,
-		}
-		metadata, ensureErr := a.Runtime.EnsureDaemon(context.Background(), spec)
-		if ensureErr != nil {
-			report.Daemon = model.DaemonSnapshot{Ready: false, Error: ensureErr.Error()}
-		} else {
-			report.Daemon = model.DaemonSnapshot{Ready: true, Metadata: &metadata}
-			probeRequest := model.InvocationRequest{
-				RequestID:   randomID(),
-				Service:     doctorProbeService,
-				Method:      doctorProbeMethod,
-				Args:        json.RawMessage("[]"),
-				PayloadMode: model.PayloadRaw,
-				Target:      resolved.Request.Target,
-			}
-			probeResponse, invokeErr := a.Runtime.Invoke(context.Background(), metadata, probeRequest)
-			report.InvokeProbe = summarizeInvokeProbe(probeResponse, invokeErr)
-		}
-	} else {
-		report.Runtime = model.RuntimeSnapshot{
-			SofaRPCVersion:       resolved.SofaRPCVersion,
-			SofaRPCVersionSource: resolved.SofaRPCVersionSource,
-			ContractSource:       contractSourceLabel(contractSource),
-			ContractCacheHit:     contractCacheHit,
-			ContractNotes:        contractNotes,
-			WorkerClasspath:      workerClasspathMode(resolved.StubPaths),
-		}
-		report.Daemon = model.DaemonSnapshot{Ready: false, Error: err.Error()}
 	}
 	return printJSON(a.Stdout, report)
 }

@@ -16,20 +16,6 @@ var describeServiceLegacyFallback = func(ctx context.Context, manager *runtime.M
 }
 var errLocalSchemaUnavailable = errors.New("local schema unavailable")
 
-type localSchemaResolution struct {
-	Schema   model.ServiceSchema
-	Source   string
-	CacheHit bool
-	Notes    []string
-}
-
-type serviceSchemaResolution struct {
-	Schema   model.ServiceSchema
-	Source   string
-	CacheHit bool
-	Notes    []string
-}
-
 func (a *App) resolveLocalServiceSchema(ctx context.Context, manifestPath, service string, refresh bool) (model.ServiceSchema, error) {
 	resolution, err := a.resolveLocalServiceSchemaDetailed(ctx, manifestPath, service, refresh)
 	if err != nil {

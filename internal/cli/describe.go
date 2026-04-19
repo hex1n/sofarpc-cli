@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hex1n/sofarpc-cli/internal/config"
-	"github.com/hex1n/sofarpc-cli/internal/model"
-	"github.com/hex1n/sofarpc-cli/internal/runtime"
+	appdescribe "github.com/hex1n/sofarpc-cli/internal/app/describe"
 )
 
 func (a *App) runDescribe(args []string) error {
@@ -37,88 +35,25 @@ func (a *App) runDescribe(args []string) error {
 	service := positionals[0]
 
 	resolvedManifest := resolveManifestPath(a.Cwd, manifestPath)
-	localResolution, localErr := a.resolveLocalServiceSchemaDetailed(context.Background(), resolvedManifest, service, refresh)
-	if localErr == nil {
-		if fullResponse {
-			return printJSON(a.Stdout, model.DescribeReport{
-				Schema: &localResolution.Schema,
-				Diagnostics: model.DiagnosticInfo{
-					ContractSource:   contractSourceLabel(localResolution.Source),
-					ContractCacheHit: localResolution.CacheHit,
-					ContractNotes:    localResolution.Notes,
-				},
-			})
-		}
-		return printJSON(a.Stdout, localResolution.Schema)
-	}
-	manifest, _, err := config.LoadManifest(resolvedManifest)
+	result, err := a.newDescribeResolver().Execute(context.Background(), appdescribe.Request{
+		Cwd:            a.Cwd,
+		ManifestPath:   resolvedManifest,
+		StubPathCSV:    stubPathCSV,
+		SofaRPCVersion: sofaRPCVersion,
+		JavaBin:        javaBin,
+		RuntimeJar:     runtimeJar,
+		Service:        service,
+		Refresh:        refresh,
+	})
 	if err != nil {
 		if fullResponse {
-			return a.writeDescribeFailure(err, localResolution.Notes, nil, nil, "")
+			return writeDescribeFailureReport(a.Stderr, err, result.Diagnostics)
 		}
 		return err
 	}
-	stubPaths, err := resolveStubPaths(a.Cwd, resolvedManifest, manifest.StubPaths, stubPathCSV, service)
-	if err != nil {
-		if fullResponse {
-			return a.writeDescribeFailure(err, localResolution.Notes, nil, nil, "")
-		}
-		return err
-	}
-	version, _ := resolveSofaRPCVersion(sofaRPCVersion, manifest.SofaRPCVersion)
-	if javaBin == "" {
-		javaBin = "java"
-	}
-	spec, err := a.Runtime.ResolveSpec(javaBin, runtimeJar, version, stubPaths)
-	if err != nil {
-		if fullResponse {
-			return a.writeDescribeFailure(err, localResolution.Notes, stubPaths, nil, "")
-		}
-		return err
-	}
-	schema, err := a.Runtime.DescribeServiceLegacyFallback(context.Background(), spec, service, runtime.DescribeOptions{Refresh: refresh})
-	if err != nil {
-		if fullResponse {
-			return a.writeDescribeFailure(err, localResolution.Notes, stubPaths, &spec, "legacy-worker-describe")
-		}
-		return err
-	}
+	schema := result.Schema
 	if fullResponse {
-		return printJSON(a.Stdout, model.DescribeReport{
-			Schema: &schema,
-			Diagnostics: model.DiagnosticInfo{
-				ContractSource:  "legacy-worker-describe",
-				ContractNotes:   localResolution.Notes,
-				WorkerClasspath: workerClasspathMode(stubPaths),
-				RuntimeJar:      spec.RuntimeJar,
-				RuntimeVersion:  spec.SofaRPCVersion,
-				JavaBin:         spec.JavaBin,
-				JavaMajor:       spec.JavaMajor,
-				DaemonKey:       spec.DaemonKey,
-			},
-		})
+		return printJSON(a.Stdout, buildSuccessDescribeReport(*schema, result.Diagnostics))
 	}
 	return printJSON(a.Stdout, schema)
-}
-
-func (a *App) writeDescribeFailure(err error, contractNotes []string, stubPaths []string, spec *runtime.Spec, contractSource string) error {
-	report := model.DescribeReport{
-		Error: err.Error(),
-		Diagnostics: model.DiagnosticInfo{
-			ContractSource:  contractSource,
-			ContractNotes:   contractNotes,
-			WorkerClasspath: workerClasspathMode(stubPaths),
-		},
-	}
-	if spec != nil {
-		report.Diagnostics.RuntimeJar = spec.RuntimeJar
-		report.Diagnostics.RuntimeVersion = spec.SofaRPCVersion
-		report.Diagnostics.JavaBin = spec.JavaBin
-		report.Diagnostics.JavaMajor = spec.JavaMajor
-		report.Diagnostics.DaemonKey = spec.DaemonKey
-	}
-	if printErr := printJSON(a.Stderr, report); printErr != nil {
-		return printErr
-	}
-	return &exitError{message: "describe failed", silent: true}
 }

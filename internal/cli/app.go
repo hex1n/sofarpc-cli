@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	sessionadapter "github.com/hex1n/sofarpc-cli/internal/adapters/session"
 	"github.com/hex1n/sofarpc-cli/internal/config"
 	"github.com/hex1n/sofarpc-cli/internal/metadata"
+	"github.com/hex1n/sofarpc-cli/internal/ports"
 	"github.com/hex1n/sofarpc-cli/internal/runtime"
 	"github.com/hex1n/sofarpc-cli/internal/targetmodel"
 )
@@ -24,6 +26,7 @@ type App struct {
 	Paths    config.Paths
 	Runtime  *runtime.Manager
 	Metadata *metadata.Manager
+	Sessions ports.SessionStore
 }
 
 type exitError struct {
@@ -58,6 +61,7 @@ func New(stdin io.Reader, stdout, stderr io.Writer, cwd string) (*App, error) {
 		Paths:    paths,
 		Runtime:  runtime.NewManager(paths, cwd),
 		Metadata: metadata.NewManager(paths, cwd),
+		Sessions: sessionadapter.NewMemoryStore(),
 	}, nil
 }
 

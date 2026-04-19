@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	appinvoke "github.com/hex1n/sofarpc-cli/internal/app/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/model"
-	"github.com/hex1n/sofarpc-cli/internal/runtime"
 )
 
 func (a *App) runCall(args []string) error {
@@ -63,70 +63,13 @@ func (a *App) runCall(args []string) error {
 		return err
 	}
 	input.ArgsJSON = resolvedArgs
-	resolved, err := a.resolveInvocation(input)
+	result, err := a.newInvokeExecutor().Execute(context.Background(), appinvoke.Request{
+		Input: input,
+	})
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
-	contractSource, contractCacheHit, contractNotes, err := a.applyProjectMethodContract(ctx, &resolved, input.RefreshContract)
-	if err != nil {
-		return err
-	}
-	spec, err := a.Runtime.ResolveSpec(resolved.JavaBin, resolved.RuntimeJar, resolved.SofaRPCVersion, resolved.StubPaths)
-	if err != nil {
-		return err
-	}
-	if contractSource == "" && (len(resolved.Request.ParamTypes) == 0 || resolved.Request.PayloadMode == model.PayloadSchema) {
-		schemaResolution, describeErr := a.resolveServiceSchemaDetailed(ctx, resolved.ManifestPath, spec, resolved.Request.Service, runtime.DescribeOptions{NoCache: input.RefreshContract})
-		if describeErr != nil {
-			return fmt.Errorf("infer paramTypes via describe: %w", describeErr)
-		}
-		methodSchema, err := pickMethodSchema(schemaResolution.Schema, resolved.Request.Method, resolved.Request.Args, resolved.Request.ParamTypes)
-		if err != nil {
-			return err
-		}
-		if len(resolved.Request.ParamTypes) == 0 {
-			resolved.Request.ParamTypes = methodSchema.ParamTypes
-		}
-		if resolved.Request.PayloadMode == model.PayloadSchema {
-			resolved.Request.ParamTypeSignatures = methodSchema.ParamTypeSignatures
-		}
-		if contractSource == "" && schemaResolution.Source != "" {
-			contractSource = schemaResolution.Source
-		}
-		if !contractCacheHit && schemaResolution.CacheHit {
-			contractCacheHit = true
-		}
-		if len(contractNotes) == 0 && len(schemaResolution.Notes) > 0 {
-			contractNotes = append([]string{}, schemaResolution.Notes...)
-		}
-	}
-	if resolved.Request.PayloadMode == model.PayloadSchema && len(resolved.Request.ParamTypeSignatures) == 0 {
-		resolved.Request.ParamTypeSignatures = append([]string{}, resolved.Request.ParamTypes...)
-	}
-	if contractSource == "" {
-		if wrapped, ok := maybeWrapSingleArg(resolved.Request.Args, len(resolved.Request.ParamTypes)); ok {
-			resolved.Request.Args = wrapped
-		}
-	}
-	resolved.Request.RequestID = randomID()
-	metadata, err := a.Runtime.EnsureDaemon(ctx, spec)
-	if err != nil {
-		return err
-	}
-	response, err := a.Runtime.Invoke(ctx, metadata, resolved.Request)
-	if err != nil {
-		return err
-	}
-	response.Diagnostics.RuntimeJar = spec.RuntimeJar
-	response.Diagnostics.RuntimeVersion = spec.SofaRPCVersion
-	response.Diagnostics.JavaBin = spec.JavaBin
-	response.Diagnostics.JavaMajor = spec.JavaMajor
-	response.Diagnostics.DaemonKey = spec.DaemonKey
-	response.Diagnostics.ContractSource = contractSourceLabel(contractSource)
-	response.Diagnostics.ContractCacheHit = contractCacheHit
-	response.Diagnostics.ContractNotes = contractNotes
-	response.Diagnostics.WorkerClasspath = workerClasspathMode(resolved.StubPaths)
+	response := result.Response
 	if !response.OK {
 		if err := printJSON(a.Stderr, response); err != nil {
 			return err
@@ -140,14 +83,10 @@ func (a *App) runCall(args []string) error {
 	if fullResponse {
 		return printJSON(a.Stdout, response)
 	}
-	if len(response.Result) == 0 {
+	if result.OKOnly {
 		return printJSON(a.Stdout, map[string]any{"ok": true})
 	}
-	var pretty any
-	if err := json.Unmarshal(response.Result, &pretty); err != nil {
-		return fmt.Errorf("worker returned invalid result payload: %w", err)
-	}
-	return printJSON(a.Stdout, pretty)
+	return printJSON(a.Stdout, result.Pretty)
 }
 
 func randomID() string {
