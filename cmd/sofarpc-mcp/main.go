@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
@@ -20,8 +22,16 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// shutdownGrace bounds how long Close waits for pooled workers to stop
+// on SIGINT/SIGTERM. Longer than worker.Spec.StopGrace (2s) so normal
+// shutdowns finish, short enough that a stuck JVM doesn't wedge the
+// orchestrator waiting for our exit.
+const shutdownGrace = 5 * time.Second
+
 func main() {
-	if err := run(context.Background()); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -36,7 +46,14 @@ func run(ctx context.Context) error {
 		Worker:        workerClient,
 		Reindexer:     loadReindexer(projectRoot),
 	})
-	defer workerClient.Close(context.Background())
+	defer func() {
+		// Use a fresh, bounded context — ctx is already cancelled by the
+		// time we reach this defer, and Close on a cancelled context
+		// returns instantly without stopping any JVMs.
+		closeCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		_ = workerClient.Close(closeCtx)
+	}()
 	return server.Run(ctx, &sdkmcp.StdioTransport{})
 }
 
@@ -122,7 +139,7 @@ func loadReindexer(projectRoot string) mcpserver.Reindexer {
 		return nil
 	}
 	spec := indexer.Spec{
-		Java:        os.Getenv("SOFARPC_JAVA"),
+		Java:        indexerJavaFromEnv(),
 		Jar:         jar,
 		ProjectRoot: projectRoot,
 		Sources:     sources,
@@ -134,6 +151,19 @@ func loadReindexer(projectRoot string) mcpserver.Reindexer {
 		}
 		return indexer.Load(projectRoot)
 	})
+}
+
+// indexerJavaFromEnv resolves which JDK the indexer subprocess should
+// run on. The indexer and worker are decoupled by design: recent Spoon
+// releases need JDK 11+ to run, but the worker must match the target
+// service's JDK (often 8 for SOFA deployments). SOFARPC_INDEXER_JAVA
+// wins; SOFARPC_JAVA is the fallback so existing single-JDK setups keep
+// working unchanged.
+func indexerJavaFromEnv() string {
+	if v := os.Getenv("SOFARPC_INDEXER_JAVA"); v != "" {
+		return v
+	}
+	return os.Getenv("SOFARPC_JAVA")
 }
 
 // indexerSourcesFromEnv resolves the source roots to pass to the indexer.

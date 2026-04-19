@@ -31,9 +31,15 @@ type FacadeState struct {
 
 // Capabilities is an up-front capability banner so agents know which
 // tools will succeed without round-tripping. Keep field names stable.
+//
+// Reindex tells the agent whether sofarpc_describe refresh=true is a
+// real recovery path: without a wired indexer the handler will reject
+// refresh up-front, and the agent should skip it rather than learn
+// that the hard way.
 type Capabilities struct {
 	FacadeIndex bool `json:"facadeIndex"`
 	Worker      bool `json:"worker"`
+	Reindex     bool `json:"reindex"`
 }
 
 // facadeBanner is implemented by facade stores that can cheaply report
@@ -48,6 +54,7 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 	envCfg := opts.TargetSources.Env
 	sessions := opts.Sessions
 	workerReady := opts.Worker != nil && !opts.Worker.Profile.Empty()
+	reindexReady := opts.Reindexer != nil
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_open",
 		Description: "Open a sofarpc workspace. Returns the resolved target, facade state, and a session id the agent can reuse in subsequent calls.",
@@ -86,6 +93,7 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 			Capabilities: Capabilities{
 				FacadeIndex: facade != nil,
 				Worker:      workerReady,
+				Reindex:     reindexReady,
 			},
 		}
 
@@ -103,5 +111,13 @@ func summarizeOpen(out OpenOutput) string {
 	if out.Target.Mode != "" {
 		targetState = fmt.Sprintf("target.mode=%s", out.Target.Mode)
 	}
-	return fmt.Sprintf("%s project=%s %s", out.SessionID, out.ProjectRoot, targetState)
+	base := fmt.Sprintf("%s project=%s %s", out.SessionID, out.ProjectRoot, targetState)
+	// When the facade is empty but a reindexer is wired, point the agent
+	// at the concrete recovery path instead of waiting for a later
+	// describe call to fail. This is the one place we know both facts
+	// up-front.
+	if !out.Facade.Indexed && out.Capabilities.Reindex {
+		base += " — call sofarpc_describe refresh=true to populate the index"
+	}
+	return base
 }

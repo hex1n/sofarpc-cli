@@ -38,6 +38,13 @@ func New(opts Options) *sdkmcp.Server {
 	if opts.Sessions == nil {
 		opts.Sessions = NewSessionStore()
 	}
+	// Wrap the reindexer so concurrent refresh=true calls collapse onto
+	// one Spoon subprocess. Test fakes pass through unchanged because
+	// they rarely race and the wrapper is transparent to sequential
+	// callers.
+	if opts.Reindexer != nil {
+		opts.Reindexer = newDedupReindexer(opts.Reindexer)
+	}
 	holder := newFacadeHolder(opts.Facade)
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{
 		Name:    serverName,

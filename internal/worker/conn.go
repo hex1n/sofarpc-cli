@@ -18,8 +18,9 @@ import (
 // Responses as JSON lines. RequestID correlates them so multiple
 // callers can have requests in flight at once.
 //
-// Lifetime: NewConn → Send… → Close. After Close, every in-flight Send
-// returns ErrConnClosed; every new Send returns ErrConnClosed too.
+// Lifetime: NewConn → Send… → Close. After Close, in-flight Sends that
+// had already flushed their request return ErrConnLost; Sends that
+// hadn't yet written (and all new Sends) return ErrConnClosed.
 type Conn struct {
 	conn   net.Conn
 	writer *bufio.Writer
@@ -33,9 +34,18 @@ type Conn struct {
 	readErr  atomic.Value // error
 }
 
-// ErrConnClosed is returned from Send after the conn has been closed
-// (locally via Close, or remotely by the worker dropping the socket).
+// ErrConnClosed is returned from Send when the conn was already closed
+// before the request was written to the socket. The request never left
+// this process, so retrying on a fresh conn is safe.
 var ErrConnClosed = errors.New("worker: connection closed")
+
+// ErrConnLost is returned from Send when the conn was closed after the
+// request was flushed but before a response arrived. The worker may or
+// may not have processed the request — the outcome is unobservable
+// from the client side. Callers MUST NOT retry non-idempotent actions
+// on this error; the client layer lifts it into
+// errcode.InvocationUncertain so agents can decide.
+var ErrConnLost = errors.New("worker: connection lost mid-flight")
 
 // NewConn takes ownership of c and starts the reader goroutine. The
 // caller MUST eventually call Conn.Close to release the goroutine.
@@ -78,11 +88,15 @@ func (c *Conn) Send(ctx context.Context, req Request) (Response, error) {
 		c.dropPending(id)
 		return Response{}, ctx.Err()
 	case <-c.closed:
+		// The request was flushed successfully — a close observed here
+		// leaves the outcome unknowable, so we surface ErrConnLost
+		// rather than ErrConnClosed. The pre-send ErrConnClosed path
+		// above is reserved for "never hit the wire".
 		c.dropPending(id)
 		if err, _ := c.readErr.Load().(error); err != nil && !errors.Is(err, io.EOF) {
 			return Response{}, fmt.Errorf("worker: %w", err)
 		}
-		return Response{}, ErrConnClosed
+		return Response{}, ErrConnLost
 	}
 }
 

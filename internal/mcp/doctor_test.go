@@ -124,8 +124,14 @@ func TestDoctor_WiredWorkerThatPingsReportsReady(t *testing.T) {
 	if !workerCheck.Ok {
 		t.Fatalf("worker check should pass, got %+v", workerCheck)
 	}
-	if workerCheck.Detail != "worker ready" {
-		t.Fatalf("expected 'worker ready', got %q", workerCheck.Detail)
+	if !strings.Contains(workerCheck.Detail, "worker ready") {
+		t.Fatalf("detail should include 'worker ready', got %q", workerCheck.Detail)
+	}
+	// After the ping the pool has one live worker against the default
+	// cap of 8. The exact render is checked in pool-focused tests; here
+	// we only assert the load pair shows up.
+	if !strings.Contains(workerCheck.Detail, "1/8") {
+		t.Fatalf("detail should surface pool load '1/8', got %q", workerCheck.Detail)
 	}
 	if !sawPing {
 		t.Fatal("doctor should have sent a ping request")

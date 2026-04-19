@@ -115,13 +115,136 @@ func TestBuildSkeleton_PrimitivesAndStrings(t *testing.T) {
 	}
 }
 
-func TestBuildSkeleton_ContainerRendersEmpty(t *testing.T) {
-	sk := BuildSkeleton([]string{"java.util.List<com.foo.Order>", "java.util.Map<java.lang.String,java.lang.Long>"}, NewInMemoryStore())
+func TestBuildSkeleton_ContainerWithoutTypeArgsFallsBackToEmpty(t *testing.T) {
+	// Erasure can strip type parameters; without them the agent has no
+	// way to know the element type, so an empty placeholder is the only
+	// honest answer.
+	sk := BuildSkeleton([]string{"java.util.List", "java.util.Map"}, NewInMemoryStore())
 	if string(sk[0]) != `[]` {
-		t.Fatalf("List skeleton: %s", sk[0])
+		t.Fatalf("bare List: %s", sk[0])
 	}
 	if string(sk[1]) != `{}` {
-		t.Fatalf("Map skeleton: %s", sk[1])
+		t.Fatalf("bare Map: %s", sk[1])
+	}
+}
+
+func TestBuildSkeleton_ListExpandsElementType(t *testing.T) {
+	store := NewInMemoryStore(facadesemantic.Class{
+		FQN:  "com.foo.Order",
+		Kind: facadesemantic.KindClass,
+		Fields: []facadesemantic.Field{
+			{Name: "id", JavaType: "java.lang.Long"},
+		},
+	})
+	sk := BuildSkeleton([]string{"java.util.List<com.foo.Order>"}, store)
+	// Outer is an array with exactly one element — the element must be
+	// the Order skeleton with @type so Hessian2 can pick the class.
+	var arr []any
+	if err := json.Unmarshal(sk[0], &arr); err != nil {
+		t.Fatalf("not a JSON array: %s — %v", sk[0], err)
+	}
+	if len(arr) != 1 {
+		t.Fatalf("expected one sample element; got %v", arr)
+	}
+	elem, ok := arr[0].(map[string]any)
+	if !ok {
+		t.Fatalf("element should be an object; got %T", arr[0])
+	}
+	if elem["@type"] != "com.foo.Order" {
+		t.Fatalf("element @type should be com.foo.Order; got %v", elem)
+	}
+	if _, has := elem["id"]; !has {
+		t.Fatalf("element should include id field; got %v", elem)
+	}
+}
+
+func TestBuildSkeleton_MapExpandsValueType(t *testing.T) {
+	store := NewInMemoryStore(facadesemantic.Class{
+		FQN:  "com.foo.Bar",
+		Kind: facadesemantic.KindClass,
+		Fields: []facadesemantic.Field{
+			{Name: "name", JavaType: "java.lang.String"},
+		},
+	})
+	sk := BuildSkeleton([]string{"java.util.Map<java.lang.String, com.foo.Bar>"}, store)
+	var obj map[string]any
+	if err := json.Unmarshal(sk[0], &obj); err != nil {
+		t.Fatalf("not a JSON object: %s — %v", sk[0], err)
+	}
+	val, has := obj["<key>"]
+	if !has {
+		t.Fatalf("map skeleton should use <key> as placeholder; got %v", obj)
+	}
+	entry, ok := val.(map[string]any)
+	if !ok {
+		t.Fatalf("map value should be Bar object; got %T", val)
+	}
+	if entry["@type"] != "com.foo.Bar" {
+		t.Fatalf("map value @type should be com.foo.Bar; got %v", entry)
+	}
+}
+
+func TestBuildSkeleton_NestedGenericsRoundTrip(t *testing.T) {
+	// Map<String, List<Foo>> — nested generic with a user type inside.
+	// The outer comma must not split the inner List<Foo>, and the inner
+	// List element must be the Foo skeleton.
+	store := NewInMemoryStore(facadesemantic.Class{
+		FQN:  "com.foo.Foo",
+		Kind: facadesemantic.KindClass,
+		Fields: []facadesemantic.Field{
+			{Name: "label", JavaType: "java.lang.String"},
+		},
+	})
+	sk := BuildSkeleton([]string{"java.util.Map<java.lang.String, java.util.List<com.foo.Foo>>"}, store)
+	var obj map[string]any
+	if err := json.Unmarshal(sk[0], &obj); err != nil {
+		t.Fatalf("not JSON: %s — %v", sk[0], err)
+	}
+	inner, ok := obj["<key>"].([]any)
+	if !ok {
+		t.Fatalf("nested list missing; got %T", obj["<key>"])
+	}
+	if len(inner) != 1 {
+		t.Fatalf("nested list should carry one sample; got %v", inner)
+	}
+	elem, ok := inner[0].(map[string]any)
+	if !ok {
+		t.Fatalf("inner element should be Foo object; got %T", inner[0])
+	}
+	if elem["@type"] != "com.foo.Foo" {
+		t.Fatalf("inner @type should be com.foo.Foo; got %v", elem)
+	}
+}
+
+func TestBuildSkeleton_ArrayWrapsElement(t *testing.T) {
+	sk := BuildSkeleton([]string{"java.lang.String[]"}, NewInMemoryStore())
+	if string(sk[0]) != `[""]` {
+		t.Fatalf("String[] should render as array of String placeholder; got %s", sk[0])
+	}
+}
+
+func TestBuildSkeleton_WildcardResolvesToBound(t *testing.T) {
+	store := NewInMemoryStore(facadesemantic.Class{
+		FQN:  "com.foo.Item",
+		Kind: facadesemantic.KindClass,
+		Fields: []facadesemantic.Field{
+			{Name: "sku", JavaType: "java.lang.String"},
+		},
+	})
+	// `List<? extends Item>` is a consumer — agent reads Items out. We
+	// still render the Item skeleton so the agent sees the expected
+	// shape.
+	sk := BuildSkeleton([]string{"java.util.List<? extends com.foo.Item>"}, store)
+	var arr []any
+	if err := json.Unmarshal(sk[0], &arr); err != nil {
+		t.Fatalf("not JSON: %s", sk[0])
+	}
+	if len(arr) != 1 {
+		t.Fatalf("expected one element; got %v", arr)
+	}
+	elem := arr[0].(map[string]any)
+	if elem["@type"] != "com.foo.Item" {
+		t.Fatalf("wildcard should resolve to Item; got %v", elem)
 	}
 }
 

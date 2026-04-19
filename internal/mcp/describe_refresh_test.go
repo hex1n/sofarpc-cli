@@ -46,7 +46,7 @@ func TestDescribe_RefreshPopulatesEmptyFacade(t *testing.T) {
 	}
 }
 
-func TestDescribe_RefreshFailureSurfacesIndexStale(t *testing.T) {
+func TestDescribe_RefreshFailureSurfacesIndexerFailed(t *testing.T) {
 	reindexer := ReindexerFunc(func(ctx context.Context) (contract.Store, error) {
 		return nil, errors.New("spoon jar missing")
 	})
@@ -58,8 +58,11 @@ func TestDescribe_RefreshFailureSurfacesIndexStale(t *testing.T) {
 	if out.Error == nil {
 		t.Fatal("error should be populated when reindex fails")
 	}
-	if out.Error.Code != errcode.IndexStale {
-		t.Fatalf("code: got %q want %q", out.Error.Code, errcode.IndexStale)
+	// A subprocess crash is not "index is stale" — surfacing IndexStale
+	// would tempt the agent to retry refresh forever. IndexerFailed
+	// routes the human at doctor instead.
+	if out.Error.Code != errcode.IndexerFailed {
+		t.Fatalf("code: got %q want %q", out.Error.Code, errcode.IndexerFailed)
 	}
 	if out.Error.Hint == nil || out.Error.Hint.NextTool != "sofarpc_doctor" {
 		t.Fatalf("hint should route to sofarpc_doctor on reindex failure, got %+v", out.Error.Hint)
@@ -105,6 +108,14 @@ func TestDescribe_FacadeNotConfiguredHintsSelfHealWhenReindexerPresent(t *testin
 	}
 	if refresh, _ := out.Error.Hint.NextArgs["refresh"].(bool); !refresh {
 		t.Fatalf("self-heal hint should carry refresh=true, got %+v", out.Error.Hint.NextArgs)
+	}
+	// The hint must also preserve the original service/method so the
+	// agent can follow it verbatim without remembering the failed call.
+	if svc, _ := out.Error.Hint.NextArgs["service"].(string); svc != "com.foo.Svc" {
+		t.Fatalf("self-heal hint should carry service, got %q", svc)
+	}
+	if m, _ := out.Error.Hint.NextArgs["method"].(string); m != "doThing" {
+		t.Fatalf("self-heal hint should carry method, got %q", m)
 	}
 }
 

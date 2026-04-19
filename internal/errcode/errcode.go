@@ -24,6 +24,13 @@ const (
 	// Workspace / project errors.
 	FacadeNotConfigured Code = "workspace.facade-not-configured"
 	IndexStale          Code = "workspace.index-stale"
+	// IndexerFailed is surfaced when the indexer subprocess itself
+	// failed (jar path wrong, Spoon crashed, timeout, …). Distinct from
+	// IndexStale, which means the existing index is out of date and a
+	// retry-with-refresh is likely to fix it; IndexerFailed means the
+	// indexer cannot produce a fresh index at all, so the fix is
+	// configuration-side rather than agent-retryable.
+	IndexerFailed Code = "workspace.indexer-failed"
 
 	// Runtime / daemon errors.
 	DaemonUnavailable  Code = "runtime.daemon-unavailable"
@@ -31,6 +38,13 @@ const (
 	DeserializeFailed  Code = "runtime.deserialize-failed"
 	InvocationTimeout  Code = "runtime.timeout"
 	InvocationRejected Code = "runtime.rejected"
+	// InvocationUncertain is surfaced when the worker disconnected after
+	// the client had already written the request but before a response
+	// arrived. The outcome is unknowable from the client side, so the
+	// agent must decide whether to retry — safe for idempotent calls,
+	// unsafe otherwise. Distinct from DaemonUnavailable (worker never
+	// reached) and WorkerError (worker answered with a failure).
+	InvocationUncertain Code = "runtime.invocation-uncertain"
 )
 
 // Hint points the agent at its next action. NextTool names a tool the agent

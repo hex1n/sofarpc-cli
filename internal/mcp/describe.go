@@ -75,10 +75,14 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *facadeHolder)
 			}
 			newStore, err := reindexer.Reindex(ctx)
 			if err != nil {
+				// IndexerFailed (not IndexStale): the indexer subprocess
+				// itself could not produce a fresh index. Another refresh
+				// won't fix it — the agent should route the human to
+				// doctor instead of retrying.
 				out := DescribeOutput{
 					Service: in.Service,
 					Method:  in.Method,
-					Error: errcode.New(errcode.IndexStale, "describe",
+					Error: errcode.New(errcode.IndexerFailed, "describe",
 						"indexer run failed: "+err.Error()).
 						WithHint("sofarpc_doctor", nil,
 							"inspect indexer output; source roots or jar path may be wrong"),
@@ -94,7 +98,7 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *facadeHolder)
 			out := DescribeOutput{
 				Service: in.Service,
 				Method:  in.Method,
-				Error:   facadeNotConfiguredError(reindexer != nil),
+				Error:   facadeNotConfiguredError(in.Service, in.Method, reindexer != nil),
 			}
 			return errorResult(out), out, nil
 		}
@@ -140,11 +144,23 @@ func errorResult(out DescribeOutput) *sdkmcp.CallToolResult {
 // whether a reindexer is wired. With one, the agent can self-heal by
 // calling describe again with refresh=true; without one, only a human
 // can fix the config, so we point at sofarpc_doctor.
-func facadeNotConfiguredError(canReindex bool) *errcode.Error {
+//
+// service/method are threaded in so the self-heal hint carries the
+// original call's context. Without them the agent would have to
+// remember and re-supply them, defeating the "follow the hint
+// verbatim" contract.
+func facadeNotConfiguredError(service, method string, canReindex bool) *errcode.Error {
 	err := errcode.New(errcode.FacadeNotConfigured, "describe",
 		"facade index is not configured")
 	if canReindex {
-		return err.WithHint("sofarpc_describe", map[string]any{"refresh": true},
+		args := map[string]any{"refresh": true}
+		if service != "" {
+			args["service"] = service
+		}
+		if method != "" {
+			args["method"] = method
+		}
+		return err.WithHint("sofarpc_describe", args,
 			"run the indexer first, then describe again")
 	}
 	return err.WithHint("sofarpc_doctor", nil,

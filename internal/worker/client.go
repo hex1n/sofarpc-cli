@@ -27,10 +27,16 @@ type Client struct {
 // errcode.DaemonUnavailable so the MCP handler doesn't need to tell
 // "worker not configured" apart from "worker unreachable".
 //
-// Self-heal: when Send returns ErrConnClosed (the worker JVM died mid-
-// request or between requests), we evict the dead slot from the pool
-// and retry once with a fresh spawn. A persistently broken worker
-// fails on the second attempt and surfaces DaemonUnavailable.
+// Self-heal: when Send returns ErrConnClosed (the request never hit
+// the wire because the pooled conn was already dead), we evict the
+// dead slot and retry once with a fresh spawn. A persistently broken
+// worker fails on the second attempt and surfaces DaemonUnavailable.
+//
+// We deliberately do NOT retry on ErrConnLost (conn dropped after the
+// request was flushed). The worker may have processed the request
+// before it died, so replaying would double-apply a non-idempotent
+// call. Instead we evict the dead slot and surface
+// InvocationUncertain so the agent can decide.
 func (c *Client) Invoke(ctx context.Context, req Request) (Response, error) {
 	if c == nil || c.Pool == nil {
 		return Response{}, daemonUnavailable("worker client not configured; set SOFARPC_RUNTIME_JAR")
@@ -56,7 +62,14 @@ func (c *Client) Invoke(ctx context.Context, req Request) (Response, error) {
 				c.Pool.Evict(c.Profile)
 				continue
 			}
-			return Response{}, daemonUnavailable("worker connection closed mid-request")
+			return Response{}, daemonUnavailable("worker connection closed before request was sent")
+		}
+		if errors.Is(err, ErrConnLost) {
+			c.Pool.Evict(c.Profile)
+			return Response{}, errcode.New(errcode.InvocationUncertain, "invoke",
+				"worker disconnected after the request was sent; outcome is unknown").
+				WithHint("sofarpc_doctor", nil,
+					"check worker logs; rerun only if the action is idempotent")
 		}
 		return Response{}, errcode.New(errcode.WorkerError, "invoke",
 			"worker request failed: "+err.Error()).
