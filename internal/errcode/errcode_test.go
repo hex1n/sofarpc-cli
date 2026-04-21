@@ -31,8 +31,8 @@ func TestErrorWithoutHintOmitsField(t *testing.T) {
 }
 
 func TestErrorStringFallsBackToCode(t *testing.T) {
-	err := &Error{Code: WorkerError}
-	if err.Error() != "runtime.worker-error" {
+	err := &Error{Code: InvocationRejected}
+	if err.Error() != "runtime.rejected" {
 		t.Fatalf("expected code fallback, got %q", err.Error())
 	}
 }

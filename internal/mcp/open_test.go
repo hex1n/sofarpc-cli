@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
-	"github.com/hex1n/sofarpc-cli/internal/indexer"
+	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -28,8 +27,17 @@ func TestOpen_EmptyProjectSucceeds(t *testing.T) {
 	if out.Target.Mode != "" {
 		t.Fatalf("target.mode should be empty when no layer supplies it; got %q", out.Target.Mode)
 	}
-	if out.Capabilities.Worker {
-		t.Fatal("capabilities.worker should be false when no worker is configured")
+	if !out.Capabilities.DirectInvoke {
+		t.Fatal("capabilities.directInvoke should be true")
+	}
+	if out.Capabilities.Describe {
+		t.Fatal("capabilities.describe should be false when no contract store is attached")
+	}
+	if !out.Capabilities.Replay {
+		t.Fatal("capabilities.replay should be true when a session store is attached")
+	}
+	if out.Contract.Attached {
+		t.Fatal("contract.attached should be false when no contract store is attached")
 	}
 }
 
@@ -48,24 +56,57 @@ func TestOpen_SessionIsStoredAndRetrievable(t *testing.T) {
 	}
 }
 
-func TestOpen_ReindexCapabilityTracksOptions(t *testing.T) {
+func TestOpen_DescribeCapabilityTracksFacadeStore(t *testing.T) {
 	dir := t.TempDir()
 
-	// No reindexer wired → capability is false so the agent skips
-	// refresh=true as a recovery path.
 	out := callOpen(t, Options{}, map[string]any{"cwd": dir})
-	if out.Capabilities.Reindex {
-		t.Fatal("capabilities.reindex should be false when no Reindexer is wired")
+	if out.Capabilities.Describe {
+		t.Fatal("capabilities.describe should be false when no contract store is attached")
 	}
 
-	// With a Reindexer present → capability is true. We don't care what
-	// it would return; the banner only promises a refresh path exists.
-	reindexer := ReindexerFunc(func(context.Context) (contract.Store, error) {
-		return contract.NewInMemoryStore(), nil
+	store := contract.NewInMemoryStore(facadesemantic.Class{
+		FQN:     "com.foo.Svc",
+		Kind:    facadesemantic.KindInterface,
+		Methods: []facadesemantic.Method{{Name: "doThing"}},
 	})
-	out = callOpen(t, Options{Reindexer: reindexer}, map[string]any{"cwd": dir})
-	if !out.Capabilities.Reindex {
-		t.Fatal("capabilities.reindex should be true when a Reindexer is wired")
+	out = callOpen(t, Options{Facade: store}, map[string]any{"cwd": dir})
+	if !out.Capabilities.Describe {
+		t.Fatal("capabilities.describe should be true when a contract store is attached")
+	}
+	if !out.Contract.Attached {
+		t.Fatal("contract.attached should be true when a contract store is attached")
+	}
+	if out.Contract.Source != "contract-store" {
+		t.Fatalf("contract.source: got %q want contract-store", out.Contract.Source)
+	}
+}
+
+func TestOpen_ContractBannerIncludesSourceDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	writeOpenJava(t, dir, "src/main/java/com/foo/Svc.java", `
+package com.foo;
+public interface Svc {
+    String ping(String request);
+}
+`)
+
+	store, err := sourcecontract.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if store == nil {
+		t.Fatal("Load returned nil store")
+	}
+
+	out := callOpen(t, Options{Facade: store}, map[string]any{"cwd": dir})
+	if !out.Contract.Attached {
+		t.Fatal("contract.attached should be true")
+	}
+	if out.Contract.Source != "sourcecontract" {
+		t.Fatalf("contract.source: got %q want sourcecontract", out.Contract.Source)
+	}
+	if out.Contract.IndexedClasses != 1 || out.Contract.IndexedFiles != 1 || out.Contract.ParsedClasses != 0 {
+		t.Fatalf("contract banner: %+v", out.Contract)
 	}
 }
 
@@ -87,93 +128,15 @@ func TestOpen_InvalidProjectReturnsError(t *testing.T) {
 	}
 }
 
-func TestOpen_FacadeBannerReflectsLoadedIndex(t *testing.T) {
-	dir := t.TempDir()
-	// Seed an on-disk index with one interface and one DTO.
-	indexDir := filepath.Join(dir, indexer.DirName, "shards")
-	if err := os.MkdirAll(indexDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+func TestSummarizeOpen_RendersTargetMode(t *testing.T) {
+	out := OpenOutput{
+		SessionID:   "ws_x",
+		ProjectRoot: "/p",
+		Target:      target.Config{Mode: target.ModeDirect, DirectURL: "bolt://h:12200"},
 	}
-	mustWriteJSON(t, filepath.Join(indexDir, "svc.json"), facadesemantic.Class{
-		FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{{Name: "doThing"}},
-	})
-	mustWriteJSON(t, filepath.Join(indexDir, "dto.json"), facadesemantic.Class{
-		FQN: "com.foo.Dto", Kind: facadesemantic.KindClass,
-	})
-	mustWriteJSON(t, filepath.Join(dir, indexer.DirName, indexer.MetaFilename), indexer.Meta{
-		Version: 1,
-		Classes: map[string]string{
-			"com.foo.Svc": "shards/svc.json",
-			"com.foo.Dto": "shards/dto.json",
-		},
-	})
-
-	idx, err := indexer.Load(dir)
-	if err != nil {
-		t.Fatalf("load index: %v", err)
-	}
-
-	out := callOpen(t, Options{Facade: idx}, map[string]any{"cwd": dir})
-
-	if !out.Facade.Configured {
-		t.Fatal("facade.configured should be true when a store is attached")
-	}
-	if !out.Facade.Indexed {
-		t.Fatal("facade.indexed should be true when the index is non-empty")
-	}
-	if out.Facade.Services != 1 {
-		t.Fatalf("facade.services: got %d want 1 (only Svc is an interface)", out.Facade.Services)
-	}
-	if !out.Capabilities.FacadeIndex {
-		t.Fatal("capabilities.facadeIndex should be true")
-	}
-}
-
-// summarizeOpen pushes the one "here's how to self-heal" signal we can
-// give the agent without waiting for a describe failure. Four cases
-// cover the cartesian product of indexed × reindex-capable.
-func TestSummarizeOpen_SuggestsRefreshOnlyWhenActionable(t *testing.T) {
-	cases := []struct {
-		name        string
-		indexed     bool
-		canReindex  bool
-		wantSuggest bool
-	}{
-		{"empty facade + reindexer wired → suggest", false, true, true},
-		{"empty facade + no reindexer → stay quiet (nothing the agent can do)", false, false, false},
-		{"populated facade + reindexer → no suggestion needed", true, true, false},
-		{"populated facade + no reindexer → no suggestion needed", true, false, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			out := OpenOutput{
-				SessionID:   "ws_x",
-				ProjectRoot: "/p",
-				Target:      target.Config{Mode: target.ModeDirect, DirectURL: "bolt://h:12200"},
-				Facade:      FacadeState{Indexed: tc.indexed},
-				Capabilities: Capabilities{
-					FacadeIndex: tc.indexed,
-					Reindex:     tc.canReindex,
-				},
-			}
-			text := summarizeOpen(out)
-			gotSuggest := strings.Contains(text, "refresh=true")
-			if gotSuggest != tc.wantSuggest {
-				t.Fatalf("suggest=%v want %v; summary=%q", gotSuggest, tc.wantSuggest, text)
-			}
-		})
-	}
-}
-
-func mustWriteJSON(t *testing.T, path string, v any) {
-	t.Helper()
-	body, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if err := os.WriteFile(path, body, 0o644); err != nil {
-		t.Fatalf("write %q: %v", path, err)
+	text := summarizeOpen(out)
+	if text == "" {
+		t.Fatal("summary should not be empty")
 	}
 }
 
@@ -200,4 +163,15 @@ func callOpen(t *testing.T, opts Options, args map[string]any) OpenOutput {
 		t.Fatalf("unmarshal structured: %v", err)
 	}
 	return out
+}
+
+func writeOpenJava(t *testing.T, root, relative, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(relative))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
 }

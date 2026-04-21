@@ -7,7 +7,6 @@ package mcp
 import (
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
-	"github.com/hex1n/sofarpc-cli/internal/worker"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -23,27 +22,12 @@ type Options struct {
 	TargetSources target.Sources
 	Sessions      *SessionStore
 	Facade        contract.Store
-	// Worker, when set, sends non-dryRun invoke and replay requests to a
-	// real SOFARPC worker. Nil means the MCP server is running without
-	// a worker (every non-dryRun call surfaces DaemonUnavailable).
-	Worker *worker.Client
-	// Reindexer, when set, lets sofarpc_describe honor refresh=true by
-	// regenerating the facade index and swapping the produced Store into
-	// the shared holder so subsequent describe / invoke calls see it.
-	Reindexer Reindexer
 }
 
 // New returns an MCP server with the six sofarpc tools registered.
 func New(opts Options) *sdkmcp.Server {
 	if opts.Sessions == nil {
 		opts.Sessions = NewSessionStore()
-	}
-	// Wrap the reindexer so concurrent refresh=true calls collapse onto
-	// one Spoon subprocess. Test fakes pass through unchanged because
-	// they rarely race and the wrapper is transparent to sequential
-	// callers.
-	if opts.Reindexer != nil {
-		opts.Reindexer = newDedupReindexer(opts.Reindexer)
 	}
 	holder := newFacadeHolder(opts.Facade)
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{
@@ -76,7 +60,6 @@ type DescribeInput struct {
 	Service string   `json:"service,omitempty"`
 	Method  string   `json:"method,omitempty"`
 	Types   []string `json:"types,omitempty"`
-	Refresh bool     `json:"refresh,omitempty"`
 }
 
 // --- sofarpc_invoke (see invoke.go) ----------------------------------------
@@ -85,12 +68,15 @@ type DescribeInput struct {
 // agent can send a JSON array inline, or an "@<path>" string pointing at
 // a file that contains a JSON array of the same shape. Anything else is
 // rejected as input.args-invalid. Stdin ("-") is not accepted — the MCP
-// server's stdin carries the transport, not user data.
+// server's stdin carries the transport, not user data. Version and
+// TargetAppName are optional transport hints for direct invoke paths.
 type InvokeInput struct {
 	Service          string   `json:"service,omitempty"`
 	Method           string   `json:"method,omitempty"`
 	Types            []string `json:"types,omitempty"`
 	Args             any      `json:"args,omitempty"`
+	Version          string   `json:"version,omitempty"`
+	TargetAppName    string   `json:"targetAppName,omitempty"`
 	DirectURL        string   `json:"directUrl,omitempty"`
 	RegistryAddress  string   `json:"registryAddress,omitempty"`
 	RegistryProtocol string   `json:"registryProtocol,omitempty"`

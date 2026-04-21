@@ -62,9 +62,8 @@ func TestEnvConfig_EmptyEnvYieldsEmptyMode(t *testing.T) {
 	}
 }
 
-func TestEnvConfig_DirectUrlWinsOverRegistry(t *testing.T) {
+func TestEnvConfig_DirectURLWinsOverRegistry(t *testing.T) {
 	clearTargetEnv(t)
-	// Both set — direct wins, matching target.Resolve precedence.
 	t.Setenv("SOFARPC_DIRECT_URL", "bolt://host:1")
 	t.Setenv("SOFARPC_REGISTRY_ADDRESS", "zk://host:2")
 
@@ -92,150 +91,40 @@ func TestProjectRootFromEnv_FallsBackToCWD(t *testing.T) {
 	}
 }
 
-func TestIndexerSourcesFromEnv_ExplicitWins(t *testing.T) {
+func TestLoadFacade_LoadsJavaSources(t *testing.T) {
 	root := t.TempDir()
-	// Fabricate a src/main/java so we can prove the env overrides it.
-	mavenDir := filepath.Join(root, "src", "main", "java")
-	if err := os.MkdirAll(mavenDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	path := filepath.Join(root, "src", "main", "java", "com", "foo", "Svc.java")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
 	}
-	sep := string(os.PathListSeparator)
-	t.Setenv("SOFARPC_INDEXER_SOURCES", "/abs/a"+sep+"/abs/b")
+	if err := os.WriteFile(path, []byte(`
+package com.foo;
 
-	got := indexerSourcesFromEnv(root)
-	want := []string{"/abs/a", "/abs/b"}
-	if !equalStringSlices(got, want) {
-		t.Fatalf("got %v want %v", got, want)
+public interface Svc {
+    String ping(String input);
+}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	store := loadFacade(root)
+	if store == nil {
+		t.Fatal("loadFacade returned nil")
+	}
+	if store.Size() != 1 {
+		t.Fatalf("store.Size: got %d want 1", store.Size())
+	}
+	if _, ok := store.Class("com.foo.Svc"); !ok {
+		t.Fatal("Svc not found")
 	}
 }
 
-func TestIndexerSourcesFromEnv_EmptyEntriesAreDropped(t *testing.T) {
-	sep := string(os.PathListSeparator)
-	t.Setenv("SOFARPC_INDEXER_SOURCES", sep+"/abs/a"+sep+sep+"/abs/b"+sep)
-	got := indexerSourcesFromEnv("")
-	want := []string{"/abs/a", "/abs/b"}
-	if !equalStringSlices(got, want) {
-		t.Fatalf("got %v want %v", got, want)
+func TestLoadFacade_EmptyWorkspaceReturnsNil(t *testing.T) {
+	if got := loadFacade(t.TempDir()); got != nil {
+		t.Fatalf("loadFacade(empty) = %#v, want nil", got)
 	}
 }
 
-func TestIndexerSourcesFromEnv_FallbackMavenLayout(t *testing.T) {
-	t.Setenv("SOFARPC_INDEXER_SOURCES", "")
-	root := t.TempDir()
-	mavenDir := filepath.Join(root, "src", "main", "java")
-	if err := os.MkdirAll(mavenDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	got := indexerSourcesFromEnv(root)
-	if len(got) != 1 || got[0] != mavenDir {
-		t.Fatalf("got %v want [%s]", got, mavenDir)
-	}
-}
-
-func TestIndexerSourcesFromEnv_FallbackSkippedWhenMissing(t *testing.T) {
-	t.Setenv("SOFARPC_INDEXER_SOURCES", "")
-	// TempDir exists but has no src/main/java subtree.
-	if got := indexerSourcesFromEnv(t.TempDir()); got != nil {
-		t.Fatalf("expected nil, got %v", got)
-	}
-}
-
-func TestLoadReindexer_NilWithoutJar(t *testing.T) {
-	t.Setenv("SOFARPC_INDEXER_JAR", "")
-	if r := loadReindexer(t.TempDir()); r != nil {
-		t.Fatalf("expected nil reindexer without jar, got %T", r)
-	}
-}
-
-func TestLoadReindexer_NilWithoutProjectRoot(t *testing.T) {
-	t.Setenv("SOFARPC_INDEXER_JAR", "/abs/spoon.jar")
-	if r := loadReindexer(""); r != nil {
-		t.Fatalf("expected nil reindexer without project root, got %T", r)
-	}
-}
-
-func TestLoadReindexer_NilWhenNoSourcesResolvable(t *testing.T) {
-	t.Setenv("SOFARPC_INDEXER_JAR", "/abs/spoon.jar")
-	t.Setenv("SOFARPC_INDEXER_SOURCES", "")
-	// Empty TempDir with no src/main/java → fallback returns nil →
-	// loadReindexer logs a warning and returns nil.
-	if r := loadReindexer(t.TempDir()); r != nil {
-		t.Fatalf("expected nil reindexer when no sources, got %T", r)
-	}
-}
-
-func TestLoadReindexer_NonNilWhenJarAndSourcesPresent(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "src", "main", "java"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	t.Setenv("SOFARPC_INDEXER_JAR", "/abs/spoon.jar")
-	t.Setenv("SOFARPC_INDEXER_SOURCES", "")
-	if r := loadReindexer(root); r == nil {
-		t.Fatal("expected non-nil reindexer when jar + fallback sources are available")
-	}
-}
-
-func TestLoadWorker_NilWithoutJar(t *testing.T) {
-	t.Setenv("SOFARPC_RUNTIME_JAR", "")
-	if c := loadWorker(); c != nil {
-		t.Fatalf("expected nil client without jar, got %T", c)
-	}
-}
-
-func TestLoadWorker_NilWhenDigestMissing(t *testing.T) {
-	t.Setenv("SOFARPC_RUNTIME_JAR", "/abs/runtime.jar")
-	t.Setenv("SOFARPC_RUNTIME_JAR_DIGEST", "")
-	if c := loadWorker(); c != nil {
-		t.Fatalf("expected nil client without digest, got %T", c)
-	}
-}
-
-func TestLoadWorker_BuildsClientWhenFullyConfigured(t *testing.T) {
-	t.Setenv("SOFARPC_RUNTIME_JAR", "/abs/runtime.jar")
-	t.Setenv("SOFARPC_RUNTIME_JAR_DIGEST", "sha256:deadbeef")
-	t.Setenv("SOFARPC_VERSION", "5.12.0")
-	t.Setenv("SOFARPC_JAVA_MAJOR", "17")
-	client := loadWorker()
-	if client == nil {
-		t.Fatal("expected a client when all env is set")
-	}
-	if client.Profile.SOFARPCVersion != "5.12.0" {
-		t.Fatalf("profile version: got %q", client.Profile.SOFARPCVersion)
-	}
-	if client.Profile.RuntimeJarDigest != "sha256:deadbeef" {
-		t.Fatalf("profile digest: got %q", client.Profile.RuntimeJarDigest)
-	}
-	if client.Profile.JavaMajor != 17 {
-		t.Fatalf("java major: got %d", client.Profile.JavaMajor)
-	}
-	if client.Pool == nil {
-		t.Fatal("pool should be initialised")
-	}
-}
-
-func TestLoadWorker_DefaultsJavaMajorWhenUnset(t *testing.T) {
-	t.Setenv("SOFARPC_RUNTIME_JAR", "/abs/runtime.jar")
-	t.Setenv("SOFARPC_RUNTIME_JAR_DIGEST", "sha256:x")
-	t.Setenv("SOFARPC_JAVA_MAJOR", "")
-	t.Setenv("SOFARPC_VERSION", "")
-	client := loadWorker()
-	if client == nil {
-		t.Fatal("expected a client with defaulted fields")
-	}
-	if client.Profile.JavaMajor != 17 {
-		t.Fatalf("java major default: got %d want 17", client.Profile.JavaMajor)
-	}
-	if client.Profile.SOFARPCVersion != "unknown" {
-		t.Fatalf("version default: got %q want unknown", client.Profile.SOFARPCVersion)
-	}
-}
-
-// --- helpers ------------------------------------------------------------
-
-// clearTargetEnv resets every SOFARPC_* target variable, so tests that
-// assert derived Mode aren't contaminated by the developer's shell or
-// by sibling tests that left a var set.
 func clearTargetEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
@@ -250,16 +139,4 @@ func clearTargetEnv(t *testing.T) {
 	} {
 		t.Setenv(key, "")
 	}
-}
-
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

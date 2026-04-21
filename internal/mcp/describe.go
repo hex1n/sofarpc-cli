@@ -41,64 +41,24 @@ type DescribeOutput struct {
 }
 
 // DescribeDiagnostics surfaces contract-source metadata so agents can
-// decide whether to refresh (e.g. on IndexStale).
+// understand whether the answer came from attached contract guidance.
 type DescribeDiagnostics struct {
-	ContractSource string `json:"contractSource,omitempty"`
-	CacheHit       bool   `json:"cacheHit,omitempty"`
-	// Refreshed is true when this call regenerated the facade index
-	// before resolving. Agents can surface it so users see that a stale
-	// answer has been replaced with a fresh one.
-	Refreshed bool `json:"refreshed,omitempty"`
+	ContractSource string         `json:"contractSource,omitempty"`
+	CacheHit       bool           `json:"cacheHit,omitempty"`
+	Contract       ContractBanner `json:"contract,omitempty"`
 }
 
 func registerDescribe(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
-	reindexer := opts.Reindexer
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_describe",
-		Description: "Describe a service method: resolve overloads, list param/return types, and return a JSON skeleton populated from the local facade index. Pass refresh=true to regenerate the index before resolving.",
+		Description: "Describe a service method: resolve overloads, list param/return types, and return a JSON skeleton when contract information is available.",
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DescribeInput) (*sdkmcp.CallToolResult, DescribeOutput, error) {
-		refreshed := false
-		if in.Refresh {
-			if reindexer == nil {
-				// No indexer wired means the agent can't self-heal by
-				// retrying describe — it's a config problem, not a stale
-				// index. Route to doctor so the taxonomy matches reality.
-				out := DescribeOutput{
-					Service: in.Service,
-					Method:  in.Method,
-					Error: errcode.New(errcode.FacadeNotConfigured, "describe",
-						"refresh requested but no reindexer is configured").
-						WithHint("sofarpc_doctor", nil,
-							"set SOFARPC_INDEXER_JAR and SOFARPC_PROJECT_ROOT, then reopen"),
-				}
-				return errorResult(out), out, nil
-			}
-			newStore, err := reindexer.Reindex(ctx)
-			if err != nil {
-				// IndexerFailed (not IndexStale): the indexer subprocess
-				// itself could not produce a fresh index. Another refresh
-				// won't fix it — the agent should route the human to
-				// doctor instead of retrying.
-				out := DescribeOutput{
-					Service: in.Service,
-					Method:  in.Method,
-					Error: errcode.New(errcode.IndexerFailed, "describe",
-						"indexer run failed: "+err.Error()).
-						WithHint("sofarpc_doctor", nil,
-							"inspect indexer output; source roots or jar path may be wrong"),
-				}
-				return errorResult(out), out, nil
-			}
-			holder.Set(newStore)
-			refreshed = true
-		}
-
 		facade := holder.Get()
 		if facade == nil {
 			out := DescribeOutput{
 				Service: in.Service,
 				Method:  in.Method,
-				Error:   facadeNotConfiguredError(in.Service, in.Method, reindexer != nil),
+				Error:   facadeNotConfiguredError(),
 			}
 			return errorResult(out), out, nil
 		}
@@ -110,6 +70,7 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *facadeHolder)
 		}
 
 		skeleton := contract.BuildSkeleton(result.Method.ParamTypes, facade)
+		contractBanner := buildContractBanner(facade)
 		out := DescribeOutput{
 			Service:   in.Service,
 			Method:    in.Method,
@@ -117,8 +78,8 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *facadeHolder)
 			Selected:  result.Selected,
 			Skeleton:  decodedSkeleton(skeleton),
 			Diagnostics: DescribeDiagnostics{
-				ContractSource: "facade-store",
-				Refreshed:      refreshed,
+				ContractSource: contractBanner.Source,
+				Contract:       contractBanner,
 			},
 		}
 		return &sdkmcp.CallToolResult{
@@ -140,31 +101,11 @@ func errorResult(out DescribeOutput) *sdkmcp.CallToolResult {
 	}
 }
 
-// facadeNotConfiguredError picks the right recovery hint depending on
-// whether a reindexer is wired. With one, the agent can self-heal by
-// calling describe again with refresh=true; without one, only a human
-// can fix the config, so we point at sofarpc_doctor.
-//
-// service/method are threaded in so the self-heal hint carries the
-// original call's context. Without them the agent would have to
-// remember and re-supply them, defeating the "follow the hint
-// verbatim" contract.
-func facadeNotConfiguredError(service, method string, canReindex bool) *errcode.Error {
+func facadeNotConfiguredError() *errcode.Error {
 	err := errcode.New(errcode.FacadeNotConfigured, "describe",
-		"facade index is not configured")
-	if canReindex {
-		args := map[string]any{"refresh": true}
-		if service != "" {
-			args["service"] = service
-		}
-		if method != "" {
-			args["method"] = method
-		}
-		return err.WithHint("sofarpc_describe", args,
-			"run the indexer first, then describe again")
-	}
+		"contract information is not available for this workspace")
 	return err.WithHint("sofarpc_doctor", nil,
-		"indexer is not wired yet; see docs/architecture.md §6")
+		"doctor reports whether this workspace can describe methods or must use trusted-mode invoke")
 }
 
 func asErrcodeError(err error) *errcode.Error {

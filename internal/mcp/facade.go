@@ -6,10 +6,9 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 )
 
-// facadeHolder owns the current facade store behind a mutex so
-// sofarpc_describe refresh=true can swap a regenerated Index into place
-// while other tools continue to serve in-flight calls. Readers take a
-// snapshot via Get; writers replace the inner store via Set.
+// facadeHolder owns the current contract store behind a mutex so the MCP
+// handlers can share one stable snapshot. Readers take a snapshot via Get;
+// writers replace the inner store via Set.
 //
 // A nil holder and a holder whose inner store is nil both mean "no
 // facade configured" — handlers decide by checking the store returned

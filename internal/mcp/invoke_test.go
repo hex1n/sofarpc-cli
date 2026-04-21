@@ -1,21 +1,27 @@
 package mcp
 
 import (
-	"bufio"
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/hex1n/sofarpc-cli/internal/boltclient"
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	coreinvoke "github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
-	"github.com/hex1n/sofarpc-cli/internal/worker"
+	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+const knownDirectSuccessResponseHex = "4fbe636f6d2e616c697061792e736f66612e7270632e636f72652e726573706f6e73652e536f6661526573706f6e7365940769734572726f72086572726f724d73670b617070526573706f6e73650d726573706f6e736550726f70736f90464e4fc833636f6d2e6578616d706c652e736572766963656170702e6661636164652e6d6f64656c2e4f7065726174696f6e526573756c7496077375636365737304636f6465076d6573736167650974696d657374616d700464617461086d657461646174616f9154e007737563636573734c0000019dae7234ef4fc847636f6d2e6578616d706c652e736572766963656170702e6661636164652e6d6f64656c2e726573706f6e73652e73616c65732e4461696c79486f6c64696e67526573706f6e736591116461696c79486f6c64696e67496e666f736f92566e014fc843636f6d2e6578616d706c652e736572766963656170702e6661636164652e6d6f64656c2e726573706f6e73652e73616c65732e4461696c79486f6c64696e67496e666f94066d70436f64650866756e64436f64650b686f6c64696e67446174650f686f6c64696e675175616e746974796f934c06066c852f02200004434153480832303236303431344fa46a6176612e6d6174682e426967446563696d616c910576616c75656f9406302e303030307a4d74001e6a6176612e7574696c2e436f6c6c656374696f6e7324456d7074794d61707a4e"
 
 func TestInvoke_DryRunReturnsPlan(t *testing.T) {
 	store := contract.NewInMemoryStore(
@@ -28,10 +34,12 @@ func TestInvoke_DryRunReturnsPlan(t *testing.T) {
 		},
 	)
 	out := callInvoke(t, Options{Facade: store}, map[string]any{
-		"service":   "com.foo.Svc",
-		"method":    "doThing",
-		"directUrl": "bolt://host:12200",
-		"dryRun":    true,
+		"service":       "com.foo.Svc",
+		"method":        "doThing",
+		"version":       "2.0",
+		"targetAppName": "demo-app",
+		"directUrl":     "bolt://host:12200",
+		"dryRun":        true,
 	})
 	if !out.Ok {
 		t.Fatalf("dry-run should succeed; got error=%+v", out.Error)
@@ -45,9 +53,15 @@ func TestInvoke_DryRunReturnsPlan(t *testing.T) {
 	if out.Plan.ArgSource != "skeleton" {
 		t.Fatalf("argSource: got %q", out.Plan.ArgSource)
 	}
+	if out.Plan.Version != "2.0" {
+		t.Fatalf("version: got %q want 2.0", out.Plan.Version)
+	}
+	if out.Plan.TargetAppName != "demo-app" {
+		t.Fatalf("targetAppName: got %q want demo-app", out.Plan.TargetAppName)
+	}
 }
 
-func TestInvoke_NonDryRunReturnsDaemonUnavailable(t *testing.T) {
+func TestInvoke_UnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 	store := contract.NewInMemoryStore(
 		facadesemantic.Class{
 			FQN:  "com.foo.Svc",
@@ -58,17 +72,72 @@ func TestInvoke_NonDryRunReturnsDaemonUnavailable(t *testing.T) {
 		},
 	)
 	out := callInvoke(t, Options{Facade: store}, map[string]any{
-		"service":   "com.foo.Svc",
-		"method":    "doThing",
-		"directUrl": "bolt://host:12200",
+		"service":         "com.foo.Svc",
+		"method":          "doThing",
+		"registryAddress": "zookeeper://host:2181",
 	})
-	if out.Error == nil || out.Error.Code != errcode.DaemonUnavailable {
-		t.Fatalf("expected DaemonUnavailable, got %+v", out.Error)
+	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
+		t.Fatalf("expected InvocationRejected, got %+v", out.Error)
 	}
-	// Even with the worker missing, the plan should still be attached so
-	// agents can inspect what *would* have been sent.
 	if out.Plan == nil {
-		t.Fatal("plan should still be attached on DaemonUnavailable")
+		t.Fatal("plan should still be attached on InvocationRejected")
+	}
+}
+
+func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		facadesemantic.Class{
+			FQN:  "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade",
+			Kind: facadesemantic.KindInterface,
+			Methods: []facadesemantic.Method{
+				{
+					Name:       "queryPortfolioAvailableCash",
+					ParamTypes: []string{"com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest"},
+					ReturnType: "com.example.serviceapp.facade.model.OperationResult",
+				},
+			},
+		},
+	)
+	directURL, stop := fakeDirectServer(t, knownDirectSuccessResponseHex)
+	defer stop()
+
+	out := callInvoke(t, Options{Facade: store}, map[string]any{
+		"service":       "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade",
+		"method":        "queryPortfolioAvailableCash",
+		"version":       "2.0",
+		"targetAppName": "demo-app",
+		"directUrl":     directURL,
+		"args": []any{
+			map[string]any{
+				"@type":      "com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest",
+				"tradeDate":  "20260414",
+				"mpCode":     float64(434153733362950144),
+				"mpCodeList": []any{float64(434153733362950144)},
+			},
+		},
+	})
+	if !out.Ok {
+		t.Fatalf("expected Ok=true, got error=%+v diagnostics=%+v", out.Error, out.Diagnostics)
+	}
+	if transport, _ := out.Diagnostics["transport"].(string); transport != coreinvoke.DirectTransportName {
+		t.Fatalf("transport: got %q want %q", transport, coreinvoke.DirectTransportName)
+	}
+	if got, _ := out.Diagnostics["targetServiceUniqueName"].(string); got != "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade:2.0" {
+		t.Fatalf("targetServiceUniqueName: got %q", got)
+	}
+	result, ok := out.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", out.Result)
+	}
+	if got := result["type"]; got != "com.example.serviceapp.facade.model.OperationResult" {
+		t.Fatalf("result.type: got %#v", got)
+	}
+	fields, ok := result["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("result.fields type = %T", result["fields"])
+	}
+	if got, ok := fields["success"].(bool); !ok || !got {
+		t.Fatalf("result.fields.success = %#v", fields["success"])
 	}
 }
 
@@ -83,18 +152,17 @@ func TestInvoke_FacadeNilWithoutParamTypesSurfacesErrcode(t *testing.T) {
 	}
 }
 
-// Trusted mode: no facade index, but agent supplies a complete
+// Trusted mode: no contract guidance, but the agent supplies a complete
 // service/method/paramTypes/args tuple. Plan should build cleanly with
-// contractSource=trusted so downstream consumers (dryRun / worker)
-// still work without an indexer configured.
+// contractSource=trusted.
 func TestInvoke_FacadeNilWithTrustedArgsDryRunSucceeds(t *testing.T) {
 	out := callInvoke(t, Options{}, map[string]any{
-		"service":    "com.foo.Svc",
-		"method":     "doThing",
-		"directUrl":  "bolt://host:12200",
-		"types":      []any{"java.lang.String"},
-		"args":       []any{"hello"},
-		"dryRun":     true,
+		"service":   "com.foo.Svc",
+		"method":    "doThing",
+		"directUrl": "bolt://host:12200",
+		"types":     []any{"java.lang.String"},
+		"args":      []any{"hello"},
+		"dryRun":    true,
 	})
 	if !out.Ok {
 		t.Fatalf("trusted dry-run should succeed; got error=%+v", out.Error)
@@ -153,6 +221,52 @@ func TestInvoke_UserArgsPassThrough(t *testing.T) {
 	}
 	if out.Plan.Args[0] != "hello" {
 		t.Fatalf("user arg should pass through, got %v", out.Plan.Args[0])
+	}
+}
+
+func TestInvoke_DryRunNormalizesFacadeBackedArgs(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		facadesemantic.Class{
+			FQN:  "com.foo.Svc",
+			Kind: facadesemantic.KindInterface,
+			Methods: []facadesemantic.Method{
+				{Name: "doThing", ParamTypes: []string{"com.foo.Req"}},
+			},
+		},
+		facadesemantic.Class{
+			FQN:  "com.foo.Req",
+			Kind: facadesemantic.KindClass,
+			Fields: []facadesemantic.Field{
+				{Name: "amount", JavaType: "java.math.BigDecimal"},
+			},
+		},
+	)
+
+	out := callInvoke(t, Options{Facade: store}, map[string]any{
+		"service":   "com.foo.Svc",
+		"method":    "doThing",
+		"directUrl": "bolt://h:1",
+		"args": []any{
+			map[string]any{"amount": 1000.5},
+		},
+		"dryRun": true,
+	})
+	if !out.Ok {
+		t.Fatalf("dry-run should succeed; got error=%+v", out.Error)
+	}
+	arg, ok := out.Plan.Args[0].(map[string]any)
+	if !ok {
+		t.Fatalf("arg type: %T", out.Plan.Args[0])
+	}
+	if got := arg["@type"]; got != "com.foo.Req" {
+		t.Fatalf("@type: got %#v", got)
+	}
+	amount, ok := arg["amount"].(map[string]any)
+	if !ok {
+		t.Fatalf("amount type: %T", arg["amount"])
+	}
+	if amount["@type"] != "java.math.BigDecimal" || amount["value"] != "1000.5" {
+		t.Fatalf("amount: %#v", amount)
 	}
 }
 
@@ -287,137 +401,6 @@ func TestInvoke_ArgsEmptyAtIsErrcode(t *testing.T) {
 	}
 }
 
-func TestInvoke_WorkerRoundTripSetsOkAndResult(t *testing.T) {
-	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
-				{Name: "doThing", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
-			},
-		},
-	)
-	client, stop := fakeWorkerClient(t, func(req worker.Request) worker.Response {
-		return worker.Response{
-			Ok:          true,
-			Result:      "hello:" + req.Method,
-			Diagnostics: map[string]any{"latencyMs": float64(7)},
-		}
-	})
-	defer stop()
-
-	out := callInvoke(t, Options{Facade: store, Worker: client}, map[string]any{
-		"service":   "com.foo.Svc",
-		"method":    "doThing",
-		"directUrl": "bolt://h:1",
-		"args":      []any{"hello"},
-	})
-	if !out.Ok {
-		t.Fatalf("expected Ok=true, got error=%+v", out.Error)
-	}
-	if out.Result != "hello:doThing" {
-		t.Fatalf("result mismatch: got %v", out.Result)
-	}
-	if out.Diagnostics["latencyMs"] != float64(7) {
-		t.Fatalf("diagnostics not forwarded: %+v", out.Diagnostics)
-	}
-}
-
-func TestInvoke_WorkerWireErrorSurfacesCode(t *testing.T) {
-	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
-				{Name: "doThing", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
-			},
-		},
-	)
-	client, stop := fakeWorkerClient(t, func(req worker.Request) worker.Response {
-		return worker.Response{
-			Ok: false,
-			Error: &worker.WireError{
-				Code:    string(errcode.WorkerError),
-				Message: "boom",
-			},
-		}
-	})
-	defer stop()
-
-	out := callInvoke(t, Options{Facade: store, Worker: client}, map[string]any{
-		"service":   "com.foo.Svc",
-		"method":    "doThing",
-		"directUrl": "bolt://h:1",
-	})
-	if out.Ok {
-		t.Fatal("Ok should be false on wire error")
-	}
-	if out.Error == nil || out.Error.Code != errcode.WorkerError {
-		t.Fatalf("expected WorkerError, got %+v", out.Error)
-	}
-	if out.Plan == nil {
-		t.Fatal("plan should still be attached on worker error")
-	}
-}
-
-// fakeWorkerClient wires a worker.Client to an in-process fake that
-// responds to every request by calling handler. The handler owns
-// RequestID echoing — tests shouldn't need to worry about correlation.
-func fakeWorkerClient(t *testing.T, handler func(worker.Request) worker.Response) (*worker.Client, func()) {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	serverDone := make(chan struct{})
-	go func() {
-		defer close(serverDone)
-		defer listener.Close()
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		reader := bufio.NewReader(conn)
-		writer := bufio.NewWriter(conn)
-		for {
-			line, err := reader.ReadBytes('\n')
-			if len(line) > 0 {
-				var req worker.Request
-				if json.Unmarshal(line, &req) == nil {
-					resp := handler(req)
-					resp.RequestID = req.RequestID
-					body, _ := json.Marshal(resp)
-					writer.Write(body)
-					writer.WriteByte('\n')
-					writer.Flush()
-				}
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	// Build a pool whose spawner dials the in-process listener instead
-	// of exec'ing a real JVM.
-	spec := worker.Spec{Jar: "fake.jar"}
-	profile := worker.Profile{SOFARPCVersion: "5.12.0", RuntimeJarDigest: "test", JavaMajor: 17}
-	pool := worker.NewPool(spec)
-	pool.SetSpawnerForTesting(func(ctx context.Context, s worker.Spec) (*worker.Process, error) {
-		tcp, err := net.Dial("tcp", listener.Addr().String())
-		if err != nil {
-			return nil, err
-		}
-		return worker.NewFakeProcessForTesting(s, tcp), nil
-	})
-	client := &worker.Client{Pool: pool, Profile: profile}
-
-	return client, func() {
-		client.Close(context.Background())
-		listener.Close()
-		<-serverDone
-	}
-}
-
 func callInvoke(t *testing.T, opts Options, args map[string]any) InvokeOutput {
 	t.Helper()
 	server := New(opts)
@@ -441,4 +424,79 @@ func callInvoke(t *testing.T, opts Options, args map[string]any) InvokeOutput {
 		t.Fatalf("unmarshal structured: %v", err)
 	}
 	return out
+}
+
+func fakeDirectServer(t *testing.T, responseHex string) (string, func()) {
+	t.Helper()
+
+	content, err := hex.DecodeString(responseHex)
+	if err != nil {
+		t.Fatalf("decode response hex: %v", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer listener.Close()
+
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		requestID, err := readBoltRequestID(conn)
+		if err != nil {
+			return
+		}
+		_ = writeBoltResponse(conn, requestID, content)
+	}()
+
+	return "bolt://" + listener.Addr().String(), func() {
+		_ = listener.Close()
+		<-done
+	}
+}
+
+func readBoltRequestID(r io.Reader) (uint32, error) {
+	fixed := make([]byte, 22)
+	if _, err := io.ReadFull(r, fixed); err != nil {
+		return 0, err
+	}
+	classLen := binary.BigEndian.Uint16(fixed[14:16])
+	headerLen := binary.BigEndian.Uint16(fixed[16:18])
+	contentLen := binary.BigEndian.Uint32(fixed[18:22])
+	body := make([]byte, int(classLen)+int(headerLen)+int(contentLen))
+	if _, err := io.ReadFull(r, body); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint32(fixed[5:9]), nil
+}
+
+func writeBoltResponse(w io.Writer, requestID uint32, content []byte) error {
+	classBytes := []byte(sofarpcwire.ResponseClass)
+	fixed := make([]byte, 20)
+	fixed[0] = boltclient.ProtocolCodeV1
+	fixed[1] = boltclient.ResponseType
+	binary.BigEndian.PutUint16(fixed[2:4], boltclient.CmdCodeRPCResponse)
+	fixed[4] = boltclient.CmdVersion
+	binary.BigEndian.PutUint32(fixed[5:9], requestID)
+	fixed[9] = boltclient.CodecHessian2
+	binary.BigEndian.PutUint16(fixed[10:12], 0)
+	binary.BigEndian.PutUint16(fixed[12:14], uint16(len(classBytes)))
+	binary.BigEndian.PutUint16(fixed[14:16], 0)
+	binary.BigEndian.PutUint32(fixed[16:20], uint32(len(content)))
+
+	if _, err := w.Write(fixed); err != nil {
+		return err
+	}
+	if _, err := w.Write(classBytes); err != nil {
+		return err
+	}
+	_, err := w.Write(content)
+	return err
 }

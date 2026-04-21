@@ -25,7 +25,6 @@ type ReplayOutput struct {
 
 func registerReplay(server *sdkmcp.Server, opts Options) {
 	sessions := opts.Sessions
-	client := opts.Worker
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_replay",
 		Description: "Replay a captured invocation. Accepts a payload from sofarpc_invoke's dryRun output, or a sessionId to look up a captured plan.",
@@ -45,23 +44,17 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 			}, out, nil
 		}
 
-		if client == nil {
-			werr := workerNotWiredError("replay")
-			out := ReplayOutput{Plan: plan, Source: source, Error: werr}
-			return errorReplayResult(werr), out, nil
-		}
-
-		resp, werr := client.Invoke(ctx, planToWireRequest(*plan))
-		if werr != nil {
-			out := ReplayOutput{Plan: plan, Source: source, Error: asErrcodeError(werr)}
-			return errorReplayResult(werr), out, nil
+		outcome, execErr := invoke.Execute(ctx, *plan, "replay")
+		if execErr != nil {
+			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: outcome.Diagnostics, Error: asErrcodeError(execErr)}
+			return errorReplayResult(execErr), out, nil
 		}
 		out := ReplayOutput{
 			Ok:          true,
 			Plan:        plan,
 			Source:      source,
-			Result:      resp.Result,
-			Diagnostics: resp.Diagnostics,
+			Result:      outcome.Result,
+			Diagnostics: outcome.Diagnostics,
 		}
 		return &sdkmcp.CallToolResult{
 			Content: []sdkmcp.Content{

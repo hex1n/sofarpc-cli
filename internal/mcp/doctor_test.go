@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
-	"github.com/hex1n/sofarpc-cli/internal/worker"
+	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -18,12 +21,12 @@ func TestDoctor_UnresolvedTargetFails(t *testing.T) {
 	if out.Ok {
 		t.Fatal("doctor.Ok should be false when no target is configured")
 	}
-	target := findCheck(t, out, "target")
-	if target.Ok {
+	targetCheck := findCheck(t, out, "target")
+	if targetCheck.Ok {
 		t.Fatal("target check should fail without env/input")
 	}
-	if target.NextStep == nil || target.NextStep.Tool != "sofarpc_target" {
-		t.Fatalf("target check should point at sofarpc_target, got %+v", target.NextStep)
+	if targetCheck.NextStep == nil || targetCheck.NextStep.Tool != "sofarpc_target" {
+		t.Fatalf("target check should point at sofarpc_target, got %+v", targetCheck.NextStep)
 	}
 }
 
@@ -57,112 +60,77 @@ func TestDoctor_ReachableTargetPasses(t *testing.T) {
 	if !targetCheck.Ok {
 		t.Fatalf("target check should pass, got %+v", targetCheck)
 	}
-	// indexer and worker are placeholders, so the top-level Ok must still be false.
-	if out.Ok {
-		t.Fatal("overall Ok should be false while indexer/worker are not wired")
+	if !out.Ok {
+		t.Fatalf("overall Ok should be true when target is reachable, got %+v", out)
 	}
 }
 
-func TestDoctor_IndexerAndWorkerAreReportedUnwired(t *testing.T) {
+func TestDoctor_ContractCheckIsInformationalWithoutStore(t *testing.T) {
 	out := callDoctor(t, Options{}, nil)
-	indexer := findCheck(t, out, "indexer")
-	if indexer.Ok {
-		t.Fatal("indexer should fail when no facade store is attached")
+	contractCheck := findCheck(t, out, "contract")
+	if !contractCheck.Ok {
+		t.Fatalf("contract check should stay informational, got %+v", contractCheck)
 	}
-	// With no reindexer wired there's no actionable tool for the agent —
-	// we suppress the nextStep to avoid pointing back at doctor and rely
-	// on the detail line to carry the human remedy.
-	if indexer.NextStep != nil {
-		t.Fatalf("indexer failure without reindexer should omit nextStep, got %+v", indexer.NextStep)
-	}
-	workerCheck := findCheck(t, out, "worker")
-	if workerCheck.Ok {
-		t.Fatal("worker should be reported as not-configured when no client is attached")
-	}
-	if !strings.Contains(workerCheck.Detail, "not configured") {
-		t.Fatalf("worker detail should mention 'not configured', got %q", workerCheck.Detail)
-	}
-	if workerCheck.NextStep != nil {
-		t.Fatalf("worker failure should not self-loop via nextStep, got %+v", workerCheck.NextStep)
+	if !strings.Contains(contractCheck.Detail, "trusted-mode invoke") {
+		t.Fatalf("detail should mention trusted-mode invoke, got %q", contractCheck.Detail)
 	}
 }
 
-func TestDoctor_IndexerFailureWithReindexerHintsRefresh(t *testing.T) {
-	reindexer := ReindexerFunc(func(ctx context.Context) (contract.Store, error) {
-		return nil, nil
+func TestDoctor_ContractCheckReportsAttachedStore(t *testing.T) {
+	store := contract.NewInMemoryStore(facadesemantic.Class{
+		FQN:     "com.foo.Svc",
+		Kind:    facadesemantic.KindInterface,
+		Methods: []facadesemantic.Method{{Name: "doThing"}},
 	})
-	out := callDoctor(t, Options{Reindexer: reindexer}, nil)
-	indexer := findCheck(t, out, "indexer")
-	if indexer.Ok {
-		t.Fatal("indexer should still fail when no facade store is attached")
+	out := callDoctor(t, Options{Facade: store}, nil)
+	contractCheck := findCheck(t, out, "contract")
+	if !contractCheck.Ok {
+		t.Fatalf("contract check should pass, got %+v", contractCheck)
 	}
-	if indexer.NextStep == nil {
-		t.Fatal("indexer failure with reindexer should carry a nextStep")
-	}
-	if indexer.NextStep.Tool != "sofarpc_describe" {
-		t.Fatalf("nextStep should route to sofarpc_describe, got %q", indexer.NextStep.Tool)
-	}
-	if refresh, _ := indexer.NextStep.Args["refresh"].(bool); !refresh {
-		t.Fatalf("nextStep args should carry refresh=true, got %+v", indexer.NextStep.Args)
+	if !strings.Contains(contractCheck.Detail, "attached") {
+		t.Fatalf("detail should mention attached contract info, got %q", contractCheck.Detail)
 	}
 }
 
-func TestDoctor_WiredWorkerThatPingsReportsReady(t *testing.T) {
-	var sawPing bool
-	client, stop := fakeWorkerClient(t, func(req worker.Request) worker.Response {
-		if req.Action == worker.ActionPing {
-			sawPing = true
-			return worker.Response{Ok: true, Result: "pong"}
-		}
-		// shutdown (from pool close) and anything else — just ack.
-		return worker.Response{Ok: true}
-	})
-	defer stop()
-
-	out := callDoctor(t, Options{Worker: client}, nil)
-	workerCheck := findCheck(t, out, "worker")
-	if !workerCheck.Ok {
-		t.Fatalf("worker check should pass, got %+v", workerCheck)
-	}
-	if !strings.Contains(workerCheck.Detail, "worker ready") {
-		t.Fatalf("detail should include 'worker ready', got %q", workerCheck.Detail)
-	}
-	// After the ping the pool has one live worker against the default
-	// cap of 8. The exact render is checked in pool-focused tests; here
-	// we only assert the load pair shows up.
-	if !strings.Contains(workerCheck.Detail, "1/8") {
-		t.Fatalf("detail should surface pool load '1/8', got %q", workerCheck.Detail)
-	}
-	if !sawPing {
-		t.Fatal("doctor should have sent a ping request")
-	}
+func TestDoctor_ContractCheckIncludesSourceDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeDoctorJava(t, root, "src/main/java/com/foo/Svc.java", `
+package com.foo;
+public interface Svc {
+    String ping(String request);
 }
+`)
 
-func TestDoctor_WiredWorkerThatErrorsSurfacesFailure(t *testing.T) {
-	client, stop := fakeWorkerClient(t, func(req worker.Request) worker.Response {
-		return worker.Response{
-			Ok: false,
-			Error: &worker.WireError{
-				Code:    "runtime.worker-error",
-				Message: "stuck in GC",
-			},
-		}
-	})
-	defer stop()
-
-	out := callDoctor(t, Options{Worker: client}, nil)
-	workerCheck := findCheck(t, out, "worker")
-	if workerCheck.Ok {
-		t.Fatal("worker check should fail when ping returns an error")
+	store, err := sourcecontract.Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
 	}
-	if !strings.Contains(workerCheck.Detail, "stuck in GC") {
-		t.Fatalf("detail should surface wire error message, got %q", workerCheck.Detail)
+	if store == nil {
+		t.Fatal("Load returned nil store")
+	}
+
+	out := callDoctor(t, Options{Facade: store}, nil)
+	contractCheck := findCheck(t, out, "contract")
+	if !contractCheck.Ok {
+		t.Fatalf("contract check should pass, got %+v", contractCheck)
+	}
+	if contractCheck.Data == nil {
+		t.Fatal("contract check should include diagnostics data")
+	}
+	if got := contractCheck.Data["indexedClasses"]; got != float64(1) {
+		t.Fatalf("indexedClasses: got %#v", got)
+	}
+	if got := contractCheck.Data["parsedClasses"]; got != float64(0) {
+		t.Fatalf("parsedClasses: got %#v want 0", got)
+	}
+	if !strings.Contains(contractCheck.Detail, "parsed on demand") {
+		t.Fatalf("detail should mention lazy parsing, got %q", contractCheck.Detail)
 	}
 }
 
 func TestDoctor_SummaryListsEachCheck(t *testing.T) {
 	out := callDoctor(t, Options{}, nil)
-	for _, name := range []string{"target", "indexer", "worker", "sessions"} {
+	for _, name := range []string{"target", "contract", "sessions"} {
 		if !strings.Contains(out.Summary, name+"=") {
 			t.Fatalf("summary %q missing %s entry", out.Summary, name)
 		}
@@ -170,7 +138,6 @@ func TestDoctor_SummaryListsEachCheck(t *testing.T) {
 }
 
 func TestDoctor_SessionsReportsSizeAndCap(t *testing.T) {
-	// Explicit store so we can seed it and know the expected load.
 	store := NewSessionStoreWithLimits(0, 32)
 	store.Create(Session{ProjectRoot: "/a"})
 	store.Create(Session{ProjectRoot: "/b"})
@@ -234,4 +201,15 @@ func findCheck(t *testing.T, out DoctorOutput, name string) DoctorCheck {
 	}
 	t.Fatalf("check %q not found in %+v", name, out.Checks)
 	return DoctorCheck{}
+}
+
+func writeDoctorJava(t *testing.T, root, relative, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(relative))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
 }

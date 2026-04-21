@@ -11,13 +11,12 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/worker"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // InvokeOutput is the structured payload for sofarpc_invoke. Ok=true
 // means the invocation (dry-run or real) produced a usable outcome —
-// either a Plan to inspect or a Result from the worker.
+// either a Plan to inspect or a Result from the direct transport.
 type InvokeOutput struct {
 	Ok          bool           `json:"ok"`
 	Plan        *invoke.Plan   `json:"plan,omitempty"`
@@ -29,10 +28,9 @@ type InvokeOutput struct {
 func registerInvoke(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
-	client := opts.Worker
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_invoke",
-		Description: "Plan and execute a SOFARPC generic invocation. dryRun=true returns the plan without contacting the worker.",
+		Description: "Plan and execute a SOFARPC generic invocation. dryRun=true returns the plan without executing the request.",
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in InvokeInput) (*sdkmcp.CallToolResult, InvokeOutput, error) {
 		facade := holder.Get()
 		args, err := normalizeArgs(in.Service, in.Method, in.Args)
@@ -41,10 +39,12 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 		}
 
 		plan, err := invoke.BuildPlan(invoke.Input{
-			Service:    in.Service,
-			Method:     in.Method,
-			ParamTypes: in.Types,
-			Args:       args,
+			Service:       in.Service,
+			Method:        in.Method,
+			ParamTypes:    in.Types,
+			Args:          args,
+			Version:       in.Version,
+			TargetAppName: in.TargetAppName,
 			Target: target.Input{
 				Service:          in.Service,
 				DirectURL:        in.DirectURL,
@@ -71,25 +71,16 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 			}, out, nil
 		}
 
-		if client == nil {
-			// Without SOFARPC_RUNTIME_JAR wired, there is no worker to
-			// call — return a structured error so the agent routes to
-			// doctor instead of seeing an MCP transport crash.
-			werr := workerNotWiredError("invoke")
-			out := InvokeOutput{Plan: &plan, Error: werr}
-			return errorInvokeResult(werr), out, nil
-		}
-
-		resp, werr := client.Invoke(ctx, planToWireRequest(plan))
-		if werr != nil {
-			out := InvokeOutput{Plan: &plan, Error: asErrcodeError(werr)}
-			return errorInvokeResult(werr), out, nil
+		outcome, execErr := invoke.Execute(ctx, plan, "invoke")
+		if execErr != nil {
+			out := InvokeOutput{Plan: &plan, Diagnostics: outcome.Diagnostics, Error: asErrcodeError(execErr)}
+			return errorInvokeResult(execErr), out, nil
 		}
 		out := InvokeOutput{
 			Ok:          true,
 			Plan:        &plan,
-			Result:      resp.Result,
-			Diagnostics: resp.Diagnostics,
+			Result:      outcome.Result,
+			Diagnostics: outcome.Diagnostics,
 		}
 		return &sdkmcp.CallToolResult{
 			Content: []sdkmcp.Content{
@@ -97,22 +88,6 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 			},
 		}, out, nil
 	})
-}
-
-// planToWireRequest converts an invoke.Plan into the worker wire shape.
-// Classloader is intentionally left nil — the runtime worker treats a
-// missing classloader as "use default", and we don't yet surface stub
-// jar paths from the indexer.
-func planToWireRequest(plan invoke.Plan) worker.Request {
-	tgt := plan.Target
-	return worker.Request{
-		Action:     worker.ActionInvoke,
-		Service:    plan.Service,
-		Method:     plan.Method,
-		ParamTypes: plan.ParamTypes,
-		Args:       plan.Args,
-		Target:     &tgt,
-	}
 }
 
 // normalizeArgs coerces the loosely-typed Args field into []any:
@@ -200,18 +175,6 @@ func describeHintArgs(service, method string) map[string]any {
 		args["method"] = method
 	}
 	return args
-}
-
-// workerNotWiredError is returned by invoke and replay when the MCP
-// server was constructed without a worker client. We pick
-// DaemonUnavailable (not a new code) because from the agent's
-// perspective the daemon simply doesn't exist — the recovery path is
-// the same as a crashed worker: go ask doctor what's missing.
-func workerNotWiredError(phase string) *errcode.Error {
-	return errcode.New(errcode.DaemonUnavailable, phase,
-		"worker is not configured; set SOFARPC_RUNTIME_JAR and SOFARPC_RUNTIME_JAR_DIGEST").
-		WithHint("sofarpc_doctor", nil,
-			"doctor reports which env vars the runtime needs")
 }
 
 func errorInvokeResult(err error) *sdkmcp.CallToolResult {

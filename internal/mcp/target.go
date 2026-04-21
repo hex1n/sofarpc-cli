@@ -41,7 +41,7 @@ func registerTarget(server *sdkmcp.Server, opts Options) {
 	sources := opts.TargetSources
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_target",
-		Description: "Resolve the invocation target without calling the worker. Returns the merged target, the config layers that produced it, and a reachability probe.",
+		Description: "Resolve the invocation target without executing a request. Returns the merged target, the config layers that produced it, and a reachability probe.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in TargetInput) (*sdkmcp.CallToolResult, TargetOutput, error) {
 		input := target.Input{
 			Service:          in.Service,
