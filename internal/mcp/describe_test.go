@@ -3,11 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -67,6 +70,65 @@ func TestDescribe_ReturnsOverloadsAndSkeleton(t *testing.T) {
 	}
 	if obj["@type"] != "com.foo.Req" {
 		t.Fatalf("skeleton @type wrong: %v", obj)
+	}
+	if out.Diagnostics.ContractSource != "contract-store" {
+		t.Fatalf("contractSource: got %q want contract-store", out.Diagnostics.ContractSource)
+	}
+	if !out.Diagnostics.Contract.Attached {
+		t.Fatal("contract.attached should be true")
+	}
+}
+
+func TestDescribe_IncludesSourceDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	writeDescribeJava(t, root, "src/main/java/com/foo/Svc.java", `
+package com.foo;
+
+public interface Svc {
+    Resp doThing(Req request);
+}
+`)
+	writeDescribeJava(t, root, "src/main/java/com/foo/Req.java", `
+package com.foo;
+
+public class Req {
+    private String id;
+}
+`)
+	writeDescribeJava(t, root, "src/main/java/com/foo/Resp.java", `
+package com.foo;
+
+public class Resp {
+    private String name;
+}
+`)
+
+	store, err := sourcecontract.Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if store == nil {
+		t.Fatal("Load returned nil store")
+	}
+
+	out := callDescribe(t, Options{Facade: store}, map[string]any{
+		"service": "com.foo.Svc",
+		"method":  "doThing",
+	})
+	if out.Error != nil {
+		t.Fatalf("unexpected error: %+v", out.Error)
+	}
+	if out.Diagnostics.ContractSource != "sourcecontract" {
+		t.Fatalf("contractSource: got %q want sourcecontract", out.Diagnostics.ContractSource)
+	}
+	if !out.Diagnostics.Contract.Attached {
+		t.Fatal("contract.attached should be true")
+	}
+	if out.Diagnostics.Contract.IndexedClasses != 3 {
+		t.Fatalf("indexedClasses: got %d want 3", out.Diagnostics.Contract.IndexedClasses)
+	}
+	if out.Diagnostics.Contract.ParsedClasses < 2 {
+		t.Fatalf("parsedClasses should reflect on-demand parsing, got %d", out.Diagnostics.Contract.ParsedClasses)
 	}
 }
 
@@ -130,4 +192,15 @@ func invokeDescribeTool(t *testing.T, client *sdkmcp.ClientSession, args map[str
 		t.Fatalf("unmarshal structured: %v", err)
 	}
 	return out
+}
+
+func writeDescribeJava(t *testing.T, root, relative, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(relative))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
 }

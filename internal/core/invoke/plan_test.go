@@ -30,9 +30,11 @@ func TestBuildPlan_HappyPathWithSkeletonArgs(t *testing.T) {
 
 	plan, err := BuildPlan(
 		Input{
-			Service: "com.foo.Svc",
-			Method:  "doThing",
-			Target:  target.Input{DirectURL: "bolt://host:12200"},
+			Service:       "com.foo.Svc",
+			Method:        "doThing",
+			Version:       "2.0",
+			TargetAppName: "demo-app",
+			Target:        target.Input{DirectURL: "bolt://host:12200"},
 		},
 		facade,
 		target.Sources{},
@@ -45,6 +47,12 @@ func TestBuildPlan_HappyPathWithSkeletonArgs(t *testing.T) {
 	}
 	if plan.ReturnType != "com.foo.Resp" {
 		t.Fatalf("returnType: got %q", plan.ReturnType)
+	}
+	if plan.Version != "2.0" {
+		t.Fatalf("version: got %q want 2.0", plan.Version)
+	}
+	if plan.TargetAppName != "demo-app" {
+		t.Fatalf("targetAppName: got %q want demo-app", plan.TargetAppName)
 	}
 	if plan.ArgSource != "skeleton" {
 		t.Fatalf("argSource: got %q want skeleton", plan.ArgSource)
@@ -89,6 +97,68 @@ func TestBuildPlan_UserArgsPassThrough(t *testing.T) {
 	}
 	if plan.Args[0] != "hello" {
 		t.Fatalf("user args should pass through, got %v", plan.Args[0])
+	}
+}
+
+func TestBuildPlan_NormalizesFacadeBackedArgs(t *testing.T) {
+	facade := contract.NewInMemoryStore(
+		facadesemantic.Class{
+			FQN:  "com.foo.Svc",
+			Kind: facadesemantic.KindInterface,
+			Methods: []facadesemantic.Method{
+				{Name: "doThing", ParamTypes: []string{"com.foo.Req"}},
+			},
+		},
+		facadesemantic.Class{
+			FQN:  "com.foo.Item",
+			Kind: facadesemantic.KindClass,
+			Fields: []facadesemantic.Field{
+				{Name: "id", JavaType: "java.lang.Long"},
+			},
+		},
+		facadesemantic.Class{
+			FQN:  "com.foo.Req",
+			Kind: facadesemantic.KindClass,
+			Fields: []facadesemantic.Field{
+				{Name: "amount", JavaType: "java.math.BigDecimal"},
+				{Name: "items", JavaType: "java.util.List<com.foo.Item>"},
+			},
+		},
+	)
+
+	plan, err := BuildPlan(
+		Input{
+			Service: "com.foo.Svc",
+			Method:  "doThing",
+			Args: []any{
+				map[string]any{
+					"amount": 12.5,
+					"items": []any{
+						map[string]any{"id": "7"},
+					},
+				},
+			},
+			Target: target.Input{DirectURL: "bolt://h:1"},
+		},
+		facade,
+		target.Sources{},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	arg := plan.Args[0].(map[string]any)
+	if got := arg["@type"]; got != "com.foo.Req" {
+		t.Fatalf("@type: got %#v", got)
+	}
+	amount := arg["amount"].(map[string]any)
+	if amount["@type"] != "java.math.BigDecimal" || amount["value"] != "12.5" {
+		t.Fatalf("amount: %#v", amount)
+	}
+	items := arg["items"].([]any)
+	first := items[0].(map[string]any)
+	if first["@type"] != "com.foo.Item" || first["id"] != int64(7) {
+		t.Fatalf("first item: %#v", first)
 	}
 }
 
@@ -166,6 +236,13 @@ func TestBuildPlan_TrustedMode_HappyPath(t *testing.T) {
 	}
 	if plan.Args[0] != "hello" {
 		t.Fatalf("args[0]: got %v want hello", plan.Args[0])
+	}
+	arg, ok := plan.Args[1].(map[string]any)
+	if !ok {
+		t.Fatalf("args[1] type: %T", plan.Args[1])
+	}
+	if _, exists := arg["@type"]; !exists {
+		t.Fatalf("trusted mode should preserve explicit payload: %#v", arg)
 	}
 	if len(plan.Overloads) != 0 {
 		t.Fatalf("overloads should be empty in trusted mode, got %d", len(plan.Overloads))

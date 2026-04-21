@@ -1,81 +1,43 @@
 # sofarpc-cli
 
-Agent-first local MCP server for invoking and debugging SOFARPC services.
+Agent-first local MCP server for SOFARPC generic invoke.
 
-- **Design**: [docs/architecture.md](./docs/architecture.md)
-- **Primary surface**: one MCP server (`cmd/sofarpc-mcp`) exposing six typed tools
-- **Polyglot by design**: Go owns orchestration, config, cache, and process
-  lifecycle; Java owns SOFARPC generic invoke and Spoon-based source analysis
+- Design: [docs/architecture.md](./docs/architecture.md)
+- Mainline: pure-Go `direct + bolt + hessian2`
+- Entry point: `cmd/sofarpc-mcp`
 
-## The six MCP tools
+## MCP tools
 
 | Tool | Purpose |
 | --- | --- |
-| `sofarpc_open` | Open a workspace. Returns project root, resolved target, facade state, session id. |
-| `sofarpc_target` | Resolve and probe the invocation target (precedence chain + reachability). |
-| `sofarpc_describe` | Resolve overloads and render a JSON skeleton from the facade index. `refresh=true` regenerates the index. |
-| `sofarpc_invoke` | Plan and execute a generic invocation. `dryRun=true` stops after planning. |
-| `sofarpc_replay` | Replay a captured plan — from a session id or a verbatim payload. |
-| `sofarpc_doctor` | End-to-end self-diagnosis: config, indexer, worker pool load, session cap, target reachability. |
+| `sofarpc_open` | Open a workspace. Returns project root, resolved target, capabilities, and a session id. |
+| `sofarpc_target` | Resolve the effective target and probe reachability. |
+| `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. |
+| `sofarpc_invoke` | Build a plan and execute it. `dryRun=true` returns the plan only. |
+| `sofarpc_replay` | Re-run a captured plan from `sessionId` or a literal `payload`. |
+| `sofarpc_doctor` | Run structured diagnostics across target, workspace state, and invoke prerequisites. |
 
-Every failure carries a stable `errcode.Code` plus a `nextTool` hint so agents
-recover without reading prose. Hints pre-fill required inputs (e.g. `service`,
-`method`, `sessionId`, `refresh=true`) so the agent can follow them verbatim
-without re-deriving context from the failed call. See
-[architecture §4](./docs/architecture.md) for the taxonomy.
+Every failure returns a stable `errcode.Code` and may include a structured
+`nextTool` hint. Agents are expected to follow that hint directly instead of
+re-deriving the next action from prose.
 
-## Architecture at a glance
+## Install
 
-```mermaid
-flowchart TB
-  subgraph ClientSide[Client]
-    Agent([Agent / MCP Client])
-  end
-  subgraph MCPLayer["MCP layer · internal/mcp"]
-    Server[server.go · 6 tools]
-    Holder[facadeHolder · RWMutex store]
-    Sessions[SessionStore · TTL + LRU]
-  end
-  subgraph Core["Core · internal/core"]
-    ContractR[contract/resolve · overload pick]
-    ContractS[contract/skeleton · generics + arrays + wildcards]
-    TargetR[target · precedence chain]
-    TargetP[target/probe · reachability]
-    Plan[invoke/plan · BuildPlan]
-  end
-  subgraph Sub["Subsystems"]
-    Worker[worker · JVM pool + wire]
-    Indexer[indexer · Spoon driver + shards]
-    Errcode[errcode · codes + Hint]
-    Javatype[javatype · role + placeholder]
-  end
-  subgraph External[Out-of-process]
-    SpoonJar[(spoon-indexer.jar · one-shot)]
-    WorkerJar[(runtime-worker.jar · long-running)]
-    IndexFS[(.sofarpc/index · manifest + shards)]
-    SOFARPC[(SOFARPC service)]
-  end
-  Agent -- stdio MCP --> Server
-  Server --> Holder & Sessions
-  Server --> ContractR & Plan & TargetR
-  ContractR --> ContractS --> Javatype
-  Plan --> ContractR & TargetR
-  Plan -- failure --> Errcode
-  TargetR --> TargetP
-  Server --> Worker --> WorkerJar -- Hessian2 generic --> SOFARPC
-  Server -. refresh=true .-> Indexer --> SpoonJar --> IndexFS
-  Holder -. startup load / hot-swap .-> IndexFS
+Fresh machine, no Java runtime required:
+
+```sh
+go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@latest
 ```
 
-- Facade metadata is produced by a one-shot Spoon subprocess that writes
-  `.sofarpc/index/_index.json` + per-class shards; Go reads directly.
-- The invoke worker is a long-running JVM per `profile = sha256(sofaRpcVersion | runtimeJarDigest | javaMajor)`
-  keyed by the pool. Workers multiplex requests over one loopback TCP conn
-  demuxed by `requestId`. Idle workers are reaped by TTL and the pool evicts
-  LRU slots when it hits its cap, so profile churn can't starve the host.
-- The MCP server handles `SIGINT`/`SIGTERM` and closes the worker pool within
-  a bounded grace window, so a wedged JVM can't keep the process alive.
-- No on-disk cache of contracts. No metadata daemon. No plugin system.
+Repo-local helper scripts:
+
+```sh
+./scripts/install.sh
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
 
 ## Quick start
 
@@ -85,28 +47,25 @@ Build:
 go build -o bin/sofarpc-mcp ./cmd/sofarpc-mcp
 ```
 
-Configure via environment (empty vars are fine — tools degrade gracefully):
+Configure the project-level MCP env:
 
 ```sh
-# Target (pick one)
+export SOFARPC_PROJECT_ROOT=/abs/path/to/project
 export SOFARPC_DIRECT_URL=bolt://host:12200
-# export SOFARPC_REGISTRY_ADDRESS=zookeeper://...
+export SOFARPC_PROTOCOL=bolt
+export SOFARPC_SERIALIZATION=hessian2
+```
 
-# Invoke worker
-export SOFARPC_RUNTIME_JAR=/abs/path/runtime-worker.jar
-export SOFARPC_RUNTIME_JAR_DIGEST=sha256-of-jar
-export SOFARPC_VERSION=5.12.0          # optional, default "unknown"
-export SOFARPC_JAVA_MAJOR=17           # optional, default 17
-export SOFARPC_JAVA=/path/to/java      # optional, default "java" on PATH
+Optional per-target overrides:
 
-# Facade metadata — pick one (or neither and fall back to trusted mode):
-#   A) Spoon indexer:   scans Java source to build .sofarpc/index.
-#   B) Worker reflection: loads facade jars and reflects — no source required.
-export SOFARPC_INDEXER_JAR=/abs/path/spoon-indexer.jar                  # A
-# export SOFARPC_INDEXER_SOURCES=/abs/src1:/abs/src2                    # A: default <root>/src/main/java
-# export SOFARPC_INDEXER_JAVA=/path/to/jdk11/bin/java                   # A: default SOFARPC_JAVA; set if indexer needs newer JDK
-export SOFARPC_FACADE_CLASSPATH=/abs/facade.jar:/abs/common.jar         # B
-export SOFARPC_PROJECT_ROOT=/abs/project/root                           # default: CWD
+```sh
+# Alternative target source
+export SOFARPC_REGISTRY_ADDRESS=zookeeper://host:2181
+
+# Optional direct invoke hints
+export SOFARPC_UNIQUE_ID=demo
+export SOFARPC_TIMEOUT_MS=3000
+export SOFARPC_CONNECT_TIMEOUT_MS=1000
 ```
 
 Run:
@@ -115,125 +74,138 @@ Run:
 ./bin/sofarpc-mcp
 ```
 
-The server speaks stdio MCP. Point any MCP-capable agent at it.
+The server speaks stdio MCP.
 
-## Typical agent flow
+On startup, `sofarpc-mcp` scans `.java` files under `SOFARPC_PROJECT_ROOT`
+to build describe-time contract information in pure Go. Hidden directories,
+test trees, and common build-output directories are skipped.
 
-1. `sofarpc_open` — establish project + session
-2. `sofarpc_target` — confirm target resolves and reaches
-3. `sofarpc_describe` — pick overload, get JSON skeleton
-4. `sofarpc_invoke` — send the call (or `dryRun=true` first to inspect the plan)
-5. `sofarpc_replay` — re-run from the session without rebuilding args
-6. `sofarpc_doctor` — when anything goes wrong, the catch-all diagnostic
+If your agent host supports project-level MCP configuration, prefer putting the
+same values on that project’s MCP server entry so `directUrl` does not need to
+be repeated on every call:
 
-### Facade metadata — three supported paths
-
-The facade store behind `sofarpc_describe` is picked at startup in priority order:
-
-1. **Spoon index** (`<projectRoot>/.sofarpc/index` exists) — richest metadata,
-   produced by the Spoon indexer subprocess. Requires Java source locally.
-2. **Worker reflection** (no local index, but worker + `SOFARPC_FACADE_CLASSPATH` set)
-   — the worker JVM loads the facade jars into a child ClassLoader and answers
-   `describe` via reflection. Works on bytecode only, no source required.
-   The class shape is lazily fetched on first lookup and cached per-process.
-3. **Trusted mode** (no index, no worker classpath) — `sofarpc_invoke` still runs
-   as long as the agent passes a complete `service / method / paramTypes / args`
-   tuple. The plan is marked `contractSource: "trusted"`; no overload
-   disambiguation or skeleton rendering happens.
-
-The agent doesn't need to know which is in effect — the store shape is identical.
-Pick the path that matches your source availability: monorepo checkout → Spoon;
-jar-only consumer → reflection; zero-context automation → trusted.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant A as Agent
-    participant S as sofarpc_* tools
-    participant H as facadeHolder
-    participant C as contract
-    participant P as worker.Pool
-    participant W as runtime-worker.jar
-    participant R as SOFARPC service
-
-    A->>S: sofarpc_open {projectRoot}
-    S->>H: load .sofarpc/index
-    S-->>A: projectRoot / target / facade / sessionId
-
-    A->>S: sofarpc_describe {service, method}
-    S->>H: Get()
-    H->>C: ResolveMethod + BuildSkeleton
-    Note over C: generic expansion:<br/>List<Order> → [{@type:Order,...}]<br/>Map<K,V> → {"<key>": <V skel>}
-    S-->>A: overloads + fill-and-send skeleton
-
-    A->>S: sofarpc_invoke {service, method, args, target}
-    S->>C: BuildPlan (target + overload + args)
-    S->>P: Get(profile)
-    alt no worker for this profile
-        P->>W: spawn JVM
-        W-->>P: READY (loopback TCP)
-    else hit
-        P-->>S: reuse
-    end
-    S->>W: Request{requestId, service, method, args}
-    W->>R: Hessian2 generic invoke
-    R-->>W: response bytes
-    W-->>S: Response{requestId, ok, result}
-    S-->>A: ok / result / diagnostics
-    Note over S: session.UpdatePlan(plan)<br/>future replay without rebuilding args
+```json
+{
+  "mcpServers": {
+    "sofarpc-project": {
+      "command": "/abs/path/to/sofarpc-mcp",
+      "env": {
+        "SOFARPC_PROJECT_ROOT": "/abs/path/to/project",
+        "SOFARPC_DIRECT_URL": "bolt://host:12200",
+        "SOFARPC_PROTOCOL": "bolt",
+        "SOFARPC_SERIALIZATION": "hessian2"
+      }
+    }
+  }
+}
 ```
 
-## Recovery chain
+## Typical flow
 
-Every failure surfaces a stable `errcode.Code` plus a `nextTool` hint with
-pre-filled `NextArgs` — agents follow the hint verbatim instead of reading
-prose and re-deriving context.
+1. `sofarpc_open`
+2. `sofarpc_target`
+3. `sofarpc_describe` if contract information is available
+4. `sofarpc_invoke`
+5. `sofarpc_replay`
+6. `sofarpc_doctor` when invoke cannot proceed
 
-```mermaid
-flowchart LR
-  E1[describe: FacadeNotConfigured<br/>hint → describe refresh=true<br/>NextArgs: service, method]
-  E2[describe refresh: IndexerFailed<br/>hint → doctor]
-  E3[invoke: TargetMissing<br/>hint → target explain=true]
-  E4[invoke: ArgsInvalid arity<br/>hint → describe<br/>NextArgs: service, method]
-  E5[invoke: DaemonUnavailable<br/>hint → doctor]
-  E6[invoke: WorkerError / InvocationUncertain<br/>hint → doctor]
-  E7[replay: session not found<br/>hint → open]
+## `sofarpc_invoke` shape
 
-  E1 -->|refresh=true| E2
-  E1 -.on success.-> OK1[skeleton in hand]
-  E2 --> Dr((sofarpc_doctor))
-  E3 --> Tg((sofarpc_target))
-  E4 --> De((sofarpc_describe))
-  E5 --> Dr
-  E6 --> Dr
-  E7 --> Op((sofarpc_open))
-  Dr -->|per-check nextStep<br/>target / indexer / worker / sessions| Fix[agent or human fixes the specific check]
+```json
+{
+  "service": "com.foo.Facade",
+  "method": "getUser",
+  "types": ["com.foo.GetUserRequest"],
+  "args": [{ "userId": 1 }],
+  "version": "2.0",
+  "targetAppName": "foo-app",
+  "directUrl": "bolt://host:12200",
+  "dryRun": true
+}
 ```
+
+- `version` overrides the SOFA service version for this call.
+- `targetAppName` sets the direct-transport target app header.
+- `directUrl` and `registryAddress` are per-call overrides; otherwise MCP env
+  wins.
+- `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later.
+
+When contract information is attached, facade-backed invoke automatically
+normalizes common Java shapes before the wire step:
+
+- root and nested DTOs get `@type` injected
+- `List<DTO>` / `Map<String, V>` values are normalized recursively
+- `java.math.BigDecimal` / `BigInteger` values are wrapped into canonical typed
+  objects
+
+For example, a dry-run plan may turn:
+
+```json
+{
+  "args": [
+    {
+      "amount": 1000.5
+    }
+  ]
+}
+```
+
+into:
+
+```json
+{
+  "args": [
+    {
+      "@type": "com.foo.GetUserRequest",
+      "amount": {
+        "@type": "java.math.BigDecimal",
+        "value": "1000.5"
+      }
+    }
+  ]
+}
+```
+
+## Trusted mode
+
+`sofarpc_invoke` can run without contract guidance as long as the caller
+supplies:
+
+- `service`
+- `method`
+- `types`
+- `args`
+
+In this mode the plan is marked `contractSource: "trusted"`. No overload
+disambiguation, automatic type normalization, or skeleton generation happens.
+If the remote side needs `@type`, `BigDecimal`, or other Java-specific payload
+shapes, the caller must send them explicitly.
 
 ## Repo layout
 
-```
-cmd/sofarpc-mcp/          single MCP entrypoint
+```text
+cmd/
+  sofarpc-mcp/           MCP entrypoint
+  spike-invoke/          direct-transport validation CLI
 internal/
-  mcp/                    tool registration + handler shims
-  errcode/                stable error codes + NextStep hints
+  boltclient/            pure-Go BOLT client
+  sofarpcwire/           SofaRequest / SofaResponse encoding
+  sourcecontract/        Java source scan -> contract store
+  errcode/               stable error codes + recovery hints
+  mcp/                   tool registration + handlers
   core/
-    contract/             Resolve + skeleton render
-    target/               precedence chain + reachability probe
-    invoke/               plan + execute
-    workspace/            project root resolution
-  indexer/                Spoon indexer subprocess driver + shard reader
-  worker/                 JVM worker pool + wire protocol
-  facadesemantic/         shapes mirroring indexer output
-  javatype/               role classification
+    workspace/           project root resolution
+    target/              precedence chain + TCP probe
+    contract/            overload resolution + skeleton generation
+    invoke/              plan building + execution
+  facadesemantic/        contract metadata shapes
+  javatype/              Java type classification helpers
 docs/
-  architecture.md         the one design doc to read
+  architecture.md        architecture reference
 ```
 
 ## Status
 
-- Go side: feature-complete end-to-end (six tools, indexer driver, worker pool,
-  session-tagged replay, self-heal hints) — all green under `go test -race ./...`.
-- Java side: the two jars (`spoon-indexer-java`, `runtime-worker-java`) are not
-  in this repo yet. The Go driver fully specifies their wire contract
-  (architecture §6 + §7) so they can be built independently.
+- The repository is now pure-Go on the runtime path.
+- `sofarpc_describe` works from project source scan; no Java sidecar or local cache is required.
+- `go test ./...` passes on the current tree.

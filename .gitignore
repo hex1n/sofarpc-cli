@@ -1,8 +1,6 @@
 .DS_Store
 .m2/
-target/
 dist/
-e2e/fixtures/target/
 bin/
 sofarpc.exe
 *.egg-info/

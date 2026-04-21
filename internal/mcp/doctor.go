@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
-	"github.com/hex1n/sofarpc-cli/internal/worker"
+	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -25,10 +24,11 @@ type DoctorOutput struct {
 // DoctorCheck is one diagnostic line. NextStep is omitted when the check
 // passed; when it fails, the agent should prefer this over guessing.
 type DoctorCheck struct {
-	Name     string        `json:"name"`
-	Ok       bool          `json:"ok"`
-	Detail   string        `json:"detail,omitempty"`
-	NextStep *DoctorAction `json:"nextStep,omitempty"`
+	Name     string         `json:"name"`
+	Ok       bool           `json:"ok"`
+	Detail   string         `json:"detail,omitempty"`
+	Data     map[string]any `json:"data,omitempty"`
+	NextStep *DoctorAction  `json:"nextStep,omitempty"`
 }
 
 // DoctorAction is a minimal nextStep payload — kept separate from
@@ -40,25 +40,17 @@ type DoctorAction struct {
 
 func registerDoctor(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 	sources := opts.TargetSources
-	client := opts.Worker
 	sessions := opts.Sessions
-	canReindex := opts.Reindexer != nil
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_doctor",
-		Description: "Run end-to-end self-diagnosis: config resolution, indexer status, worker pool health, target reachability. The catch-all fallback when other tools return an unresolved error.",
+		Description: "Run end-to-end self-diagnosis: target resolution, reachability, workspace state, and session readiness.",
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DoctorInput) (*sdkmcp.CallToolResult, DoctorOutput, error) {
-		// Run the four checks in parallel. Worst-case serial latency is
-		// probe-timeout (1s default) + ping-timeout (2s) + fast checks —
-		// which stacks on top of the agent's request budget. The checks
-		// are independent (no shared mutable state), so fanning out
-		// collapses that to the slowest single check.
-		checks := make([]DoctorCheck, 4)
+		checks := make([]DoctorCheck, 3)
 		var wg sync.WaitGroup
-		wg.Add(4)
+		wg.Add(3)
 		go func() { defer wg.Done(); checks[0] = checkTarget(in, sources) }()
-		go func() { defer wg.Done(); checks[1] = checkIndexer(holder.Get(), canReindex) }()
-		go func() { defer wg.Done(); checks[2] = checkWorker(ctx, client) }()
-		go func() { defer wg.Done(); checks[3] = checkSessions(sessions) }()
+		go func() { defer wg.Done(); checks[1] = checkContract(holder.Get()) }()
+		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
 		wg.Wait()
 		out := DoctorOutput{Checks: checks}
 		out.Ok = allOk(out.Checks)
@@ -110,114 +102,65 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 	}
 }
 
-// checkIndexer reports the facade index state. A nil store means the
-// indexer hasn't run yet (or the project has no index). A populated
-// store reports the service count. When canReindex is true, failures
-// hint at sofarpc_describe refresh=true so an agent can self-heal;
-// otherwise they explain the env the human needs to set.
-func checkIndexer(facade contract.Store, canReindex bool) DoctorCheck {
+func checkContract(facade contract.Store) DoctorCheck {
 	if facade == nil {
 		return DoctorCheck{
-			Name:     "indexer",
-			Ok:       false,
-			Detail:   "facade index not loaded; run the Spoon indexer over your project",
-			NextStep: reindexHint(canReindex),
+			Name:   "contract",
+			Ok:     true,
+			Detail: "no contract information attached; describe is unavailable, trusted-mode invoke still works",
 		}
 	}
 	banner, ok := facade.(interface{ Size() int })
 	if !ok {
 		return DoctorCheck{
-			Name:   "indexer",
+			Name:   "contract",
 			Ok:     true,
-			Detail: "facade store attached (in-memory)",
+			Detail: "contract information attached",
 		}
 	}
 	size := banner.Size()
+	diagProvider, hasDiagnostics := facade.(interface {
+		Diagnostics() sourcecontract.Diagnostics
+	})
+	if hasDiagnostics {
+		diag := diagProvider.Diagnostics()
+		data := map[string]any{
+			"indexedClasses": diag.IndexedClasses,
+			"indexedFiles":   diag.IndexedFiles,
+			"parsedClasses":  diag.ParsedClasses,
+		}
+		if len(diag.IndexFailures) > 0 {
+			data["indexFailures"] = diag.IndexFailures
+		}
+		if len(diag.ParseFailures) > 0 {
+			data["parseFailures"] = diag.ParseFailures
+		}
+		detail := fmt.Sprintf("contract information attached (%d indexed class(es), %d parsed on demand)", diag.IndexedClasses, diag.ParsedClasses)
+		if size == 0 {
+			detail = "contract information attached but empty; describe may not return overloads"
+		}
+		if len(diag.ParseFailures) > 0 {
+			detail += fmt.Sprintf("; %d parse failure(s) recorded", len(diag.ParseFailures))
+		}
+		return DoctorCheck{
+			Name:   "contract",
+			Ok:     true,
+			Detail: detail,
+			Data:   data,
+		}
+	}
 	if size == 0 {
 		return DoctorCheck{
-			Name:     "indexer",
-			Ok:       false,
-			Detail:   "facade index is empty — indexer produced no classes",
-			NextStep: reindexHint(canReindex),
+			Name:   "contract",
+			Ok:     true,
+			Detail: "contract information attached but empty; describe may not return overloads",
 		}
 	}
 	return DoctorCheck{
-		Name:   "indexer",
+		Name:   "contract",
 		Ok:     true,
-		Detail: fmt.Sprintf("facade index loaded (%d classes)", size),
+		Detail: fmt.Sprintf("contract information attached (%d class(es))", size),
 	}
-}
-
-// reindexHint picks the right nextStep for a missing / empty index.
-// If a Reindexer is wired, the agent can self-heal via sofarpc_describe
-// refresh=true; otherwise nothing the agent knows can fix it, so we
-// omit the step to avoid a doctor→doctor loop and let the detail line
-// carry the human instruction.
-func reindexHint(canReindex bool) *DoctorAction {
-	if !canReindex {
-		return nil
-	}
-	return &DoctorAction{
-		Tool: "sofarpc_describe",
-		Args: map[string]any{"refresh": true},
-	}
-}
-
-// checkWorker pings the worker pool. A nil client means the
-// SOFARPC_RUNTIME_JAR / _DIGEST env pair wasn't set; otherwise we send
-// a short-timeout Ping so a misconfigured or crashed worker surfaces
-// here instead of during the next invoke.
-//
-// Worker failures never carry a nextStep: doctor is already the final
-// fallback the agent would be pointed at, and nothing else the agent
-// can call fixes a missing jar or a crashed JVM. The detail line
-// instead carries the env the human needs to set.
-func checkWorker(ctx context.Context, client *worker.Client) DoctorCheck {
-	if client == nil {
-		return DoctorCheck{
-			Name:   "worker",
-			Ok:     false,
-			Detail: "worker not configured; set SOFARPC_RUNTIME_JAR and SOFARPC_RUNTIME_JAR_DIGEST",
-		}
-	}
-	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	resp, err := client.Invoke(pingCtx, worker.Request{Action: worker.ActionPing})
-	if err != nil {
-		return DoctorCheck{
-			Name:   "worker",
-			Ok:     false,
-			Detail: "worker unreachable: " + err.Error(),
-		}
-	}
-	if !resp.Ok {
-		return DoctorCheck{
-			Name:   "worker",
-			Ok:     false,
-			Detail: "worker ping returned Ok=false with no error payload",
-		}
-	}
-	return DoctorCheck{
-		Name:   "worker",
-		Ok:     true,
-		Detail: workerReadyDetail(client),
-	}
-}
-
-// workerReadyDetail composes the Ok-path detail. Surfacing pool
-// size/cap mirrors checkSessions so a multi-profile server can see
-// when LRU is about to start evicting JVMs. Zero cap means unbounded —
-// rendered as a lone size, matching the sessions format.
-func workerReadyDetail(client *worker.Client) string {
-	if client == nil || client.Pool == nil {
-		return "worker ready"
-	}
-	size := client.Pool.Size()
-	capacity := client.Pool.Cap()
-	if capacity <= 0 {
-		return fmt.Sprintf("worker ready; %d worker(s); capacity unbounded", size)
-	}
-	return fmt.Sprintf("worker ready; %d/%d worker(s); LRU evicts on overflow", size, capacity)
 }
 
 // checkSessions reports the session store's current load relative to its

@@ -1,8 +1,7 @@
-// Package invoke composes a generic-invoke Plan from the resolved target
-// + the resolved contract + the agent's args. It does NOT send the
-// payload — the worker driver (internal/worker, not yet built) does
-// that. Separating plan from execution lets sofarpc_invoke support a
-// cheap dryRun mode and lets tests cover plan correctness without a JVM.
+// Package invoke owns the generic-invoke core path: it builds Plans from
+// resolved target + contract + args, and it executes them through the
+// pure-Go direct transport. The planning half remains independently
+// testable, so dryRun never needs a runtime.
 package invoke
 
 import (
@@ -19,22 +18,26 @@ import (
 // Input is what sofarpc_invoke passes in. Target fields are merged into
 // target.Sources via target.Resolve — BuildPlan does that internally.
 type Input struct {
-	Service    string
-	Method     string
-	ParamTypes []string
-	Args       []any
-	Target     target.Input
+	Service       string
+	Method        string
+	ParamTypes    []string
+	Args          []any
+	Version       string
+	TargetAppName string
+	Target        target.Input
 }
 
 // Plan is the wire-ready payload plus diagnostics. When dryRun is
 // requested, sofarpc_invoke returns this verbatim; otherwise it hands
-// the wire fields to the worker.
+// the wire fields to the direct transport.
 type Plan struct {
 	Service        string                  `json:"service"`
 	Method         string                  `json:"method"`
 	ParamTypes     []string                `json:"paramTypes"`
 	ReturnType     string                  `json:"returnType,omitempty"`
 	Args           []any                   `json:"args"`
+	Version        string                  `json:"version,omitempty"`
+	TargetAppName  string                  `json:"targetAppName,omitempty"`
 	Target         target.Config           `json:"target"`
 	Overloads      []facadesemantic.Method `json:"overloads,omitempty"`
 	Selected       int                     `json:"selected"`
@@ -52,10 +55,8 @@ type Plan struct {
 //     disambiguation and skeleton rendering.
 //   - trusted: facade == nil, the agent supplies a complete
 //     service/method/paramTypes/args tuple and we hand it straight to
-//     the worker. This is the fallback when the project has no
-//     `.sofarpc/index` and no indexer configured, so the agent is
-//     expected to know the wire shape from elsewhere (Swagger, IDL,
-//     prior describe output, etc.).
+//     the direct transport. The agent is expected to know the wire
+//     shape from elsewhere (IDL, prior describe output, etc.).
 //
 // Failure modes (all *errcode.Error):
 //   - target.missing: no layer supplied a target mode.
@@ -91,6 +92,8 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 		ParamTypes:     resolved.Method.ParamTypes,
 		ReturnType:     resolved.Method.ReturnType,
 		Args:           args,
+		Version:        strings.TrimSpace(in.Version),
+		TargetAppName:  strings.TrimSpace(in.TargetAppName),
 		Target:         report.Target,
 		Overloads:      resolved.Overloads,
 		Selected:       resolved.Selected,
@@ -121,15 +124,15 @@ func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
 	}
 	if len(in.ParamTypes) == 0 {
 		return Plan{}, errcode.New(errcode.FacadeNotConfigured, "invoke",
-			"facade index is not configured; pass paramTypes on the invoke call to proceed without an index").
+			"contract information is not attached; pass paramTypes on the invoke call to proceed in trusted mode").
 			WithHint("sofarpc_doctor", nil,
-				"doctor reports how to wire the indexer — or pass paramTypes directly alongside args")
+				"doctor reports whether this workspace can describe methods or must use trusted-mode invoke")
 	}
 	if in.Args == nil {
 		return Plan{}, errcode.New(errcode.FacadeNotConfigured, "invoke",
-			"facade index is not configured; pass args on the invoke call — no index means no skeleton to render").
+			"contract information is not attached; pass args on the invoke call — trusted mode cannot synthesize a skeleton").
 			WithHint("sofarpc_doctor", nil,
-				"doctor reports how to wire the indexer — or pass args matching paramTypes")
+				"doctor reports whether this workspace can describe methods or must use trusted-mode invoke")
 	}
 	if len(in.Args) != len(in.ParamTypes) {
 		return Plan{}, errcode.New(errcode.ArgsInvalid, "invoke",
@@ -143,6 +146,8 @@ func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
 		Method:         in.Method,
 		ParamTypes:     in.ParamTypes,
 		Args:           in.Args,
+		Version:        strings.TrimSpace(in.Version),
+		TargetAppName:  strings.TrimSpace(in.TargetAppName),
 		Target:         report.Target,
 		ContractSource: "trusted",
 		TargetLayers:   report.Layers,
@@ -175,7 +180,15 @@ func resolveArgs(service, method string, userArgs []any, paramTypes []string, fa
 				describeHintArgs(service, method),
 				"describe the method to see its paramTypes")
 	}
-	return userArgs, "user", nil
+	normalized, err := contract.NormalizeArgs(paramTypes, userArgs, facade)
+	if err != nil {
+		return nil, "", errcode.New(errcode.ArgsInvalid, "invoke",
+			fmt.Sprintf("normalize args: %v", err)).
+			WithHint("sofarpc_describe",
+				describeHintArgs(service, method),
+				"describe the method to inspect field types or pass a canonical payload")
+	}
+	return normalized, "user", nil
 }
 
 // describeHintArgs builds the NextArgs payload for a describe hint. We

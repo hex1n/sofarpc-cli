@@ -6,58 +6,48 @@ import (
 
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/core/workspace"
+	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// OpenOutput is the structured payload for sofarpc_open. It mirrors
-// architecture §3.1: enough information for the agent to decide whether
-// to proceed or call sofarpc_doctor.
+// OpenOutput is the structured payload for sofarpc_open. It returns the
+// resolved workspace, the ambient target, and a capability banner the
+// agent can branch on before its first invoke.
 type OpenOutput struct {
 	SessionID    string         `json:"sessionId"`
 	ProjectRoot  string         `json:"projectRoot"`
 	Target       target.Config  `json:"target,omitempty"`
 	Layers       []target.Layer `json:"layers,omitempty"`
-	Facade       FacadeState    `json:"facade"`
 	Capabilities Capabilities   `json:"capabilities"`
-}
-
-// FacadeState reports the local facade/index status. Until the indexer
-// is wired (architecture §6), Configured/Indexed stay false.
-type FacadeState struct {
-	Configured bool `json:"configured"`
-	Indexed    bool `json:"indexed"`
-	Services   int  `json:"services"`
+	Contract     ContractBanner `json:"contract"`
 }
 
 // Capabilities is an up-front capability banner so agents know which
 // tools will succeed without round-tripping. Keep field names stable.
-//
-// Reindex tells the agent whether sofarpc_describe refresh=true is a
-// real recovery path: without a wired indexer the handler will reject
-// refresh up-front, and the agent should skip it rather than learn
-// that the hard way.
 type Capabilities struct {
-	FacadeIndex bool `json:"facadeIndex"`
-	Worker      bool `json:"worker"`
-	Reindex     bool `json:"reindex"`
+	DirectInvoke bool `json:"directInvoke"`
+	Describe     bool `json:"describe"`
+	Replay       bool `json:"replay"`
 }
 
-// facadeBanner is implemented by facade stores that can cheaply report
-// the number of indexed services. *indexer.Index satisfies it; in-memory
-// test stores don't need to.
-type facadeBanner interface {
-	Size() int
-	Services() []string
+// ContractBanner gives agents an up-front view of contract readiness and
+// sourcecontract health at workspace-open time.
+type ContractBanner struct {
+	Attached       bool              `json:"attached"`
+	Source         string            `json:"source,omitempty"`
+	IndexedClasses int               `json:"indexedClasses,omitempty"`
+	IndexedFiles   int               `json:"indexedFiles,omitempty"`
+	ParsedClasses  int               `json:"parsedClasses,omitempty"`
+	IndexFailures  map[string]string `json:"indexFailures,omitempty"`
+	ParseFailures  map[string]string `json:"parseFailures,omitempty"`
 }
 
 func registerOpen(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 	envCfg := opts.TargetSources.Env
 	sessions := opts.Sessions
-	workerReady := opts.Worker != nil && !opts.Worker.Profile.Empty()
-	reindexReady := opts.Reindexer != nil
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_open",
-		Description: "Open a sofarpc workspace. Returns the resolved target, facade state, and a session id the agent can reuse in subsequent calls.",
+		Description: "Open a sofarpc workspace. Returns the resolved target, a capability banner, and a session id the agent can reuse in subsequent calls.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in OpenInput) (*sdkmcp.CallToolResult, OpenOutput, error) {
 		facade := holder.Get()
 		ws, err := workspace.Resolve(workspace.Input{
@@ -78,23 +68,17 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 			Target:      report.Target,
 		})
 
-		facadeState := FacadeState{Configured: facade != nil}
-		if banner, ok := facade.(facadeBanner); ok {
-			facadeState.Indexed = banner.Size() > 0
-			facadeState.Services = len(banner.Services())
-		}
-
 		out := OpenOutput{
 			SessionID:   session.ID,
 			ProjectRoot: ws.ProjectRoot,
 			Target:      report.Target,
 			Layers:      report.Layers,
-			Facade:      facadeState,
 			Capabilities: Capabilities{
-				FacadeIndex: facade != nil,
-				Worker:      workerReady,
-				Reindex:     reindexReady,
+				DirectInvoke: true,
+				Describe:     facade != nil,
+				Replay:       sessions != nil,
 			},
+			Contract: buildContractBanner(facade),
 		}
 
 		result := &sdkmcp.CallToolResult{
@@ -111,13 +95,30 @@ func summarizeOpen(out OpenOutput) string {
 	if out.Target.Mode != "" {
 		targetState = fmt.Sprintf("target.mode=%s", out.Target.Mode)
 	}
-	base := fmt.Sprintf("%s project=%s %s", out.SessionID, out.ProjectRoot, targetState)
-	// When the facade is empty but a reindexer is wired, point the agent
-	// at the concrete recovery path instead of waiting for a later
-	// describe call to fail. This is the one place we know both facts
-	// up-front.
-	if !out.Facade.Indexed && out.Capabilities.Reindex {
-		base += " — call sofarpc_describe refresh=true to populate the index"
+	return fmt.Sprintf("%s project=%s %s", out.SessionID, out.ProjectRoot, targetState)
+}
+
+func buildContractBanner(facade any) ContractBanner {
+	if facade == nil {
+		return ContractBanner{}
 	}
-	return base
+	banner := ContractBanner{
+		Attached: true,
+		Source:   "contract-store",
+	}
+	if sized, ok := facade.(interface{ Size() int }); ok {
+		banner.ParsedClasses = sized.Size()
+	}
+	if diagProvider, ok := facade.(interface {
+		Diagnostics() sourcecontract.Diagnostics
+	}); ok {
+		diag := diagProvider.Diagnostics()
+		banner.Source = "sourcecontract"
+		banner.IndexedClasses = diag.IndexedClasses
+		banner.IndexedFiles = diag.IndexedFiles
+		banner.ParsedClasses = diag.ParsedClasses
+		banner.IndexFailures = diag.IndexFailures
+		banner.ParseFailures = diag.ParseFailures
+	}
+	return banner
 }

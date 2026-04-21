@@ -1,10 +1,10 @@
-// Package facadesemantic holds the shapes mirrored by the Java indexer's
-// shard output. The indexer writes these as JSON under .sofarpc/index/,
-// the Go side reads them back verbatim. Field names, tags, and zero-value
-// semantics MUST match docs/architecture.md §6.2.
+// Package facadesemantic holds the contract shapes used by the pure-Go
+// contract resolver. It is types only: callers that need to reason about a
+// Class use internal/core/contract or internal/javatype.
 //
-// This package has no logic — it is types only. Callers that need to
-// reason about a Class use internal/core/contract or internal/javatype.
+// Field names and zero-value semantics are kept explicit so these shapes can
+// be materialised from any contract source without leaking source-specific
+// behavior into the resolver.
 package facadesemantic
 
 // Class is one top-level Java type. Kind distinguishes class/interface/enum
@@ -22,8 +22,7 @@ type Class struct {
 	Methods       []Method `json:"methods,omitempty"`
 }
 
-// Field is one declared member. Required is indexer-supplied (e.g. from a
-// @NotNull / primitive declaration) and purely advisory here.
+// Field is one declared member. Required is purely advisory here.
 type Field struct {
 	Name     string `json:"name"`
 	JavaType string `json:"javaType"`
@@ -39,8 +38,8 @@ type Method struct {
 	ReturnType string   `json:"returnType,omitempty"`
 }
 
-// Kind constants mirror what the indexer emits. Kept as string literals
-// so reading raw shard JSON is obvious.
+// Kind constants stay as string literals so they are easy to inspect in tests
+// and any external contract materialisation.
 const (
 	KindClass     = "class"
 	KindInterface = "interface"

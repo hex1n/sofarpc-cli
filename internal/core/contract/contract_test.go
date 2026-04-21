@@ -115,6 +115,13 @@ func TestBuildSkeleton_PrimitivesAndStrings(t *testing.T) {
 	}
 }
 
+func TestBuildSkeleton_BigDecimalUsesTypedObject(t *testing.T) {
+	sk := BuildSkeleton([]string{"java.math.BigDecimal"}, NewInMemoryStore())
+	if string(sk[0]) != `{"@type":"java.math.BigDecimal","value":"0"}` {
+		t.Fatalf("BigDecimal skeleton: %s", sk[0])
+	}
+}
+
 func TestBuildSkeleton_ContainerWithoutTypeArgsFallsBackToEmpty(t *testing.T) {
 	// Erasure can strip type parameters; without them the agent has no
 	// way to know the element type, so an empty placeholder is the only
@@ -307,6 +314,34 @@ func TestBuildSkeleton_UnknownUserTypeEmitsStub(t *testing.T) {
 	sk := BuildSkeleton([]string{"com.foo.UnknownDTO"}, NewInMemoryStore())
 	if string(sk[0]) != `{"@type":"com.foo.UnknownDTO"}` {
 		t.Fatalf("unknown user type should emit stub; got %s", sk[0])
+	}
+}
+
+func TestBuildSkeleton_IncludesInheritedFields(t *testing.T) {
+	store := NewInMemoryStore(
+		facadesemantic.Class{
+			FQN:    "com.foo.Base",
+			Kind:   facadesemantic.KindClass,
+			Fields: []facadesemantic.Field{{Name: "id", JavaType: "java.lang.Long"}},
+		},
+		facadesemantic.Class{
+			FQN:        "com.foo.Child",
+			Kind:       facadesemantic.KindClass,
+			Superclass: "com.foo.Base",
+			Fields:     []facadesemantic.Field{{Name: "name", JavaType: "java.lang.String"}},
+		},
+	)
+
+	sk := BuildSkeleton([]string{"com.foo.Child"}, store)
+	var obj map[string]any
+	if err := json.Unmarshal(sk[0], &obj); err != nil {
+		t.Fatalf("skeleton not valid json: %v — %s", err, sk[0])
+	}
+	if _, ok := obj["id"]; !ok {
+		t.Fatalf("inherited id field missing: %v", obj)
+	}
+	if _, ok := obj["name"]; !ok {
+		t.Fatalf("child name field missing: %v", obj)
 	}
 }
 

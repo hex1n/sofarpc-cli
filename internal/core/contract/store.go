@@ -5,8 +5,8 @@
 // directly when the decision is "which overload + what payload shape".
 //
 // The Store interface is the single seam the rest of the system plugs
-// into. Real implementations: indexer-shard reader (internal/indexer),
-// javap fallback. Tests use InMemoryStore.
+// into. Tests use InMemoryStore; production code can materialise contract
+// data from any source without changing the resolver.
 package contract
 
 import (
@@ -21,8 +21,7 @@ type Store interface {
 	Class(fqn string) (facadesemantic.Class, bool)
 }
 
-// InMemoryStore is the test / scaffolding implementation. Production
-// code replaces it with an indexer-shard-backed Store.
+// InMemoryStore is the test / scaffolding implementation.
 type InMemoryStore struct {
 	classes map[string]facadesemantic.Class
 }

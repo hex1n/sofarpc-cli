@@ -30,15 +30,42 @@ func TestReplay_PayloadDryRunReturnsPlan(t *testing.T) {
 	}
 }
 
-func TestReplay_PayloadNonDryRunSurfacesDaemonUnavailable(t *testing.T) {
+func TestReplay_PayloadNonDryRunWithUnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 	out := callReplay(t, Options{}, map[string]any{
-		"payload": samplePlan(),
+		"payload": sampleRegistryPlan(),
 	})
-	if out.Error == nil || out.Error.Code != errcode.DaemonUnavailable {
-		t.Fatalf("expected DaemonUnavailable, got %+v", out.Error)
+	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
+		t.Fatalf("expected InvocationRejected, got %+v", out.Error)
 	}
 	if out.Plan == nil {
-		t.Fatal("plan should still be attached when worker is missing")
+		t.Fatal("plan should still be attached on InvocationRejected")
+	}
+}
+
+func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
+	plan := samplePlan()
+	directURL, stop := fakeDirectServer(t, knownDirectSuccessResponseHex)
+	defer stop()
+	plan.Target.DirectURL = directURL
+
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": plan,
+	})
+	if !out.Ok {
+		t.Fatalf("expected Ok=true, got error=%+v diagnostics=%+v", out.Error, out.Diagnostics)
+	}
+	if out.Source != "payload" {
+		t.Fatalf("source: got %q want payload", out.Source)
+	}
+	if transport, _ := out.Diagnostics["transport"].(string); transport != invoke.DirectTransportName {
+		t.Fatalf("transport: got %q want %q", transport, invoke.DirectTransportName)
+	}
+	result, ok := out.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", out.Result)
+	}
+	if got := result["type"]; got != "com.example.serviceapp.facade.model.OperationResult" {
+		t.Fatalf("result.type: got %#v", got)
 	}
 }
 
@@ -156,6 +183,15 @@ func samplePlan() invoke.Plan {
 		},
 		ArgSource: "user",
 	}
+}
+
+func sampleRegistryPlan() invoke.Plan {
+	plan := samplePlan()
+	plan.Target = target.Config{
+		Mode:            target.ModeRegistry,
+		RegistryAddress: "zookeeper://h:1",
+	}
+	return plan
 }
 
 func callReplay(t *testing.T, opts Options, args map[string]any) ReplayOutput {

@@ -1,549 +1,513 @@
-# sofarpc-cli Architecture (agent-first rewrite)
+# sofarpc-cli Architecture
 
-This document is the source of truth for the rewrite on the `rewrite` branch.
-It describes the target state — not a migration path (that lives in
-[`improvement-plan.md`](improvement-plan.md)).
+This document defines the pure-Go mainline architecture of `sofarpc-cli`.
+It intentionally omits migration steps and compatibility concerns. The system
+described here is the one the project should optimize around.
 
-## 1. Principles
+## 1. Core idea
 
-1. **Agent-first surface.** Every failure returns a stable `code` plus a
-   `nextStep{nextTool, nextArgs, reason}` hint the agent can call directly.
-   No free-form prose recovery. See `internal/errcode`.
-2. **Three processes only.** A Go control plane, an ephemeral Java
-   indexer, and a long-running Java invoke worker. No other daemons.
-3. **One payload mode.** Generic invoke with automatic `@type` injection.
-   No raw / schema variants exposed.
-4. **Pay the JVM cost once per profile.** The invoke worker's identity
-   depends on `sofaRpcVersion + runtimeJarDigest + javaMajor`. Stubs are
-   loaded per-request in isolated classloaders.
-5. **Stateless between calls.** Sessions exist only so the agent can avoid
-   re-specifying the target or rebuilding the last plan; they are
-   optional and cheap.
-6. **Small tool count.** Six MCP tools. More tools → agent decision cost.
+`sofarpc-cli` is an agent-first local MCP server for SOFARPC generic invoke.
+Its smallest useful unit is:
 
-## 2. Process topology
+```text
+service + method + paramTypes + args + target
+-> build a plan
+-> encode a SofaRequest
+-> send one BOLT request
+-> decode one SofaResponse
+-> return JSON plus structured diagnostics
+```
+
+Everything else exists only to make that loop reliable for agents.
+
+## 2. Design principles
+
+1. **Agent-first surface.** The public API is six MCP tools with typed JSON
+   inputs and outputs.
+2. **Single visible runtime.** Users and agents interact with one binary:
+   `cmd/sofarpc-mcp`.
+3. **Pure-Go invoke path.** Direct invocation is implemented in Go for
+   `direct + bolt + hessian2`.
+4. **Source-first contract guidance, mandatory execution.** `describe`
+   should work from local Java sources when they exist, but invoke must remain
+   usable in trusted mode without any local contract cache requirement.
+5. **Project defaults live in MCP env.** Target defaults are attached to the
+   MCP server entry for a project, not to a repo-local manifest.
+6. **Structured recovery.** Errors return stable codes and next-step hints so
+   agents can recover by calling another tool, not by parsing prose.
+
+## 3. System topology
 
 ```mermaid
 flowchart TB
-    subgraph ClientSide["Client"]
-        Agent([Agent / MCP Client])
+    subgraph Client["Client"]
+        Agent["Agent / MCP client"]
     end
 
-    subgraph MCPLayer["MCP layer · internal/mcp"]
-        Server[server.go · 6 tools]
-        Holder[facadeHolder · RWMutex store]
-        Sessions[SessionStore · TTL + LRU]
+    subgraph MCP["MCP layer · internal/mcp"]
+        Server["sofarpc-mcp\n6 tools"]
+        Sessions["SessionStore\nTTL + LRU"]
     end
 
     subgraph Core["Core · internal/core"]
-        ContractR[contract/resolve · overload pick]
-        ContractS[contract/skeleton · generics + arrays + wildcards]
-        TargetR[target · precedence chain]
-        TargetP[target/probe · reachability]
-        Plan[invoke/plan · BuildPlan]
+        Workspace["workspace\nproject root"]
+        Source["sourcecontract\nscan .java"]
+        Target["target\nresolve + probe"]
+        Contract["contract\nresolve + skeleton"]
+        Invoke["invoke\nplan + execute"]
     end
 
-    subgraph Sub["Subsystems"]
-        Worker[worker · JVM pool + wire]
-        Indexer[indexer · Spoon driver + shards]
-        Errcode[errcode · codes + Hint]
-        Javatype[javatype · role + placeholder]
+    subgraph Transport["Pure-Go transport"]
+        Bolt["boltclient\nBOLT v1 client"]
+        Wire["sofarpcwire\nSofaRequest / SofaResponse"]
     end
 
-    subgraph External["Out-of-process"]
-        SpoonJar[(spoon-indexer.jar · one-shot)]
-        WorkerJar[(runtime-worker.jar · long-running)]
-        IndexFS[(.sofarpc/index · manifest + shards)]
-        SOFARPC[(SOFARPC service)]
-    end
+    Service["SOFARPC service"]
 
-    Agent -- stdio MCP --> Server
-    Server --> Holder & Sessions
-    Server --> ContractR & Plan & TargetR
-    ContractR --> ContractS --> Javatype
-    Plan --> ContractR & TargetR
-    Plan -- failure --> Errcode
-    TargetR --> TargetP
-    Server --> Worker --> WorkerJar -- Hessian2 generic --> SOFARPC
-    Server -. refresh=true .-> Indexer --> SpoonJar --> IndexFS
-    Holder -. startup load / hot-swap .-> IndexFS
+    Agent --> Server
+    Server --> Sessions
+    Server --> Workspace
+    Server --> Source
+    Server --> Target
+    Server --> Contract
+    Server --> Invoke
+    Invoke --> Bolt --> Wire --> Service
 ```
 
-- The Go process is the only component the user or agent sees.
-- The indexer runs **once per source change**, reads `.java`, writes JSON.
-  No daemon mode — simpler to reason about, trivially restartable.
-- The worker runs **once per JVM profile**, serves many requests. Workers
-  with idle TTL expired or outside the pool cap are evicted (LRU). Restarting
-  is rare and controlled.
-- `facadeHolder` is the single hot-swap point for the on-disk index: loaded
-  once at startup, atomically replaced by `sofarpc_describe refresh=true`,
-  and read via `RWMutex` so in-flight reads never race the swap.
+The architectural split is:
 
-## 3. MCP tool surface (6 tools)
+- `internal/mcp` exposes the public tool contract.
+- `internal/sourcecontract` materializes contract information by scanning
+  project Java sources at startup.
+- `internal/core` owns planning, target resolution, contract handling, and
+  execution policy.
+- `internal/boltclient` and `internal/sofarpcwire` own the wire protocol.
+- no Java sidecar or local contract persistence is required for the mainline
+  path.
 
-Tool names intentionally share the `sofarpc_` prefix so agent tool lists
-cluster. All inputs and outputs are JSON. Every tool can return an error
-object with `code` and `nextStep`.
+## 4. Public MCP surface
 
-Runtime sequence for the canonical happy path (open → describe → invoke):
+The public API is fixed at six tools.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant A as Agent
-    participant S as sofarpc_* tools
-    participant H as facadeHolder
-    participant C as contract.Resolve+Skeleton
-    participant P as worker.Pool
-    participant W as runtime-worker.jar
-    participant R as SOFARPC service
+| Tool | Purpose |
+| --- | --- |
+| `sofarpc_open` | Open a workspace and return project root, resolved target, capabilities, and a session id. |
+| `sofarpc_target` | Resolve the effective target and optionally probe reachability. |
+| `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. |
+| `sofarpc_invoke` | Build a plan and execute it. `dryRun=true` returns the plan only. |
+| `sofarpc_replay` | Re-run a captured plan from `sessionId` or a literal `payload`. |
+| `sofarpc_doctor` | Run structured diagnostics across target, workspace state, and invoke prerequisites. |
 
-    A->>S: sofarpc_open {projectRoot}
-    S->>H: load .sofarpc/index
-    S-->>A: projectRoot / target / facade / sessionId
+All tools speak JSON. All tool failures use stable `errcode` values and may
+include a machine-usable recovery hint.
 
-    A->>S: sofarpc_describe {service, method}
-    S->>H: Get()
-    H->>C: ResolveMethod + BuildSkeleton
-    Note over C: generic expansion:<br/>List<Order> → [{@type:Order,...}]<br/>Map<K,V> → {"<key>": <V skel>}<br/>Foo[] → [<Foo skel>]<br/>? extends T → T
-    S-->>A: overloads + fill-and-send skeleton
+Example:
 
-    A->>S: sofarpc_invoke {service, method, args, target}
-    S->>C: BuildPlan (target + overload + args)
-    S->>P: Get(profile)
-    alt profile not in pool
-        P->>W: spawn JVM
-        W-->>P: READY (loopback TCP)
-    else hit
-        P-->>S: reuse existing worker
-    end
-    S->>W: Request{requestId, service, method, args}
-    W->>R: Hessian2 generic invoke
-    R-->>W: response bytes
-    W-->>S: Response{requestId, ok, result}
-    S-->>A: ok / result / diagnostics
-    Note over S: session.UpdatePlan(plan)<br/>future replay without rebuilding args
-```
-
-### 3.1 `sofarpc_open`
-
-Open a workspace. Returns everything the agent needs to decide what to
-do next — resolved target, facade state, last session snapshot.
-Combines what the old design split across `open / inspect / resume`.
-
-Input:
 ```json
-{ "cwd": "string?", "project": "string?" }
+{
+  "code": "target.unreachable",
+  "message": "direct dial failed: ...",
+  "phase": "invoke",
+  "hint": {
+    "nextTool": "sofarpc_target",
+    "nextArgs": { "explain": true },
+    "reason": "the configured target could not be reached"
+  }
+}
 ```
 
-Output (key fields):
+## 5. Configuration and target model
+
+`sofarpc-cli` has no project manifest and no repo-local target file. Target
+resolution is:
+
+```text
+per-call MCP input > MCP server env > built-in defaults
+```
+
+This is implemented by `internal/core/target.Resolve`.
+
+### 5.1 Supported fields
+
+Resolved target config contains:
+
+- `mode`
+- `directUrl`
+- `registryAddress`
+- `registryProtocol`
+- `protocol`
+- `serialization`
+- `uniqueId`
+- `timeoutMs`
+- `connectTimeoutMs`
+
+Built-in defaults:
+
+- `protocol = bolt`
+- `serialization = hessian2`
+- `timeoutMs = 3000`
+- `connectTimeoutMs = 1000`
+
+`mode` is inferred from the resolved fields:
+
+- `directUrl != ""` -> `direct`
+- `registryAddress != ""` -> `registry`
+- neither -> unresolved target
+
+### 5.2 Project-scoped MCP env
+
+Per-project defaults belong on the MCP server entry for that project.
+
+```json
+{
+  "mcpServers": {
+    "sofarpc-demo": {
+      "command": "/abs/path/to/sofarpc-mcp",
+      "env": {
+        "SOFARPC_PROJECT_ROOT": "/abs/path/to/project",
+        "SOFARPC_DIRECT_URL": "bolt://host:12200",
+        "SOFARPC_PROTOCOL": "bolt",
+        "SOFARPC_SERIALIZATION": "hessian2"
+      }
+    }
+  }
+}
+```
+
+With a project-level MCP env, normal `sofarpc_invoke` requests do not need to
+repeat `directUrl`. Per-call target fields exist only for explicit override.
+
+### 5.3 `sofarpc_target`
+
+`sofarpc_target` is the inspection tool for target resolution. It returns:
+
+- resolved `target`
+- contributing `layers`
+- optional `trace`
+- optional `explain`
+- a cheap TCP `probe`
+
+The probe only checks whether a TCP connection can be opened within
+`connectTimeoutMs`. It does not perform a SOFA handshake.
+
+## 6. Workspace and session model
+
+`sofarpc_open` establishes the working context for a project:
+
+- resolve project root from `cwd` or `project`
+- resolve the ambient target from MCP env
+- return capabilities and a new session id
+
+Representative output:
+
 ```json
 {
   "sessionId": "ws_...",
   "projectRoot": "/abs/path",
   "target": { "mode": "direct", "directUrl": "bolt://..." },
-  "facade": { "configured": true, "indexed": true, "services": 42 },
-  "capabilities": { "facadeIndex": true, "worker": true }
+  "capabilities": {
+    "directInvoke": true,
+    "describe": true,
+    "replay": true
+  },
+  "contract": {
+    "attached": true,
+    "source": "sourcecontract",
+    "indexedClasses": 692,
+    "indexedFiles": 692,
+    "parsedClasses": 0
+  }
 }
 ```
 
-### 3.2 `sofarpc_describe`
+Sessions are deliberately small and disposable:
 
-Describe a method on a service. Resolves overloads and returns one
-method schema plus a JSON skeleton rendered via `javatype.Placeholder`.
+- in-memory only
+- TTL 24 hours
+- capacity 256
+- LRU eviction
 
-Input:
-```json
-{ "service": "com.foo.Facade", "method": "getUser", "types": ["com.foo.Req"]? , "refresh": false }
-```
+Each session stores:
 
-Output:
-```json
-{
-  "service": "com.foo.Facade",
-  "method": "getUser",
-  "overloads": [ { "paramTypes": ["com.foo.Req"], "returnType": "com.foo.Resp" } ],
-  "selected": 0,
-  "skeleton": [{ "@type": "com.foo.Req", "name": "" }],
-  "diagnostics": { "contractSource": "project-source", "cacheHit": true }
-}
-```
+- `id`
+- `projectRoot`
+- `target`
+- `createdAt`
+- `lastPlan`
 
-### 3.3 `sofarpc_target`
+This is enough to support `replay` and avoid forcing the agent to respecify the
+same call context repeatedly.
 
-Show / resolve the invocation target without performing a call. Used
-for `--explain`-style diagnostics and by agents before invoke.
+## 7. Contract model
 
-Input:
-```json
-{ "service": "string?", "directUrl": "string?", "registryAddress": "string?", "explain": false }
-```
+The contract layer exists to bridge Java method signatures into agent-editable
+JSON. In the pure-Go mainline, `cmd/sofarpc-mcp` attaches a store built by
+scanning `.java` files under `SOFARPC_PROJECT_ROOT`. It owns:
 
-Output:
-```json
-{
-  "target": { "mode": "direct", "directUrl": "bolt://...", "protocol": "bolt", "serialization": "hessian2", "timeoutMs": 3000 },
-  "layers": [ { "name": "input", "appliedFields": ["directUrl"] }, { "name": "mcp-env", "appliedFields": ["serialization"] } ],
-  "reachability": { "reachable": true, "target": "1.2.3.4:12200" }
-}
-```
+- overload resolution
+- parameter and return type resolution
+- JSON skeleton generation
+- `@type` injection for user-defined Java objects
 
-### 3.4 `sofarpc_invoke`
+This logic lives in `internal/core/contract`.
 
-Plan and execute a generic invocation. `dryRun: true` returns the plan
-without contacting the worker (subsumes the old `plan_invocation`).
+### 7.1 Describe
 
-Input:
-```json
-{ "service": "...", "method": "...", "types": ["..."]?, "args": [...]|"@file"|"-", "target": {...}?, "dryRun": false }
-```
+`sofarpc_describe` uses the attached source-derived contract store to:
 
-Output (success):
-```json
-{
-  "ok": true,
-  "result": <json>,
-  "diagnostics": { "paramTypes": [...], "daemonKey": "...", "classloaderKey": "...", "latencyMs": 12 }
-}
-```
+1. resolve matching overloads
+2. pick the selected signature
+3. build a JSON skeleton for agent editing
 
-Output (failure): `{ "ok": false, "error": RuntimeError }` — see §4.
+Describe diagnostics include:
 
-### 3.5 `sofarpc_replay`
+- `contractSource`
+- `cacheHit`
+- `contract.indexedClasses`
+- `contract.indexedFiles`
+- `contract.parsedClasses`
+- `contract.indexFailures`
+- `contract.parseFailures`
 
-Replay a captured invocation (from session or from a JSON payload). Same
-plan → execute path as `sofarpc_invoke`; exists so agents don't have to
-reconstruct arguments by hand.
+The source scan is best-effort:
 
-### 3.6 `sofarpc_doctor`
+- hidden directories are skipped
+- `src/test` trees are skipped
+- common build-output directories are skipped
 
-Self-diagnosis. Runs indexer status, worker pool health, target probe,
-config resolution, and returns one structured report. The single
-catch-all the agent can fall back to when any other tool returns an
-error without a `nextStep`.
+If a workspace has no Java sources, `describe` is unavailable and invoke falls
+back to trusted mode.
 
-## 4. Error taxonomy
+### 7.2 Trusted mode
 
-Every failure carries a stable `code` plus a `nextTool` hint whose `NextArgs`
-are pre-filled with the inputs the next tool needs (`service`, `method`,
-`sessionId`, `refresh=true`, …). The agent follows the hint verbatim —
-no prose parsing, no re-deriving context from the failed call.
+If contract information is unavailable, invoke still works as long as the
+caller provides:
+
+- `service`
+- `method`
+- `types`
+- `args`
+
+In trusted mode:
+
+- no overload disambiguation happens
+- no skeleton is generated
+- `contractSource` is marked as trusted
+
+Trusted mode is important because execution is the core feature; contract
+guidance is an optimization layer on top of it.
+
+## 8. Invoke pipeline
+
+Invoke is split into two phases:
+
+1. plan building
+2. plan execution
+
+Both are owned by `internal/core/invoke`.
+
+### 8.1 Plan building
+
+`BuildPlan` merges:
+
+- target resolution
+- contract resolution, if contract information exists
+- argument normalization
+- invoke-level fields such as `version` and `targetAppName`
+
+The plan is the stable unit shared by:
+
+- `sofarpc_invoke`
+- `sofarpc_replay`
+- dry-run output
+
+Facade-backed plan building performs contract-aware argument normalization before
+execution:
+
+- DTO objects are upgraded to canonical `{"@type":"..."}` payloads
+- nested DTOs and `List<DTO>` / `Map<String, V>` values are normalized
+  recursively
+- common numeric Java types such as `BigDecimal` and `BigInteger` are wrapped
+  into typed-object form
+
+Trusted mode deliberately skips this step. In trusted mode the caller owns the
+exact Java payload shape.
+- session capture
+
+Key plan fields:
+
+- `service`
+- `method`
+- `paramTypes`
+- `returnType`
+- `args`
+- `version`
+- `targetAppName`
+- `target`
+- `overloads`
+- `selected`
+- `contractSource`
+- `targetLayers`
+- `argSource`
+
+### 8.2 Execution rule
+
+The pure-Go mainline supports one concrete invoke shape:
+
+- `mode = direct`
+- `protocol = bolt`
+- `serialization = hessian2`
+
+If a call does not fit that shape, it is outside the mainline architecture
+described here.
+
+### 8.3 Sequence
 
 ```mermaid
-flowchart LR
-    E1[describe: FacadeNotConfigured<br/>hint → describe refresh=true<br/>NextArgs: service, method]
-    E2[describe refresh: IndexerFailed<br/>hint → doctor]
-    E3[invoke: TargetMissing<br/>hint → target explain=true]
-    E4[invoke: ArgsInvalid arity<br/>hint → describe<br/>NextArgs: service, method]
-    E5[invoke: DaemonUnavailable<br/>hint → doctor]
-    E6[invoke: WorkerError / InvocationUncertain<br/>hint → doctor]
-    E7[replay: session not found<br/>hint → open]
+sequenceDiagram
+    autonumber
+    participant A as Agent
+    participant M as MCP tool
+    participant P as core/invoke.BuildPlan
+    participant D as core/invoke.Execute
+    participant B as boltclient
+    participant W as sofarpcwire
+    participant S as SOFARPC service
 
-    E1 -->|refresh=true| E2
-    E1 -.on success.-> OK1[skeleton in hand]
-    E2 --> Dr((sofarpc_doctor))
-    E3 --> Tg((sofarpc_target))
-    E4 --> De((sofarpc_describe))
-    E5 --> Dr
-    E6 --> Dr
-    E7 --> Op((sofarpc_open))
-    Dr -->|per-check nextStep<br/>target / indexer / worker / sessions| Fix[agent or human fixes the specific check]
+    A->>M: sofarpc_invoke
+    M->>P: build plan
+    P-->>M: plan
+    M->>D: execute(plan)
+    D->>B: write BOLT request
+    B->>W: encode SofaRequest
+    W->>S: generic invoke
+    S-->>W: SofaResponse
+    W-->>B: decoded response
+    B-->>D: result + diagnostics
+    D-->>M: outcome
+    M-->>A: ok/result/diagnostics or errcode
 ```
 
-All tool errors use `internal/errcode.Error`:
+### 8.4 Transport responsibilities
 
-```json
-{
-  "code": "target.missing",
-  "message": "either a direct target or registry target is required",
-  "phase": "resolve",
-  "hint": { "nextTool": "sofarpc_target", "nextArgs": { "explain": true }, "reason": "no target resolved" }
-}
-```
+`internal/boltclient` owns:
 
-Codes are grouped by phase:
+- BOLT v1 request framing
+- request/response correlation
+- low-level socket I/O
+- transport-level timeouts
 
-| Group     | Codes |
-|-----------|-------|
-| input     | `input.service-missing`, `input.method-missing`, `input.args-invalid` |
-| target    | `target.missing`, `target.unreachable` |
-| contract  | `contract.method-ambiguous`, `contract.method-not-found`, `contract.unresolvable` |
-| workspace | `workspace.facade-not-configured`, `workspace.index-stale`, `workspace.indexer-failed` |
-| runtime   | `runtime.daemon-unavailable`, `runtime.worker-error`, `runtime.deserialize-failed`, `runtime.timeout`, `runtime.rejected`, `runtime.invocation-uncertain` |
+`internal/sofarpcwire` owns:
 
-New codes are added by extending `errcode.Code` constants; every new code
-MUST define a default `nextStep` at the emitting site.
+- `SofaRequest` construction
+- generic invoke payload encoding
+- `targetServiceUniqueName = service:version[:uniqueId]`
+- SOFA header fields such as method name, target service, generic type, and
+  optional target app
+- `SofaResponse` decoding into JSON-friendly data
 
-Two codes in the runtime group deserve a note on semantics:
+Direct-path diagnostics include:
 
-- `workspace.index-stale` vs `workspace.indexer-failed`: the former means
-  the existing index is out of date and another `describe refresh=true`
-  is likely to fix it; the latter means the indexer subprocess itself
-  failed (jar path wrong, Spoon crash, timeout) and the agent should
-  route the human at `sofarpc_doctor` rather than retry refresh.
-- `runtime.invocation-uncertain` is surfaced when the worker connection
-  dropped *after* the request was flushed but before a response came
-  back. The outcome is unobservable from the client side, so the agent
-  MUST NOT retry automatically — replay is only safe when the called
-  method is idempotent. Distinct from `runtime.daemon-unavailable`
-  (worker never reached) and `runtime.worker-error` (worker answered
-  with a typed failure).
+- `transport`
+- `target`
+- `requestId`
+- `requestCodec`
+- `requestClass`
+- `targetServiceUniqueName`
+- `responseStatus`
+- `responseClass`
+- `responseCodec`
+- `responseContentLength`
 
-The capability banner returned by `sofarpc_open.capabilities` exposes
-`facadeIndex`, `worker`, and `reindex` so the agent can skip recovery
-paths that aren't wired in the current process — e.g. don't suggest
-`describe refresh=true` when `reindex=false`.
+This is the core runtime path the project should continue to harden.
 
-## 5. Contract resolution
+## 9. Replay and diagnostics
 
-`core/contract` resolves a method's param-types, return type, and the
-registry of user classes needed to inject `@type` tags.
+### 9.1 Replay
 
-Source of truth, in order:
-1. Project source (Spoon indexer shards under `.sofarpc/index/`).
-2. Jar metadata via `javap` fallback (stub-path-driven).
-3. None → `contract.unresolvable` with `nextStep: facade_init`.
+`sofarpc_replay` exists so an agent can re-run a call without rebuilding the
+arguments or target context.
 
-Classification uses `javatype.Classify(fqn, registry)`:
-- `UserType` → wrap value in `{"@type": fqn, ...}`.
-- `Container` → recurse into children, container itself is transparent.
-- `Passthrough` → emit value as-is.
+Input is exactly one of:
 
-No hardcoded type whitelists. New Java library types "just work" as
-long as their superclass/interface chain reaches a known base.
+- `sessionId`
+- `payload`
 
-## 6. Go ↔ Java indexer protocol
+`payload` is a serialized invoke plan. Replay is not a separate protocol; it is
+the same execution path as invoke after plan building is skipped.
 
-One-shot subprocess. The Go side invokes:
+`dryRun=true` makes replay a safe inspection mechanism for captured plans.
 
-```
-java -jar spoon-indexer.jar \
-  --project /abs/project/root \
-  --source /abs/src/main/java \
-  --source /abs/another/src \
-  [--since <unix-ms>] \
-  --output /abs/.sofarpc/index
-```
+### 9.2 Error model
 
-The indexer writes:
-- `.sofarpc/index/_index.json` — top-level manifest (class-FQN → shard file)
-- `.sofarpc/index/shards/<hash>.json` — per-class `SemanticClassInfo`
+`internal/errcode` defines stable error groups:
 
-### 6.1 Incremental mode
+- `input.*`
+- `target.*`
+- `contract.*`
+- `workspace.*`
+- `runtime.*`
 
-With `--since <mtime-ms>`, the indexer:
-1. Reads existing `_index.json`.
-2. Walks source roots; for each `.java` with `mtime > since`, re-parses
-   and writes updated shards.
-3. Removes shards whose source file no longer exists.
-4. Writes a new `_index.json` with refreshed timestamps.
+Representative codes:
 
-`mtime-ms = 0` forces a full scan.
+- `target.missing`
+- `target.unreachable`
+- `contract.method-not-found`
+- `workspace.facade-not-configured`
+- `runtime.deserialize-failed`
+- `runtime.rejected`
 
-### 6.2 SemanticClassInfo
+The important property is not only stable codes, but stable recovery hints.
 
-Shape (see `internal/facadesemantic`, to be rebuilt):
+### 9.3 `sofarpc_doctor`
 
-```json
-{
-  "fqn": "com.foo.Order",
-  "simpleName": "Order",
-  "file": "src/main/java/com/foo/Order.java",
-  "kind": "class|interface|enum",
-  "superclass": "com.foo.BaseEntity",
-  "interfaces": ["java.io.Serializable"],
-  "fields": [ {"name":"id","javaType":"java.lang.Long","required":true} ],
-  "enumConstants": [],
-  "methods": [],
-  "methodReturns": []
-}
-```
+`sofarpc_doctor` is the catch-all diagnostic tool. It should answer:
 
-`interfaces` is mandatory — `javatype.Classify` walks both superclass
-and interfaces to find Collection/Map/Number bases.
+- is the target configuration valid
+- is the target reachable
+- is the current workspace sufficiently specified for describe or trusted-mode invoke
+- is the current workspace/session state usable for invoke or replay
 
-## 7. Go ↔ Java worker protocol
+Each check returns:
 
-A worker is one Java process per profile key. It listens on a loopback
-TCP port, reads line-delimited JSON requests, writes line-delimited
-JSON responses.
+- `name`
+- `ok`
+- `detail`
+- optional `nextStep`
 
-### 7.1 Profile / daemon key
+This gives agents a deterministic escalation path when invoke cannot proceed.
 
-```
-profile      = sha256(sofaRpcVersion + runtimeJarDigest + javaMajor)
-classloaderId = sha256(sorted(stubJarDigest[]))
-```
+## 10. Directory map
 
-The Go side keeps at most one worker per profile. Workers never
-restart on a stub-set change — they maintain a bounded in-process
-cache of `URLClassLoader`s keyed by `classloaderId` (TTL 5 min,
-evict-LRU at capacity).
-
-### 7.2 Request
-
-```json
-{
-  "requestId": "...",
-  "action": "invoke",
-  "service": "com.foo.Facade",
-  "method": "getUser",
-  "paramTypes": ["com.foo.Req"],
-  "args": [ {"@type": "com.foo.Req", "name": ""} ],
-  "classloader": {
-    "id": "sha256:...",
-    "stubJars": ["/abs/a.jar", "/abs/b.jar"]
-  },
-  "target": { "mode":"direct", "directUrl":"bolt://...", "protocol":"bolt", "serialization":"hessian2", "timeoutMs":3000 }
-}
-```
-
-### 7.3 Response
-
-```json
-{
-  "requestId": "...",
-  "ok": true,
-  "result": <any>,
-  "diagnostics": {
-    "classloaderCacheHit": true,
-    "deserializedType": "com.foo.Resp",
-    "sofaRpcLatencyMs": 8
-  }
-}
-```
-
-On error:
-```json
-{ "requestId": "...", "ok": false, "error": { "code": "runtime.worker-error", "message": "...", "hint": {...} } }
-```
-
-### 7.4 Describe action
-
-`sofarpc_describe` can be served by the worker via reflection instead of
-(or in addition to) the Spoon index. The worker loads
-`SOFARPC_FACADE_CLASSPATH` (colon-separated jars / dirs) into a child
-`URLClassLoader` at spawn, then answers per-class describe requests.
-
-Request:
-```json
-{ "requestId": "...", "action": "describe", "service": "com.foo.Facade" }
-```
-
-Response (success):
-```json
-{
-  "requestId": "...",
-  "ok": true,
-  "result": {
-    "fqn": "com.foo.Facade",
-    "simpleName": "Facade",
-    "kind": "interface",
-    "superclass": "",
-    "interfaces": [],
-    "methods": [
-      { "name": "getUser", "paramTypes": ["com.foo.Req"], "returnType": "com.foo.Resp" }
-    ],
-    "fields": [],
-    "enumConstants": []
-  }
-}
-```
-
-Response (class absent from facade classpath):
-```json
-{
-  "requestId": "...",
-  "ok": false,
-  "error": { "code": "contract.unresolvable", "message": "com.foo.Missing not on facade classpath" }
-}
-```
-
-Implementation notes:
-
-- The result shape mirrors `facadesemantic.Class` 1:1. The Go client
-  round-trips `result` through JSON into that struct.
-- `paramTypes` / `returnType` use `java.lang.reflect.Type.getTypeName()`
-  so generics survive erasure (`java.util.List<com.foo.Req>`, not
-  `java.util.List`). The Go-side skeleton builder already handles
-  generics, so preserving them here is the only reason the reflection
-  path has parity with the Spoon path.
-- Enum classes emit their `values()` into `enumConstants`.
-- Classes outside the facade classpath MUST surface as
-  `contract.unresolvable` — the Go adapter converts that into a Store
-  miss (`ok=false`), matching the Spoon path.
-
-The worker-reflection path and the Spoon path are mutually exclusive at
-startup: if a local `.sofarpc/index` exists, it wins; otherwise if
-`SOFARPC_FACADE_CLASSPATH` is set, the reflection store takes over.
-See §6 for Spoon, §8 for precedence.
-
-### 7.5 Lifecycle
-
-- Spawn: on first request that needs a profile.
-- Ready signal: worker writes `{"ready":true,"port":N,"pid":P}` to
-  stdout then flips to JSON line mode.
-- Shutdown: Go sends `{"action":"shutdown"}`; worker exits cleanly.
-  On Go process exit, SIGTERM workers after 2 s grace.
-
-## 8. Configuration precedence
-
-Three layers, in order:
-
-```
-agent input (tool arguments) > MCP env > built-in defaults
-```
-
-There is **no** project-level config file (no `sofarpc.manifest.json`,
-no contexts). Per-environment switching is done by registering multiple
-MCP server entries in the agent's `mcp.json`, each with its own
-`SOFARPC_*` env. Inside a single process, the precedence chain is flat.
-
-MCP env is read by `cmd/sofarpc-mcp` at startup:
-```
-SOFARPC_DIRECT_URL=bolt://...
-SOFARPC_REGISTRY_ADDRESS=...
-SOFARPC_REGISTRY_PROTOCOL=zookeeper
-SOFARPC_PROTOCOL=bolt
-SOFARPC_SERIALIZATION=hessian2
-SOFARPC_TIMEOUT_MS=3000
-```
-
-## 9. Directory layout
-
-```
+```text
 cmd/
-  sofarpc-mcp/             single MCP entrypoint
+  sofarpc-mcp/           MCP entrypoint
+  spike-invoke/          direct-transport validation CLI
 internal/
-  errcode/                 stable error codes + NextStep hints
-  javatype/                Role + Placeholder (type classifier)
-  facadesemantic/          shapes mirroring indexer output
-  mcp/                     tool registration + handler shims
-                           (server, open, target, describe, invoke,
-                            replay, doctor, reindex, facade, session)
+  boltclient/            pure-Go BOLT client
+  sofarpcwire/           SofaRequest / SofaResponse encoding
+  sourcecontract/        Java source scan -> contract store
+  errcode/               stable error codes + recovery hints
+  mcp/                   tool registration + handlers
   core/
-    contract/              Resolve + BuildSkeleton (generic expansion,
-                           array wrap, wildcard bounds, cycle guard)
-    target/                precedence chain + reachability probe
-    invoke/                BuildPlan (target + contract + args)
-    workspace/             project root resolution
-  indexer/                 Spoon subprocess driver + shard reader
-  worker/                  JVM pool (TTL + LRU) + wire protocol
-                           (client, pool, process, conn, profile, wire)
-spoon-indexer-java/        Spoon-based source analyzer (not in this repo yet)
-runtime-worker-java/       SOFARPC bridge — bolt + hessian2 (not in this repo yet)
-docs/                      this dir
+    workspace/           project root resolution
+    target/              precedence chain + TCP probe
+    contract/            overload resolution + skeleton generation
+    invoke/              plan building + execution
+  javatype/              Java type classification helpers
+docs/
+  architecture.md        this document
 ```
 
-## 10. Non-goals (explicit)
+## 11. Non-goals
 
-- No in-memory metadata daemon. The indexer writes shards; the Go
-  process reads them directly.
-- No project-level config file. Configuration flows only through MCP
-  env + agent input + built-in defaults. Per-environment switching is
-  done by registering multiple MCP server entries.
-- No legacy payload modes (`raw` / `schema`).
-- No plugin system.
-- No auto-download of runtime jars (user provides `--runtime-jar` or
-  sets `SOFARPC_RUNTIME_JAR`).
-- No graceful-shutdown semantics beyond SIGTERM + 2 s grace.
+The pure-Go mainline deliberately does not include:
+
+- a repo-local target manifest
+- a local contract persistence format as an architectural prerequisite
+- a larger MCP tool surface for every sub-step
+- non-generic invoke modes
+- pure-Go registry resolution
+- durable session storage
+
+Those are outside the architecture contract described here.
