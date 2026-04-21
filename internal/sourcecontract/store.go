@@ -635,7 +635,7 @@ func splitMembers(body string) []string {
 			if depth > 0 {
 				depth--
 			}
-			if depth == 0 {
+			if depth == 0 && parens == 0 {
 				segment := strings.TrimSpace(body[start : i+1])
 				if segment != "" {
 					out = append(out, segment)

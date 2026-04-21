@@ -231,6 +231,47 @@ public class Annotated {
 	}
 }
 
+func TestLoad_AnnotationGroupsDoNotSplitFieldSegments(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/AnnotatedGroups.java", `
+package com.foo;
+
+import java.util.List;
+
+public class AnnotatedGroups {
+    @NotEmpty(message = "ids required", groups = {Query.class})
+    private final List<Long> ids;
+
+    @NotNull(message = "id required", groups = {Query.class})
+    private final Long id;
+
+    public interface Query {
+    }
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if store == nil {
+		t.Fatal("Load returned nil store")
+	}
+	cls, ok := store.Class("com.foo.AnnotatedGroups")
+	if !ok {
+		t.Fatal("AnnotatedGroups not found")
+	}
+	if names := fieldNames(cls.Fields); !reflect.DeepEqual(names, []string{"ids", "id"}) {
+		t.Fatalf("field names: got %v", names)
+	}
+	if got := cls.Fields[0].JavaType; got != "java.util.List<java.lang.Long>" {
+		t.Fatalf("ids type: got %q", got)
+	}
+	if got := cls.Fields[1].JavaType; got != "java.lang.Long" {
+		t.Fatalf("id type: got %q", got)
+	}
+}
+
 func TestLoad_BuildsIndexLazily(t *testing.T) {
 	root := t.TempDir()
 	writeJava(t, root, "src/main/java/com/foo/A.java", `
