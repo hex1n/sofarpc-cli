@@ -32,6 +32,10 @@ type Capabilities struct {
 
 // ContractBanner gives agents an up-front view of contract readiness and
 // sourcecontract health at workspace-open time.
+//
+// LoadError is set when the entrypoint tried to materialize a store but
+// failed (missing project root, unreadable directory, etc). Agents can
+// branch on it before falling back to trusted-mode invoke.
 type ContractBanner struct {
 	Attached       bool              `json:"attached"`
 	Source         string            `json:"source,omitempty"`
@@ -40,9 +44,10 @@ type ContractBanner struct {
 	ParsedClasses  int               `json:"parsedClasses,omitempty"`
 	IndexFailures  map[string]string `json:"indexFailures,omitempty"`
 	ParseFailures  map[string]string `json:"parseFailures,omitempty"`
+	LoadError      string            `json:"loadError,omitempty"`
 }
 
-func registerOpen(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
+func registerOpen(server *sdkmcp.Server, opts Options, holder *facadeHolder, loadErr string) {
 	envCfg := opts.TargetSources.Env
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
@@ -78,7 +83,7 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 				Describe:     facade != nil,
 				Replay:       sessions != nil,
 			},
-			Contract: buildContractBanner(facade),
+			Contract: buildContractBanner(facade, loadErr),
 		}
 
 		result := &sdkmcp.CallToolResult{
@@ -98,13 +103,14 @@ func summarizeOpen(out OpenOutput) string {
 	return fmt.Sprintf("%s project=%s %s", out.SessionID, out.ProjectRoot, targetState)
 }
 
-func buildContractBanner(facade any) ContractBanner {
+func buildContractBanner(facade any, loadErr string) ContractBanner {
 	if facade == nil {
-		return ContractBanner{}
+		return ContractBanner{LoadError: loadErr}
 	}
 	banner := ContractBanner{
-		Attached: true,
-		Source:   "contract-store",
+		Attached:  true,
+		Source:    "contract-store",
+		LoadError: loadErr,
 	}
 	if sized, ok := facade.(interface{ Size() int }); ok {
 		banner.ParsedClasses = sized.Size()

@@ -28,9 +28,11 @@ func main() {
 
 func run(ctx context.Context) error {
 	projectRoot := projectRootFromEnv()
+	facade, facadeErr := loadFacade(projectRoot)
 	server := mcpserver.New(mcpserver.Options{
-		TargetSources: target.Sources{Env: envConfig(), ProjectRoot: projectRoot},
-		Facade:        loadFacade(projectRoot),
+		TargetSources:   target.Sources{Env: envConfig(), ProjectRoot: projectRoot},
+		Facade:          facade,
+		FacadeLoadError: facadeErr,
 	})
 	return server.Run(ctx, &sdkmcp.StdioTransport{})
 }
@@ -83,11 +85,15 @@ func atoiOrZero(raw string) int {
 	return n
 }
 
-func loadFacade(projectRoot string) *sourcecontract.Store {
+// loadFacade attempts to materialize a source-contract store. The
+// returned error is also passed to the MCP server so sofarpc_open and
+// sofarpc_doctor can surface it to agents — stderr on its own is
+// unreliable because many MCP hosts swallow the subprocess's stderr.
+func loadFacade(projectRoot string) (*sourcecontract.Store, error) {
 	store, err := sourcecontract.Load(projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load source contract: %v\n", err)
-		return nil
+		return nil, err
 	}
-	return store
+	return store, nil
 }
