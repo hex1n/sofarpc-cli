@@ -23,11 +23,18 @@ const (
 // materialize a contract store but failed. Handlers surface it in
 // sofarpc_open / sofarpc_doctor so agents see the reason without
 // having to scrape the server's stderr.
+//
+// ContractLoader, when non-nil, is called in a background goroutine
+// after construction. A store (and any error) it returns replaces any
+// synchronously-supplied Contract / ContractLoadError, so large Java
+// trees no longer delay the server's first stdio response. When nil,
+// the sync Contract fields are used as-is.
 type Options struct {
 	TargetSources     target.Sources
 	Sessions          *SessionStore
 	Contract          contract.Store
 	ContractLoadError error
+	ContractLoader    func() (contract.Store, error)
 }
 
 // New returns an MCP server with the six sofarpc tools registered.
@@ -35,18 +42,23 @@ func New(opts Options) *sdkmcp.Server {
 	if opts.Sessions == nil {
 		opts.Sessions = NewSessionStore()
 	}
-	holder := newContractHolder(opts.Contract)
+	holder := newContractHolder(opts.Contract, loadErrorMessage(opts.ContractLoadError))
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{
 		Name:    serverName,
 		Version: serverVersion,
 	}, nil)
-	loadErr := loadErrorMessage(opts.ContractLoadError)
-	registerOpen(server, opts, holder, loadErr)
+	if opts.ContractLoader != nil {
+		go func() {
+			store, err := opts.ContractLoader()
+			holder.Set(store, loadErrorMessage(err))
+		}()
+	}
+	registerOpen(server, opts, holder)
 	registerDescribe(server, opts, holder)
 	registerTarget(server, opts)
 	registerInvoke(server, opts, holder)
 	registerReplay(server, opts)
-	registerDoctor(server, opts, holder, loadErr)
+	registerDoctor(server, opts, holder)
 	return server
 }
 

@@ -2,14 +2,9 @@
 // encoding/decoding for SOFARPC generic invoke.
 //
 // File layout for the decoder side:
-//   - decoder.go:           Hessian decoder struct + top-level tag
-//                           dispatcher, list/map/object readers, and
-//                           type/length/ref helpers.
-//   - decoder_primitive.go: low-level primitive readers (bytes, ints,
-//                           UTF-8, chunked strings).
-//   - response.go:          Sofa-layer adapters that consume the generic
-//                           decoded value and flatten it into the
-//                           DecodedResponse shape.
+//   - decoder.go — Hessian decoder struct, top-level tag dispatcher, list/map/object readers, type/length/ref helpers.
+//   - decoder_primitive.go — low-level primitive readers (bytes, ints, UTF-8, chunked strings).
+//   - response.go — Sofa-layer adapters that flatten the generic decoded value into the DecodedResponse shape.
 package sofarpcwire
 
 import (

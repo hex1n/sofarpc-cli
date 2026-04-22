@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	mcpserver "github.com/hex1n/sofarpc-cli/internal/mcp"
 	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
@@ -28,11 +29,20 @@ func main() {
 
 func run(ctx context.Context) error {
 	projectRoot := projectRootFromEnv()
-	store, loadErr := loadContractStore(projectRoot)
 	server := mcpserver.New(mcpserver.Options{
-		TargetSources:     target.Sources{Env: envConfig(), ProjectRoot: projectRoot},
-		Contract:          store,
-		ContractLoadError: loadErr,
+		TargetSources: target.Sources{Env: envConfig(), ProjectRoot: projectRoot},
+		// Guard against the typed-nil-in-interface pitfall: when
+		// loadContractStore returns a nil *sourcecontract.Store, wrap it
+		// as an untyped nil contract.Store so holder readers see "no
+		// contract attached" rather than a non-nil interface that panics
+		// on first use.
+		ContractLoader: func() (contract.Store, error) {
+			store, err := loadContractStore(projectRoot)
+			if store == nil {
+				return nil, err
+			}
+			return store, err
+		},
 	})
 	return server.Run(ctx, &sdkmcp.StdioTransport{})
 }

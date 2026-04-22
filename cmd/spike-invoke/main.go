@@ -1,3 +1,9 @@
+//go:build spike
+
+// spike-invoke is a throwaway developer harness for exercising the
+// direct-transport invoke path against a known SOFARPC service. It is
+// not part of the shipping CLI surface — `go build ./...` excludes this
+// binary unless the `spike` build tag is supplied explicitly.
 package main
 
 import (
