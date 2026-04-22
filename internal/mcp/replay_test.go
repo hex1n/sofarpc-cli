@@ -10,6 +10,7 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
+	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -44,7 +45,18 @@ func TestReplay_PayloadNonDryRunWithUnsupportedTargetSurfacesInvocationRejected(
 
 func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
 	plan := samplePlan()
-	directURL, stop := fakeDirectServer(t, knownDirectSuccessResponseHex)
+	appResponse := sofarpcwire.NormalizeArgs([]any{
+		map[string]any{
+			"@type":   "com.example.demo.Result",
+			"success": true,
+			"message": "ok",
+		},
+	})[0]
+	responseBytes, err := sofarpcwire.BuildSuccessResponse(appResponse)
+	if err != nil {
+		t.Fatalf("BuildSuccessResponse: %v", err)
+	}
+	directURL, stop := fakeDirectServer(t, responseBytes)
 	defer stop()
 	plan.Target.DirectURL = directURL
 
@@ -64,7 +76,7 @@ func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("result type = %T", out.Result)
 	}
-	if got := result["type"]; got != "com.example.serviceapp.facade.model.OperationResult" {
+	if got := result["type"]; got != "com.example.demo.Result" {
 		t.Fatalf("result.type: got %#v", got)
 	}
 }

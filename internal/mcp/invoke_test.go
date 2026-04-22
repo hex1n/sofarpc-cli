@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
@@ -20,8 +19,6 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-const knownDirectSuccessResponseHex = "4fbe636f6d2e616c697061792e736f66612e7270632e636f72652e726573706f6e73652e536f6661526573706f6e7365940769734572726f72086572726f724d73670b617070526573706f6e73650d726573706f6e736550726f70736f90464e4fc833636f6d2e6578616d706c652e736572766963656170702e6661636164652e6d6f64656c2e4f7065726174696f6e526573756c7496077375636365737304636f6465076d6573736167650974696d657374616d700464617461086d657461646174616f9154e007737563636573734c0000019dae7234ef4fc847636f6d2e6578616d706c652e736572766963656170702e6661636164652e6d6f64656c2e726573706f6e73652e73616c65732e4461696c79486f6c64696e67526573706f6e736591116461696c79486f6c64696e67496e666f736f92566e014fc843636f6d2e6578616d706c652e736572766963656170702e6661636164652e6d6f64656c2e726573706f6e73652e73616c65732e4461696c79486f6c64696e67496e666f94066d70436f64650866756e64436f64650b686f6c64696e67446174650f686f6c64696e675175616e746974796f934c06066c852f02200004434153480832303236303431344fa46a6176612e6d6174682e426967446563696d616c910576616c75656f9406302e303030307a4d74001e6a6176612e7574696c2e436f6c6c656374696f6e7324456d7074794d61707a4e"
 
 func TestInvoke_DryRunReturnsPlan(t *testing.T) {
 	store := contract.NewInMemoryStore(
@@ -87,32 +84,42 @@ func TestInvoke_UnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 	store := contract.NewInMemoryStore(
 		javamodel.Class{
-			FQN:  "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade",
+			FQN:  "com.example.demo.ExampleFacade",
 			Kind: javamodel.KindInterface,
 			Methods: []javamodel.Method{
 				{
-					Name:       "queryPortfolioAvailableCash",
-					ParamTypes: []string{"com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest"},
-					ReturnType: "com.example.serviceapp.facade.model.OperationResult",
+					Name:       "query",
+					ParamTypes: []string{"com.example.demo.ExampleRequest"},
+					ReturnType: "com.example.demo.Result",
 				},
 			},
 		},
 	)
-	directURL, stop := fakeDirectServer(t, knownDirectSuccessResponseHex)
+	appResponse := sofarpcwire.NormalizeArgs([]any{
+		map[string]any{
+			"@type":   "com.example.demo.Result",
+			"success": true,
+			"message": "ok",
+		},
+	})[0]
+	responseBytes, err := sofarpcwire.BuildSuccessResponse(appResponse)
+	if err != nil {
+		t.Fatalf("BuildSuccessResponse: %v", err)
+	}
+	directURL, stop := fakeDirectServer(t, responseBytes)
 	defer stop()
 
 	out := callInvoke(t, Options{Contract: store}, map[string]any{
-		"service":       "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade",
-		"method":        "queryPortfolioAvailableCash",
+		"service":       "com.example.demo.ExampleFacade",
+		"method":        "query",
 		"version":       "2.0",
 		"targetAppName": "demo-app",
 		"directUrl":     directURL,
 		"args": []any{
 			map[string]any{
-				"@type":      "com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest",
-				"tradeDate":  "20260414",
-				"mpCode":     float64(434153733362950144),
-				"mpCodeList": []any{float64(434153733362950144)},
+				"@type": "com.example.demo.ExampleRequest",
+				"id":    float64(1001),
+				"items": []any{float64(1001)},
 			},
 		},
 	})
@@ -122,14 +129,14 @@ func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 	if transport, _ := out.Diagnostics["transport"].(string); transport != coreinvoke.DirectTransportName {
 		t.Fatalf("transport: got %q want %q", transport, coreinvoke.DirectTransportName)
 	}
-	if got, _ := out.Diagnostics["targetServiceUniqueName"].(string); got != "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade:2.0" {
+	if got, _ := out.Diagnostics["targetServiceUniqueName"].(string); got != "com.example.demo.ExampleFacade:2.0" {
 		t.Fatalf("targetServiceUniqueName: got %q", got)
 	}
 	result, ok := out.Result.(map[string]any)
 	if !ok {
 		t.Fatalf("result type = %T", out.Result)
 	}
-	if got := result["type"]; got != "com.example.serviceapp.facade.model.OperationResult" {
+	if got := result["type"]; got != "com.example.demo.Result" {
 		t.Fatalf("result.type: got %#v", got)
 	}
 	fields, ok := result["fields"].(map[string]any)
@@ -426,13 +433,8 @@ func callInvoke(t *testing.T, opts Options, args map[string]any) InvokeOutput {
 	return out
 }
 
-func fakeDirectServer(t *testing.T, responseHex string) (string, func()) {
+func fakeDirectServer(t *testing.T, content []byte) (string, func()) {
 	t.Helper()
-
-	content, err := hex.DecodeString(responseHex)
-	if err != nil {
-		t.Fatalf("decode response hex: %v", err)
-	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
