@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
 func TestLoad_ResolvesFacadeAndDTOs(t *testing.T) {
@@ -99,7 +99,7 @@ public class DailyHoldingResponse {
 	if len(store.cache) == 0 {
 		t.Fatal("cache should populate on first Class lookup")
 	}
-	if svc.Kind != facadesemantic.KindInterface {
+	if svc.Kind != javamodel.KindInterface {
 		t.Fatalf("Svc.Kind: got %q", svc.Kind)
 	}
 	if len(svc.Methods) != 2 {
@@ -166,7 +166,7 @@ public enum Status {
 	if !ok {
 		t.Fatal("Status not found")
 	}
-	if status.Kind != facadesemantic.KindEnum {
+	if status.Kind != javamodel.KindEnum {
 		t.Fatalf("Kind: got %q", status.Kind)
 	}
 	if !reflect.DeepEqual(status.EnumConstants, []string{"OPEN", "CLOSED"}) {
@@ -456,7 +456,7 @@ func writeJava(t *testing.T, root, relative, body string) {
 	}
 }
 
-func fieldNames(fields []facadesemantic.Field) []string {
+func fieldNames(fields []javamodel.Field) []string {
 	out := make([]string, 0, len(fields))
 	for _, field := range fields {
 		out = append(out, field.Name)

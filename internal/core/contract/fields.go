@@ -1,12 +1,12 @@
 package contract
 
-import "github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+import "github.com/hex1n/sofarpc-cli/internal/javamodel"
 
-func ResolvedFields(store Store, fqn string) []facadesemantic.Field {
+func ResolvedFields(store Store, fqn string) []javamodel.Field {
 	if store == nil || fqn == "" {
 		return nil
 	}
-	var out []facadesemantic.Field
+	var out []javamodel.Field
 	index := map[string]int{}
 	seen := map[string]bool{}
 
@@ -37,12 +37,12 @@ func ResolvedFields(store Store, fqn string) []facadesemantic.Field {
 	return out
 }
 
-func resolvedFieldMap(store Store, fqn string) map[string]facadesemantic.Field {
+func resolvedFieldMap(store Store, fqn string) map[string]javamodel.Field {
 	fields := ResolvedFields(store, fqn)
 	if len(fields) == 0 {
 		return nil
 	}
-	out := make(map[string]facadesemantic.Field, len(fields))
+	out := make(map[string]javamodel.Field, len(fields))
 	for _, field := range fields {
 		out[field.Name] = field
 	}

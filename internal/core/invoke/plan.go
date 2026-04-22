@@ -12,7 +12,7 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
 // Input is what sofarpc_invoke passes in. Target fields are merged into
@@ -31,19 +31,19 @@ type Input struct {
 // requested, sofarpc_invoke returns this verbatim; otherwise it hands
 // the wire fields to the direct transport.
 type Plan struct {
-	Service        string                  `json:"service"`
-	Method         string                  `json:"method"`
-	ParamTypes     []string                `json:"paramTypes"`
-	ReturnType     string                  `json:"returnType,omitempty"`
-	Args           []any                   `json:"args"`
-	Version        string                  `json:"version,omitempty"`
-	TargetAppName  string                  `json:"targetAppName,omitempty"`
-	Target         target.Config           `json:"target"`
-	Overloads      []facadesemantic.Method `json:"overloads,omitempty"`
-	Selected       int                     `json:"selected"`
-	ContractSource string                  `json:"contractSource,omitempty"`
-	TargetLayers   []target.Layer          `json:"targetLayers,omitempty"`
-	ArgSource      string                  `json:"argSource,omitempty"`
+	Service        string             `json:"service"`
+	Method         string             `json:"method"`
+	ParamTypes     []string           `json:"paramTypes"`
+	ReturnType     string             `json:"returnType,omitempty"`
+	Args           []any              `json:"args"`
+	Version        string             `json:"version,omitempty"`
+	TargetAppName  string             `json:"targetAppName,omitempty"`
+	Target         target.Config      `json:"target"`
+	Overloads      []javamodel.Method `json:"overloads,omitempty"`
+	Selected       int                `json:"selected"`
+	ContractSource string             `json:"contractSource,omitempty"`
+	TargetLayers   []target.Layer     `json:"targetLayers,omitempty"`
+	ArgSource      string             `json:"argSource,omitempty"`
 }
 
 // BuildPlan resolves target + contract + args and returns a Plan.

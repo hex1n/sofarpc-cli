@@ -25,14 +25,14 @@ type InvokeOutput struct {
 	Error       *errcode.Error `json:"error,omitempty"`
 }
 
-func registerInvoke(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
+func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_invoke",
 		Description: "Plan and execute a SOFARPC generic invocation. args accepts either a JSON array matching paramTypes, or a string \"@<path>\" that references a JSON-array file (relative paths resolve against the MCP server's CWD). dryRun=true returns the plan without executing the request.",
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in InvokeInput) (*sdkmcp.CallToolResult, InvokeOutput, error) {
-		facade := holder.Get()
+		store := holder.Get()
 		args, err := normalizeArgs(in.Service, in.Method, in.Args)
 		if err != nil {
 			return errorInvokeResult(err), InvokeOutput{Error: asErrcodeError(err)}, nil
@@ -52,7 +52,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 				RegistryProtocol: in.RegistryProtocol,
 				TimeoutMS:        in.TimeoutMS,
 			},
-		}, facade, sources)
+		}, store, sources)
 		if err != nil {
 			out := InvokeOutput{Error: asErrcodeError(err)}
 			return errorInvokeResult(err), out, nil

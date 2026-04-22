@@ -16,7 +16,7 @@ import (
 	coreinvoke "github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -25,15 +25,15 @@ const knownDirectSuccessResponseHex = "4fbe636f6d2e616c697061792e736f66612e72706
 
 func TestInvoke_DryRunReturnsPlan(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Svc",
-			Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
 			},
 		},
 	)
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":       "com.foo.Svc",
 		"method":        "doThing",
 		"version":       "2.0",
@@ -63,15 +63,15 @@ func TestInvoke_DryRunReturnsPlan(t *testing.T) {
 
 func TestInvoke_UnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Svc",
-			Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
 			},
 		},
 	)
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":         "com.foo.Svc",
 		"method":          "doThing",
 		"registryAddress": "zookeeper://host:2181",
@@ -86,10 +86,10 @@ func TestInvoke_UnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 
 func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade",
-			Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{
 					Name:       "queryPortfolioAvailableCash",
 					ParamTypes: []string{"com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest"},
@@ -101,7 +101,7 @@ func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 	directURL, stop := fakeDirectServer(t, knownDirectSuccessResponseHex)
 	defer stop()
 
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":       "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade",
 		"method":        "queryPortfolioAvailableCash",
 		"version":       "2.0",
@@ -183,12 +183,12 @@ func TestInvoke_FacadeNilWithTrustedArgsDryRunSucceeds(t *testing.T) {
 
 func TestInvoke_TargetMissingSurfacesErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{{Name: "doThing"}},
+		javamodel.Class{
+			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{{Name: "doThing"}},
 		},
 	)
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service": "com.foo.Svc",
 		"method":  "doThing",
 	})
@@ -199,14 +199,14 @@ func TestInvoke_TargetMissingSurfacesErrcode(t *testing.T) {
 
 func TestInvoke_UserArgsPassThrough(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+		javamodel.Class{
+			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			},
 		},
 	)
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":   "com.foo.Svc",
 		"method":    "doThing",
 		"directUrl": "bolt://h:1",
@@ -226,23 +226,23 @@ func TestInvoke_UserArgsPassThrough(t *testing.T) {
 
 func TestInvoke_DryRunNormalizesFacadeBackedArgs(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Svc",
-			Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"com.foo.Req"}},
 			},
 		},
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Req",
-			Kind: facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
 				{Name: "amount", JavaType: "java.math.BigDecimal"},
 			},
 		},
 	)
 
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":   "com.foo.Svc",
 		"method":    "doThing",
 		"directUrl": "bolt://h:1",
@@ -272,14 +272,14 @@ func TestInvoke_DryRunNormalizesFacadeBackedArgs(t *testing.T) {
 
 func TestInvoke_ArgsWrongTypeIsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+		javamodel.Class{
+			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			},
 		},
 	)
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":   "com.foo.Svc",
 		"method":    "doThing",
 		"directUrl": "bolt://h:1",
@@ -304,9 +304,9 @@ func TestInvoke_ArgsWrongTypeIsErrcode(t *testing.T) {
 
 func TestInvoke_ArgsAtFileLoadsJSONArray(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+		javamodel.Class{
+			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			},
 		},
@@ -317,7 +317,7 @@ func TestInvoke_ArgsAtFileLoadsJSONArray(t *testing.T) {
 		t.Fatalf("write args file: %v", err)
 	}
 
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":   "com.foo.Svc",
 		"method":    "doThing",
 		"directUrl": "bolt://h:1",
@@ -337,14 +337,14 @@ func TestInvoke_ArgsAtFileLoadsJSONArray(t *testing.T) {
 
 func TestInvoke_ArgsAtFileMissingIsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+		javamodel.Class{
+			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			},
 		},
 	)
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":   "com.foo.Svc",
 		"method":    "doThing",
 		"directUrl": "bolt://h:1",
@@ -357,9 +357,9 @@ func TestInvoke_ArgsAtFileMissingIsErrcode(t *testing.T) {
 
 func TestInvoke_ArgsAtFileNonArrayIsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+		javamodel.Class{
+			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			},
 		},
@@ -370,7 +370,7 @@ func TestInvoke_ArgsAtFileNonArrayIsErrcode(t *testing.T) {
 		t.Fatalf("write args file: %v", err)
 	}
 
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":   "com.foo.Svc",
 		"method":    "doThing",
 		"directUrl": "bolt://h:1",
@@ -383,14 +383,14 @@ func TestInvoke_ArgsAtFileNonArrayIsErrcode(t *testing.T) {
 
 func TestInvoke_ArgsEmptyAtIsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+		javamodel.Class{
+			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			},
 		},
 	)
-	out := callInvoke(t, Options{Facade: store}, map[string]any{
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
 		"service":   "com.foo.Svc",
 		"method":    "doThing",
 		"directUrl": "bolt://h:1",

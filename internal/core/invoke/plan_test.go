@@ -7,22 +7,22 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
 func TestBuildPlan_HappyPathWithSkeletonArgs(t *testing.T) {
 	facade := contract.NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Svc",
-			Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"com.foo.Req"}, ReturnType: "com.foo.Resp"},
 			},
 		},
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Req",
-			Kind: facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
 				{Name: "id", JavaType: "java.lang.Long"},
 			},
 		},
@@ -71,10 +71,10 @@ func TestBuildPlan_HappyPathWithSkeletonArgs(t *testing.T) {
 
 func TestBuildPlan_UserArgsPassThrough(t *testing.T) {
 	facade := contract.NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Svc",
-			Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			},
 		},
@@ -102,24 +102,24 @@ func TestBuildPlan_UserArgsPassThrough(t *testing.T) {
 
 func TestBuildPlan_NormalizesFacadeBackedArgs(t *testing.T) {
 	facade := contract.NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Svc",
-			Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"com.foo.Req"}},
 			},
 		},
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Item",
-			Kind: facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
 				{Name: "id", JavaType: "java.lang.Long"},
 			},
 		},
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Req",
-			Kind: facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
 				{Name: "amount", JavaType: "java.math.BigDecimal"},
 				{Name: "items", JavaType: "java.util.List<com.foo.Item>"},
 			},
@@ -164,10 +164,10 @@ func TestBuildPlan_NormalizesFacadeBackedArgs(t *testing.T) {
 
 func TestBuildPlan_ArgsArityMismatch(t *testing.T) {
 	facade := contract.NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Svc",
-			Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String", "java.lang.Long"}},
 			},
 		},
@@ -345,10 +345,10 @@ func TestBuildPlan_PropagatesContractErrors(t *testing.T) {
 }
 
 func TestBuildPlan_IncludesLayersAndOverloads(t *testing.T) {
-	facade := contract.NewInMemoryStore(facadesemantic.Class{
+	facade := contract.NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Svc",
-		Kind: facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{
+		Kind: javamodel.KindInterface,
+		Methods: []javamodel.Method{
 			{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			{Name: "doThing", ParamTypes: []string{"java.lang.Long"}},
 		},

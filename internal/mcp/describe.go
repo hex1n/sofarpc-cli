@@ -8,7 +8,7 @@ import (
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -31,13 +31,13 @@ func decodedSkeleton(raw []json.RawMessage) []any {
 // success, Overloads + Selected + Skeleton are populated; on failure,
 // Error is set and the CallToolResult reports IsError=true.
 type DescribeOutput struct {
-	Service     string                  `json:"service,omitempty"`
-	Method      string                  `json:"method,omitempty"`
-	Overloads   []facadesemantic.Method `json:"overloads,omitempty"`
-	Selected    int                     `json:"selected,omitempty"`
-	Skeleton    []any                   `json:"skeleton,omitempty"`
-	Diagnostics DescribeDiagnostics     `json:"diagnostics,omitempty"`
-	Error       *errcode.Error          `json:"error,omitempty"`
+	Service     string              `json:"service,omitempty"`
+	Method      string              `json:"method,omitempty"`
+	Overloads   []javamodel.Method  `json:"overloads,omitempty"`
+	Selected    int                 `json:"selected,omitempty"`
+	Skeleton    []any               `json:"skeleton,omitempty"`
+	Diagnostics DescribeDiagnostics `json:"diagnostics,omitempty"`
+	Error       *errcode.Error      `json:"error,omitempty"`
 }
 
 // DescribeDiagnostics surfaces contract-source metadata so agents can
@@ -48,32 +48,32 @@ type DescribeDiagnostics struct {
 	Contract       ContractBanner `json:"contract,omitempty"`
 }
 
-func registerDescribe(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
+func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_describe",
 		Description: "Describe a service method: resolve overloads, list param/return types, and return a JSON skeleton when contract information is available.",
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DescribeInput) (*sdkmcp.CallToolResult, DescribeOutput, error) {
-		facade := holder.Get()
-		if facade == nil {
+		store := holder.Get()
+		if store == nil {
 			out := DescribeOutput{
 				Service: in.Service,
 				Method:  in.Method,
-				Error:   facadeNotConfiguredError(),
+				Error:   contractNotConfiguredError(),
 			}
 			return errorResult(out), out, nil
 		}
 
-		result, err := contract.ResolveMethod(facade, in.Service, in.Method, in.Types)
+		result, err := contract.ResolveMethod(store, in.Service, in.Method, in.Types)
 		if err != nil {
 			out := DescribeOutput{Service: in.Service, Method: in.Method, Error: asErrcodeError(err)}
 			return errorResult(out), out, nil
 		}
 
-		skeleton := contract.BuildSkeleton(result.Method.ParamTypes, facade)
-		// describe runs only when a facade is attached, so any pre-startup
-		// load error is moot here — pass an empty loadErr and let open /
-		// doctor own the load-error surface.
-		contractBanner := buildContractBanner(facade, "")
+		skeleton := contract.BuildSkeleton(result.Method.ParamTypes, store)
+		// describe runs only when a contract store is attached, so any
+		// pre-startup load error is moot here — pass an empty loadErr
+		// and let open / doctor own the load-error surface.
+		contractBanner := buildContractBanner(store, "")
 		out := DescribeOutput{
 			Service:   in.Service,
 			Method:    in.Method,
@@ -104,7 +104,7 @@ func errorResult(out DescribeOutput) *sdkmcp.CallToolResult {
 	}
 }
 
-func facadeNotConfiguredError() *errcode.Error {
+func contractNotConfiguredError() *errcode.Error {
 	err := errcode.New(errcode.FacadeNotConfigured, "describe",
 		"contract information is not available for this workspace")
 	return err.WithHint("sofarpc_doctor", nil,

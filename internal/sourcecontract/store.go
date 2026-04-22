@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
 // Store is a lazily materialized contract store backed by Java source files.
@@ -19,7 +19,7 @@ import (
 type Store struct {
 	mu            sync.RWMutex
 	index         map[string]string
-	cache         map[string]facadesemantic.Class
+	cache         map[string]javamodel.Class
 	indexedFiles  int
 	indexFailures map[string]string
 	parseFailures map[string]string
@@ -60,7 +60,7 @@ func Load(projectRoot string) (*Store, error) {
 	}
 	return &Store{
 		index:         index,
-		cache:         map[string]facadesemantic.Class{},
+		cache:         map[string]javamodel.Class{},
 		indexedFiles:  files,
 		indexFailures: failures,
 		parseFailures: map[string]string{},
@@ -68,9 +68,9 @@ func Load(projectRoot string) (*Store, error) {
 }
 
 // Class implements contract.Store.
-func (s *Store) Class(fqn string) (facadesemantic.Class, bool) {
+func (s *Store) Class(fqn string) (javamodel.Class, bool) {
 	if s == nil {
-		return facadesemantic.Class{}, false
+		return javamodel.Class{}, false
 	}
 	s.mu.RLock()
 	if c, ok := s.cache[fqn]; ok {
@@ -80,13 +80,13 @@ func (s *Store) Class(fqn string) (facadesemantic.Class, bool) {
 	path, ok := s.findIndexedPathFor(fqn)
 	s.mu.RUnlock()
 	if !ok {
-		return facadesemantic.Class{}, false
+		return javamodel.Class{}, false
 	}
 
 	classes, ok := parseJavaFileClasses(path)
 	if !ok || len(classes) == 0 {
 		s.recordParseFailure(fqn, "parseJavaFile returned no top-level declaration")
-		return facadesemantic.Class{}, false
+		return javamodel.Class{}, false
 	}
 
 	s.mu.Lock()
@@ -95,7 +95,7 @@ func (s *Store) Class(fqn string) (facadesemantic.Class, bool) {
 		return cached, true
 	}
 	if s.cache == nil {
-		s.cache = map[string]facadesemantic.Class{}
+		s.cache = map[string]javamodel.Class{}
 	}
 	for _, cls := range classes {
 		s.cache[cls.FQN] = cls
@@ -103,7 +103,7 @@ func (s *Store) Class(fqn string) (facadesemantic.Class, bool) {
 	cls, exists := s.cache[fqn]
 	if !exists {
 		s.recordParseFailure(fqn, "parsed file did not materialize requested class")
-		return facadesemantic.Class{}, false
+		return javamodel.Class{}, false
 	}
 	return cls, true
 }
@@ -222,7 +222,7 @@ func parseJavaIndexFile(path string) (string, bool) {
 	return pkg + "." + decl.simpleName, true
 }
 
-func parseJavaFileClasses(path string) ([]facadesemantic.Class, bool) {
+func parseJavaFileClasses(path string) ([]javamodel.Class, bool) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false
@@ -257,8 +257,8 @@ func parseTopLevelType(src string) (declaration, bool) {
 	return declaration{}, false
 }
 
-func materializeClass(src parsedClass) facadesemantic.Class {
-	cls := facadesemantic.Class{
+func materializeClass(src parsedClass) javamodel.Class {
+	cls := javamodel.Class{
 		FQN:        src.fqn,
 		SimpleName: src.simpleName,
 		File:       src.path,
@@ -277,13 +277,13 @@ func materializeClass(src parsedClass) facadesemantic.Class {
 		cls.Interfaces = append(cls.Interfaces, resolver.resolve(iface))
 	}
 	for _, field := range src.fields {
-		cls.Fields = append(cls.Fields, facadesemantic.Field{
+		cls.Fields = append(cls.Fields, javamodel.Field{
 			Name:     field.name,
 			JavaType: resolver.resolve(field.javaType),
 		})
 	}
 	for _, method := range src.methods {
-		m := facadesemantic.Method{
+		m := javamodel.Method{
 			Name:       method.name,
 			ReturnType: resolver.resolve(method.returnType),
 		}
@@ -296,12 +296,12 @@ func materializeClass(src parsedClass) facadesemantic.Class {
 	return cls
 }
 
-func materializeClasses(path, pkg string, imports importTable, decl declaration) []facadesemantic.Class {
+func materializeClasses(path, pkg string, imports importTable, decl declaration) []javamodel.Class {
 	parsed := flattenDeclarations(path, pkg, imports, decl, nil, nil)
 	if len(parsed) == 0 {
 		return nil
 	}
-	out := make([]facadesemantic.Class, 0, len(parsed))
+	out := make([]javamodel.Class, 0, len(parsed))
 	for _, item := range parsed {
 		out = append(out, materializeClass(item))
 	}
@@ -552,7 +552,7 @@ func parseDeclarationHeader(kind, header string) declaration {
 	rest = strings.TrimSpace(skipTypeParameters(rest))
 	decl := declaration{kind: kind, simpleName: name}
 
-	if kind == facadesemantic.KindClass {
+	if kind == javamodel.KindClass {
 		if clause, ok := readClause(rest, "extends"); ok {
 			decl.superclass = clause
 		}
@@ -561,7 +561,7 @@ func parseDeclarationHeader(kind, header string) declaration {
 		}
 		return decl
 	}
-	if kind == facadesemantic.KindInterface {
+	if kind == javamodel.KindInterface {
 		if clause, ok := readClause(rest, "extends"); ok {
 			decl.interfaces = splitTopLevel(clause, ',')
 		}
@@ -574,7 +574,7 @@ func parseDeclarationHeader(kind, header string) declaration {
 }
 
 func parseEnumConstants(kind, body string) []string {
-	if kind != facadesemantic.KindEnum {
+	if kind != javamodel.KindEnum {
 		return nil
 	}
 	head := body

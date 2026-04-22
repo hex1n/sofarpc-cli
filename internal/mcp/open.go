@@ -47,14 +47,14 @@ type ContractBanner struct {
 	LoadError      string            `json:"loadError,omitempty"`
 }
 
-func registerOpen(server *sdkmcp.Server, opts Options, holder *facadeHolder, loadErr string) {
+func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder, loadErr string) {
 	envCfg := opts.TargetSources.Env
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_open",
 		Description: "Open a sofarpc workspace. Returns the resolved target, a capability banner, and a session id the agent can reuse in subsequent calls.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in OpenInput) (*sdkmcp.CallToolResult, OpenOutput, error) {
-		facade := holder.Get()
+		store := holder.Get()
 		ws, err := workspace.Resolve(workspace.Input{
 			Cwd:     in.Cwd,
 			Project: in.Project,
@@ -80,10 +80,10 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *facadeHolder, loa
 			Layers:      report.Layers,
 			Capabilities: Capabilities{
 				DirectInvoke: true,
-				Describe:     facade != nil,
+				Describe:     store != nil,
 				Replay:       sessions != nil,
 			},
-			Contract: buildContractBanner(facade, loadErr),
+			Contract: buildContractBanner(store, loadErr),
 		}
 
 		result := &sdkmcp.CallToolResult{
@@ -103,8 +103,8 @@ func summarizeOpen(out OpenOutput) string {
 	return fmt.Sprintf("%s project=%s %s", out.SessionID, out.ProjectRoot, targetState)
 }
 
-func buildContractBanner(facade any, loadErr string) ContractBanner {
-	if facade == nil {
+func buildContractBanner(store any, loadErr string) ContractBanner {
+	if store == nil {
 		return ContractBanner{LoadError: loadErr}
 	}
 	banner := ContractBanner{
@@ -112,10 +112,10 @@ func buildContractBanner(facade any, loadErr string) ContractBanner {
 		Source:    "contract-store",
 		LoadError: loadErr,
 	}
-	if sized, ok := facade.(interface{ Size() int }); ok {
+	if sized, ok := store.(interface{ Size() int }); ok {
 		banner.ParsedClasses = sized.Size()
 	}
-	if diagProvider, ok := facade.(interface {
+	if diagProvider, ok := store.(interface {
 		Diagnostics() sourcecontract.Diagnostics
 	}); ok {
 		diag := diagProvider.Diagnostics()

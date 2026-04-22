@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/javatype"
 )
 
@@ -94,7 +94,7 @@ func buildUserType(fqn string, store Store, lookup javatype.ClassLookup, seen ma
 	if !ok {
 		return stubObject(fqn)
 	}
-	if cls.Kind == facadesemantic.KindEnum {
+	if cls.Kind == javamodel.KindEnum {
 		if len(cls.EnumConstants) > 0 {
 			body, err := json.Marshal(cls.EnumConstants[0])
 			if err == nil {

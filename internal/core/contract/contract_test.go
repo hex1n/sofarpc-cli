@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
 func TestResolveMethod_RequiresService(t *testing.T) {
@@ -29,20 +29,20 @@ func TestResolveMethod_ServiceNotInStore(t *testing.T) {
 }
 
 func TestResolveMethod_MethodNotFound(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:     "com.foo.Svc",
-		Kind:    facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{{Name: "other"}},
+		Kind:    javamodel.KindInterface,
+		Methods: []javamodel.Method{{Name: "other"}},
 	})
 	_, err := ResolveMethod(store, "com.foo.Svc", "doThing", nil)
 	assertCode(t, err, errcode.MethodNotFound)
 }
 
 func TestResolveMethod_SingleOverloadReturnsDirectly(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Svc",
-		Kind: facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{
+		Kind: javamodel.KindInterface,
+		Methods: []javamodel.Method{
 			{Name: "doThing", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
 		},
 	})
@@ -59,10 +59,10 @@ func TestResolveMethod_SingleOverloadReturnsDirectly(t *testing.T) {
 }
 
 func TestResolveMethod_AmbiguousWithoutParamTypes(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Svc",
-		Kind: facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{
+		Kind: javamodel.KindInterface,
+		Methods: []javamodel.Method{
 			{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			{Name: "doThing", ParamTypes: []string{"java.lang.String", "java.lang.Integer"}},
 		},
@@ -72,10 +72,10 @@ func TestResolveMethod_AmbiguousWithoutParamTypes(t *testing.T) {
 }
 
 func TestResolveMethod_DisambiguatesByParamTypes(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Svc",
-		Kind: facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{
+		Kind: javamodel.KindInterface,
+		Methods: []javamodel.Method{
 			{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			{Name: "doThing", ParamTypes: []string{"java.lang.String", "java.lang.Integer"}},
 		},
@@ -90,10 +90,10 @@ func TestResolveMethod_DisambiguatesByParamTypes(t *testing.T) {
 }
 
 func TestResolveMethod_ParamTypesDoNotMatch(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Svc",
-		Kind: facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{
+		Kind: javamodel.KindInterface,
+		Methods: []javamodel.Method{
 			{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			{Name: "doThing", ParamTypes: []string{"java.lang.Long"}},
 		},
@@ -136,10 +136,10 @@ func TestBuildSkeleton_ContainerWithoutTypeArgsFallsBackToEmpty(t *testing.T) {
 }
 
 func TestBuildSkeleton_ListExpandsElementType(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Order",
-		Kind: facadesemantic.KindClass,
-		Fields: []facadesemantic.Field{
+		Kind: javamodel.KindClass,
+		Fields: []javamodel.Field{
 			{Name: "id", JavaType: "java.lang.Long"},
 		},
 	})
@@ -166,10 +166,10 @@ func TestBuildSkeleton_ListExpandsElementType(t *testing.T) {
 }
 
 func TestBuildSkeleton_MapExpandsValueType(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Bar",
-		Kind: facadesemantic.KindClass,
-		Fields: []facadesemantic.Field{
+		Kind: javamodel.KindClass,
+		Fields: []javamodel.Field{
 			{Name: "name", JavaType: "java.lang.String"},
 		},
 	})
@@ -195,10 +195,10 @@ func TestBuildSkeleton_NestedGenericsRoundTrip(t *testing.T) {
 	// Map<String, List<Foo>> — nested generic with a user type inside.
 	// The outer comma must not split the inner List<Foo>, and the inner
 	// List element must be the Foo skeleton.
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Foo",
-		Kind: facadesemantic.KindClass,
-		Fields: []facadesemantic.Field{
+		Kind: javamodel.KindClass,
+		Fields: []javamodel.Field{
 			{Name: "label", JavaType: "java.lang.String"},
 		},
 	})
@@ -231,10 +231,10 @@ func TestBuildSkeleton_ArrayWrapsElement(t *testing.T) {
 }
 
 func TestBuildSkeleton_WildcardResolvesToBound(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Item",
-		Kind: facadesemantic.KindClass,
-		Fields: []facadesemantic.Field{
+		Kind: javamodel.KindClass,
+		Fields: []javamodel.Field{
 			{Name: "sku", JavaType: "java.lang.String"},
 		},
 	})
@@ -256,11 +256,11 @@ func TestBuildSkeleton_WildcardResolvesToBound(t *testing.T) {
 }
 
 func TestBuildSkeleton_UserTypeInjectsAtType(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:        "com.foo.Order",
 		SimpleName: "Order",
-		Kind:       facadesemantic.KindClass,
-		Fields: []facadesemantic.Field{
+		Kind:       javamodel.KindClass,
+		Fields: []javamodel.Field{
 			{Name: "id", JavaType: "java.lang.Long", Required: true},
 			{Name: "sku", JavaType: "java.lang.String"},
 		},
@@ -283,9 +283,9 @@ func TestBuildSkeleton_UserTypeInjectsAtType(t *testing.T) {
 }
 
 func TestBuildSkeleton_EnumUsesFirstConstant(t *testing.T) {
-	store := NewInMemoryStore(facadesemantic.Class{
+	store := NewInMemoryStore(javamodel.Class{
 		FQN:           "com.foo.Status",
-		Kind:          facadesemantic.KindEnum,
+		Kind:          javamodel.KindEnum,
 		EnumConstants: []string{"ACTIVE", "INACTIVE"},
 	})
 	sk := BuildSkeleton([]string{"com.foo.Status"}, store)
@@ -296,10 +296,10 @@ func TestBuildSkeleton_EnumUsesFirstConstant(t *testing.T) {
 
 func TestBuildSkeleton_RecursiveUserTypeTerminatesOnCycle(t *testing.T) {
 	store := NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:    "com.foo.Node",
-			Kind:   facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{{Name: "parent", JavaType: "com.foo.Node"}},
+			Kind:   javamodel.KindClass,
+			Fields: []javamodel.Field{{Name: "parent", JavaType: "com.foo.Node"}},
 		},
 	)
 	sk := BuildSkeleton([]string{"com.foo.Node"}, store)
@@ -319,16 +319,16 @@ func TestBuildSkeleton_UnknownUserTypeEmitsStub(t *testing.T) {
 
 func TestBuildSkeleton_IncludesInheritedFields(t *testing.T) {
 	store := NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:    "com.foo.Base",
-			Kind:   facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{{Name: "id", JavaType: "java.lang.Long"}},
+			Kind:   javamodel.KindClass,
+			Fields: []javamodel.Field{{Name: "id", JavaType: "java.lang.Long"}},
 		},
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:        "com.foo.Child",
-			Kind:       facadesemantic.KindClass,
+			Kind:       javamodel.KindClass,
 			Superclass: "com.foo.Base",
-			Fields:     []facadesemantic.Field{{Name: "name", JavaType: "java.lang.String"}},
+			Fields:     []javamodel.Field{{Name: "name", JavaType: "java.lang.String"}},
 		},
 	)
 

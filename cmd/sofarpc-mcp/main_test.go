@@ -91,7 +91,7 @@ func TestProjectRootFromEnv_FallsBackToCWD(t *testing.T) {
 	}
 }
 
-func TestLoadFacade_LoadsJavaSources(t *testing.T) {
+func TestLoadContractStore_LoadsJavaSources(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "src", "main", "java", "com", "foo", "Svc.java")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -107,12 +107,12 @@ public interface Svc {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	store, err := loadFacade(root)
+	store, err := loadContractStore(root)
 	if err != nil {
-		t.Fatalf("loadFacade: %v", err)
+		t.Fatalf("loadContractStore: %v", err)
 	}
 	if store == nil {
-		t.Fatal("loadFacade returned nil")
+		t.Fatal("loadContractStore returned nil")
 	}
 	if store.Size() != 1 {
 		t.Fatalf("store.Size: got %d want 1", store.Size())
@@ -122,13 +122,13 @@ public interface Svc {
 	}
 }
 
-func TestLoadFacade_EmptyWorkspaceReturnsNil(t *testing.T) {
-	got, err := loadFacade(t.TempDir())
+func TestLoadContractStore_EmptyWorkspaceReturnsNil(t *testing.T) {
+	got, err := loadContractStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("loadFacade(empty): %v", err)
+		t.Fatalf("loadContractStore(empty): %v", err)
 	}
 	if got != nil {
-		t.Fatalf("loadFacade(empty) = %#v, want nil", got)
+		t.Fatalf("loadContractStore(empty) = %#v, want nil", got)
 	}
 }
 

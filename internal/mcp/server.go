@@ -19,15 +19,15 @@ const (
 // (cmd/sofarpc-mcp) fills this from SOFARPC_* env — the server itself
 // does no I/O at construction.
 //
-// FacadeLoadError, when non-nil, signals that the entrypoint tried to
+// ContractLoadError, when non-nil, signals that the entrypoint tried to
 // materialize a contract store but failed. Handlers surface it in
 // sofarpc_open / sofarpc_doctor so agents see the reason without
 // having to scrape the server's stderr.
 type Options struct {
-	TargetSources   target.Sources
-	Sessions        *SessionStore
-	Facade          contract.Store
-	FacadeLoadError error
+	TargetSources     target.Sources
+	Sessions          *SessionStore
+	Contract          contract.Store
+	ContractLoadError error
 }
 
 // New returns an MCP server with the six sofarpc tools registered.
@@ -35,12 +35,12 @@ func New(opts Options) *sdkmcp.Server {
 	if opts.Sessions == nil {
 		opts.Sessions = NewSessionStore()
 	}
-	holder := newFacadeHolder(opts.Facade)
+	holder := newContractHolder(opts.Contract)
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{
 		Name:    serverName,
 		Version: serverVersion,
 	}, nil)
-	loadErr := loadErrorMessage(opts.FacadeLoadError)
+	loadErr := loadErrorMessage(opts.ContractLoadError)
 	registerOpen(server, opts, holder, loadErr)
 	registerDescribe(server, opts, holder)
 	registerTarget(server, opts)

@@ -9,7 +9,7 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -109,14 +109,14 @@ func TestReplay_SessionWithoutPlanIsArgsInvalid(t *testing.T) {
 func TestReplay_SessionPlanRoundTrip(t *testing.T) {
 	sessions := NewSessionStore()
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
-			FQN: "com.foo.Svc", Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+		javamodel.Class{
+			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
 			},
 		},
 	)
-	opts := Options{Sessions: sessions, Facade: store}
+	opts := Options{Sessions: sessions, Contract: store}
 	session := sessions.Create(Session{ProjectRoot: "/tmp"})
 
 	// Tag the session via invoke dry-run.
