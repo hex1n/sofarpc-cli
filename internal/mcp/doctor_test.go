@@ -11,7 +11,7 @@ import (
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -77,12 +77,12 @@ func TestDoctor_ContractCheckIsInformationalWithoutStore(t *testing.T) {
 }
 
 func TestDoctor_ContractCheckReportsAttachedStore(t *testing.T) {
-	store := contract.NewInMemoryStore(facadesemantic.Class{
+	store := contract.NewInMemoryStore(javamodel.Class{
 		FQN:     "com.foo.Svc",
-		Kind:    facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{{Name: "doThing"}},
+		Kind:    javamodel.KindInterface,
+		Methods: []javamodel.Method{{Name: "doThing"}},
 	})
-	out := callDoctor(t, Options{Facade: store}, nil)
+	out := callDoctor(t, Options{Contract: store}, nil)
 	contractCheck := findCheck(t, out, "contract")
 	if !contractCheck.Ok {
 		t.Fatalf("contract check should pass, got %+v", contractCheck)
@@ -109,7 +109,7 @@ public interface Svc {
 		t.Fatal("Load returned nil store")
 	}
 
-	out := callDoctor(t, Options{Facade: store}, nil)
+	out := callDoctor(t, Options{Contract: store}, nil)
 	contractCheck := findCheck(t, out, "contract")
 	if !contractCheck.Ok {
 		t.Fatalf("contract check should pass, got %+v", contractCheck)

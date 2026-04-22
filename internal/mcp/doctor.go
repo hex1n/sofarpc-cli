@@ -38,7 +38,7 @@ type DoctorAction struct {
 	Args map[string]any `json:"args,omitempty"`
 }
 
-func registerDoctor(server *sdkmcp.Server, opts Options, holder *facadeHolder, loadErr string) {
+func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder, loadErr string) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
@@ -102,8 +102,8 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 	}
 }
 
-func checkContract(facade contract.Store, loadErr string) DoctorCheck {
-	if facade == nil {
+func checkContract(store contract.Store, loadErr string) DoctorCheck {
+	if store == nil {
 		if loadErr != "" {
 			return DoctorCheck{
 				Name:   "contract",
@@ -121,7 +121,7 @@ func checkContract(facade contract.Store, loadErr string) DoctorCheck {
 			Detail: "no contract information attached; describe is unavailable, trusted-mode invoke still works",
 		}
 	}
-	banner, ok := facade.(interface{ Size() int })
+	banner, ok := store.(interface{ Size() int })
 	if !ok {
 		return DoctorCheck{
 			Name:   "contract",
@@ -130,7 +130,7 @@ func checkContract(facade contract.Store, loadErr string) DoctorCheck {
 		}
 	}
 	size := banner.Size()
-	diagProvider, hasDiagnostics := facade.(interface {
+	diagProvider, hasDiagnostics := store.(interface {
 		Diagnostics() sourcecontract.Diagnostics
 	})
 	if hasDiagnostics {

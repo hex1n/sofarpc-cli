@@ -325,4 +325,3 @@ func parseTraceInt(raw string) int {
 	_, _ = fmt.Sscanf(raw, "%d", &value)
 	return value
 }
-

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/javatype"
 )
 
@@ -58,7 +58,7 @@ func normalizeForType(spec TypeSpec, raw any, store Store, lookup javatype.Class
 		return out, nil
 	}
 
-	if cls, ok := store.Class(spec.Base); ok && cls.Kind == facadesemantic.KindEnum {
+	if cls, ok := store.Class(spec.Base); ok && cls.Kind == javamodel.KindEnum {
 		return normalizeEnum(raw), nil
 	}
 

@@ -4,15 +4,15 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
 func TestNormalizeArgs_AutoWrapsBigDecimalAndTypedObject(t *testing.T) {
 	store := NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Req",
-			Kind: facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
 				{Name: "amount", JavaType: "java.math.BigDecimal"},
 			},
 		},
@@ -43,17 +43,17 @@ func TestNormalizeArgs_AutoWrapsBigDecimalAndTypedObject(t *testing.T) {
 
 func TestNormalizeArgs_NormalizesNestedDTOAndListOfDTO(t *testing.T) {
 	store := NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Child",
-			Kind: facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
 				{Name: "id", JavaType: "java.lang.Long"},
 			},
 		},
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Parent",
-			Kind: facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
 				{Name: "child", JavaType: "com.foo.Child"},
 				{Name: "children", JavaType: "java.util.List<com.foo.Child>"},
 			},
@@ -93,10 +93,10 @@ func TestNormalizeArgs_NormalizesNestedDTOAndListOfDTO(t *testing.T) {
 
 func TestNormalizeArgs_MapValueNormalization(t *testing.T) {
 	store := NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Entry",
-			Kind: facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
 				{Name: "name", JavaType: "java.lang.String"},
 			},
 		},
@@ -120,16 +120,16 @@ func TestNormalizeArgs_MapValueNormalization(t *testing.T) {
 
 func TestNormalizeArgs_InheritedFieldsAreVisible(t *testing.T) {
 	store := NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:    "com.foo.Base",
-			Kind:   facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{{Name: "id", JavaType: "java.lang.Long"}},
+			Kind:   javamodel.KindClass,
+			Fields: []javamodel.Field{{Name: "id", JavaType: "java.lang.Long"}},
 		},
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:        "com.foo.Child",
-			Kind:       facadesemantic.KindClass,
+			Kind:       javamodel.KindClass,
 			Superclass: "com.foo.Base",
-			Fields:     []facadesemantic.Field{{Name: "name", JavaType: "java.lang.String"}},
+			Fields:     []javamodel.Field{{Name: "name", JavaType: "java.lang.String"}},
 		},
 	)
 
@@ -148,9 +148,9 @@ func TestNormalizeArgs_InheritedFieldsAreVisible(t *testing.T) {
 
 func TestNormalizeArgs_ObjectShapeMismatchFails(t *testing.T) {
 	store := NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Req",
-			Kind: facadesemantic.KindClass,
+			Kind: javamodel.KindClass,
 		},
 	)
 

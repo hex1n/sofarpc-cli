@@ -9,7 +9,7 @@ import (
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -32,22 +32,22 @@ func TestDescribe_FacadeNotConfigured(t *testing.T) {
 
 func TestDescribe_ReturnsOverloadsAndSkeleton(t *testing.T) {
 	store := contract.NewInMemoryStore(
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Svc",
-			Kind: facadesemantic.KindInterface,
-			Methods: []facadesemantic.Method{
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
 				{Name: "doThing", ParamTypes: []string{"com.foo.Req"}, ReturnType: "com.foo.Resp"},
 			},
 		},
-		facadesemantic.Class{
+		javamodel.Class{
 			FQN:  "com.foo.Req",
-			Kind: facadesemantic.KindClass,
-			Fields: []facadesemantic.Field{
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
 				{Name: "id", JavaType: "java.lang.Long"},
 			},
 		},
 	)
-	opts := Options{Facade: store}
+	opts := Options{Contract: store}
 	out := callDescribe(t, opts, map[string]any{
 		"service": "com.foo.Svc",
 		"method":  "doThing",
@@ -111,7 +111,7 @@ public class Resp {
 		t.Fatal("Load returned nil store")
 	}
 
-	out := callDescribe(t, Options{Facade: store}, map[string]any{
+	out := callDescribe(t, Options{Contract: store}, map[string]any{
 		"service": "com.foo.Svc",
 		"method":  "doThing",
 	})
@@ -133,15 +133,15 @@ public class Resp {
 }
 
 func TestDescribe_AmbiguousReturnsErrcode(t *testing.T) {
-	store := contract.NewInMemoryStore(facadesemantic.Class{
+	store := contract.NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Svc",
-		Kind: facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{
+		Kind: javamodel.KindInterface,
+		Methods: []javamodel.Method{
 			{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
 			{Name: "doThing", ParamTypes: []string{"java.lang.Integer"}},
 		},
 	})
-	out := callDescribe(t, Options{Facade: store}, map[string]any{
+	out := callDescribe(t, Options{Contract: store}, map[string]any{
 		"service": "com.foo.Svc",
 		"method":  "doThing",
 	})
@@ -152,7 +152,7 @@ func TestDescribe_AmbiguousReturnsErrcode(t *testing.T) {
 
 func TestDescribe_MissingServiceIsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore()
-	out := callDescribe(t, Options{Facade: store}, map[string]any{
+	out := callDescribe(t, Options{Contract: store}, map[string]any{
 		"method": "doThing",
 	})
 	if out.Error == nil || out.Error.Code != errcode.ServiceMissing {

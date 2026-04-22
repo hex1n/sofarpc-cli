@@ -10,7 +10,7 @@
 package contract
 
 import (
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/javatype"
 )
 
@@ -18,17 +18,17 @@ import (
 // unknown types rather than a zero-valued Class — callers rely on the
 // flag to decide whether to fall back to another source.
 type Store interface {
-	Class(fqn string) (facadesemantic.Class, bool)
+	Class(fqn string) (javamodel.Class, bool)
 }
 
 // InMemoryStore is the test / scaffolding implementation.
 type InMemoryStore struct {
-	classes map[string]facadesemantic.Class
+	classes map[string]javamodel.Class
 }
 
 // NewInMemoryStore seeds a store with the supplied classes.
-func NewInMemoryStore(classes ...facadesemantic.Class) *InMemoryStore {
-	s := &InMemoryStore{classes: map[string]facadesemantic.Class{}}
+func NewInMemoryStore(classes ...javamodel.Class) *InMemoryStore {
+	s := &InMemoryStore{classes: map[string]javamodel.Class{}}
 	for _, c := range classes {
 		s.Put(c)
 	}
@@ -36,17 +36,17 @@ func NewInMemoryStore(classes ...facadesemantic.Class) *InMemoryStore {
 }
 
 // Put adds or replaces a class. Keyed on FQN.
-func (s *InMemoryStore) Put(class facadesemantic.Class) {
+func (s *InMemoryStore) Put(class javamodel.Class) {
 	if s.classes == nil {
-		s.classes = map[string]facadesemantic.Class{}
+		s.classes = map[string]javamodel.Class{}
 	}
 	s.classes[class.FQN] = class
 }
 
 // Class implements Store.
-func (s *InMemoryStore) Class(fqn string) (facadesemantic.Class, bool) {
+func (s *InMemoryStore) Class(fqn string) (javamodel.Class, bool) {
 	if s == nil || s.classes == nil {
-		return facadesemantic.Class{}, false
+		return javamodel.Class{}, false
 	}
 	c, ok := s.classes[fqn]
 	return c, ok
@@ -89,5 +89,5 @@ func (l storeLookup) Interfaces(fqn string) ([]string, bool) {
 
 type nilLookup struct{}
 
-func (nilLookup) Superclass(string) (string, bool) { return "", false }
+func (nilLookup) Superclass(string) (string, bool)   { return "", false }
 func (nilLookup) Interfaces(string) ([]string, bool) { return nil, false }

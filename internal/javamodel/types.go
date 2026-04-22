@@ -1,11 +1,12 @@
-// Package facadesemantic holds the contract shapes used by the pure-Go
-// contract resolver. It is types only: callers that need to reason about a
-// Class use internal/core/contract or internal/javatype.
+// Package javamodel holds the Java class shapes used by the pure-Go
+// contract resolver. It is types only: callers that need to reason about
+// a Class use internal/core/contract or internal/javatype.
 //
-// Field names and zero-value semantics are kept explicit so these shapes can
-// be materialised from any contract source without leaking source-specific
-// behavior into the resolver.
-package facadesemantic
+// Field names and zero-value semantics are kept explicit so these shapes
+// can be materialised from any contract source (source scan, serialised
+// cache, reflection, ...) without leaking source-specific behavior into
+// the resolver.
+package javamodel
 
 // Class is one top-level Java type. Kind distinguishes class/interface/enum
 // so downstream code can skip enums during method resolution and walk

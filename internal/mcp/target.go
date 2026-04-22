@@ -26,11 +26,11 @@ type TargetInput struct {
 // the resolver's layered report with the probe result so a single call
 // tells the agent both "what target was picked" and "is it reachable".
 type TargetOutput struct {
-	Target       target.Config       `json:"target"`
-	Service      string              `json:"service,omitempty"`
-	Layers       []target.Layer      `json:"layers,omitempty"`
-	Reachability target.ProbeResult  `json:"reachability"`
-	Explain      []string            `json:"explain,omitempty"`
+	Target       target.Config      `json:"target"`
+	Service      string             `json:"service,omitempty"`
+	Layers       []target.Layer     `json:"layers,omitempty"`
+	Reachability target.ProbeResult `json:"reachability"`
+	Explain      []string           `json:"explain,omitempty"`
 	// Trace is a per-field record of which layer won and which lower
 	// layers carried a shadowed value. Populated only when explain=true
 	// — agents can branch on it without parsing Explain strings.
@@ -97,4 +97,3 @@ func summarizeTarget(out TargetOutput) string {
 	}
 	return fmt.Sprintf("mode=%s target=%s %s", out.Target.Mode, addr, reach)
 }
-

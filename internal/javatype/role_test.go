@@ -38,7 +38,7 @@ func TestClassify_ArrayAndGenericsNormalized(t *testing.T) {
 func TestClassify_WalksSuperclassChain(t *testing.T) {
 	lookup := fakeLookup{
 		supers: map[string]string{
-			"com.example.Order":    "com.example.BaseEntity",
+			"com.example.Order":      "com.example.BaseEntity",
 			"com.example.BaseEntity": "java.lang.Object",
 		},
 	}

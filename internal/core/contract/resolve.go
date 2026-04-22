@@ -5,16 +5,16 @@ import (
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
 // Result is what ResolveMethod returns on success. Overloads lists every
 // method with the matching name (useful for describe output); Selected
 // is the index into Overloads of the disambiguated overload.
 type Result struct {
-	Service   facadesemantic.Class
-	Method    facadesemantic.Method
-	Overloads []facadesemantic.Method
+	Service   javamodel.Class
+	Method    javamodel.Method
+	Overloads []javamodel.Method
 	Selected  int
 }
 
@@ -67,8 +67,8 @@ func ResolveMethod(store Store, service, method string, paramTypes []string) (Re
 	}, nil
 }
 
-func collectOverloads(cls facadesemantic.Class, name string) []facadesemantic.Method {
-	var out []facadesemantic.Method
+func collectOverloads(cls javamodel.Class, name string) []javamodel.Method {
+	var out []javamodel.Method
 	for _, m := range cls.Methods {
 		if m.Name == name {
 			out = append(out, m)
@@ -77,7 +77,7 @@ func collectOverloads(cls facadesemantic.Class, name string) []facadesemantic.Me
 	return out
 }
 
-func pickOverload(service, method string, overloads []facadesemantic.Method, paramTypes []string) (int, error) {
+func pickOverload(service, method string, overloads []javamodel.Method, paramTypes []string) (int, error) {
 	if len(overloads) == 1 {
 		return 0, nil
 	}
@@ -102,7 +102,7 @@ func pickOverload(service, method string, overloads []facadesemantic.Method, par
 	}
 }
 
-func ambiguousErr(service, method string, overloads []facadesemantic.Method, reason string) error {
+func ambiguousErr(service, method string, overloads []javamodel.Method, reason string) error {
 	return errcode.New(errcode.MethodAmbiguous, "contract",
 		fmt.Sprintf("method %q on %s has %d overloads", method, service, len(overloads))).
 		WithHint("sofarpc_describe", map[string]any{"service": service, "method": method}, reason)

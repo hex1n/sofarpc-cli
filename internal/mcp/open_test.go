@@ -9,7 +9,7 @@ import (
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
-	"github.com/hex1n/sofarpc-cli/internal/facadesemantic"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -64,12 +64,12 @@ func TestOpen_DescribeCapabilityTracksFacadeStore(t *testing.T) {
 		t.Fatal("capabilities.describe should be false when no contract store is attached")
 	}
 
-	store := contract.NewInMemoryStore(facadesemantic.Class{
+	store := contract.NewInMemoryStore(javamodel.Class{
 		FQN:     "com.foo.Svc",
-		Kind:    facadesemantic.KindInterface,
-		Methods: []facadesemantic.Method{{Name: "doThing"}},
+		Kind:    javamodel.KindInterface,
+		Methods: []javamodel.Method{{Name: "doThing"}},
 	})
-	out = callOpen(t, Options{Facade: store}, map[string]any{"cwd": dir})
+	out = callOpen(t, Options{Contract: store}, map[string]any{"cwd": dir})
 	if !out.Capabilities.Describe {
 		t.Fatal("capabilities.describe should be true when a contract store is attached")
 	}
@@ -98,7 +98,7 @@ public interface Svc {
 		t.Fatal("Load returned nil store")
 	}
 
-	out := callOpen(t, Options{Facade: store}, map[string]any{"cwd": dir})
+	out := callOpen(t, Options{Contract: store}, map[string]any{"cwd": dir})
 	if !out.Contract.Attached {
 		t.Fatal("contract.attached should be true")
 	}
