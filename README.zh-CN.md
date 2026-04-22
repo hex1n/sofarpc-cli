@@ -28,7 +28,7 @@
 go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@latest
 ```
 
-仓库内也提供辅助脚本：
+仓库内辅助脚本：
 
 ```sh
 ./scripts/install.sh
@@ -38,49 +38,71 @@ go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@latest
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
+一条命令把二进制注册进 Claude Code 和 Codex。入口是幂等的 —
+再次执行只会替换 sofarpc 那一项，其它 MCP 条目和配置顶层字段都会保留。
+默认同时把 `sofarpc-invoke` 这个 skill 装好，让 Claude Code 和 Codex
+不需要读 README 就能直接驱动这些工具：
+
+```sh
+sofarpc-mcp setup                                         # 两个客户端 + skill
+sofarpc-mcp setup --claude-code                           # 只注册 Claude Code
+sofarpc-mcp setup --codex                                 # 只注册 Codex
+sofarpc-mcp setup --install-skill=false                   # 只写 MCP 配置
+sofarpc-mcp setup --dry-run --direct-url=bolt://host:12200  # 预览
+```
+
+可选项（`--project-root`、`--direct-url`、`--registry-address`）会把
+每台机器的默认值固化到 server 条目里；如果打算调用时再传 `directUrl`，
+这些参数就不需要。
+
+Skill 是通过 `//go:embed` 烤进二进制的，所以一个全新的 `go install`
+就自带它 —— 不需要 clone 仓库。canonical 源文件位于
+`cmd/sofarpc-mcp/skill/SKILL.md`；仓库里的
+`.claude/skills/sofarpc-invoke/SKILL.md` 是指向它的 symlink，这样在本
+checkout 里用 Claude Code 也能直接被自动发现。
+
 ## 快速开始
 
-构建：
+大多数用户只需要上面这两步。下面的章节覆盖手动路径 —— 源码构建、
+不依赖 `setup` 直接跑 server、或者手工编辑客户端配置。
+
+### 源码构建
 
 ```sh
 go build -o bin/sofarpc-mcp ./cmd/sofarpc-mcp
 ```
 
-配置项目级 MCP env：
+### 不依赖客户端配置直接运行
 
 ```sh
 export SOFARPC_PROJECT_ROOT=/abs/path/to/project
 export SOFARPC_DIRECT_URL=bolt://host:12200
-export SOFARPC_PROTOCOL=bolt
-export SOFARPC_SERIALIZATION=hessian2
+
+./bin/sofarpc-mcp
 ```
 
-可选覆盖项：
+Server 使用 stdio MCP 协议。`SOFARPC_PROJECT_ROOT` 回退到进程 CWD；
+`SOFARPC_PROTOCOL` / `SOFARPC_SERIALIZATION` 默认是 `bolt` /
+`hessian2`，除非要覆盖默认值，否则都不用设。
+
+可选的 per-target 调优：
 
 ```sh
-# 替代 target 来源
 export SOFARPC_REGISTRY_ADDRESS=zookeeper://host:2181
-
-# 可选 direct invoke 提示
 export SOFARPC_UNIQUE_ID=demo
 export SOFARPC_TIMEOUT_MS=3000
 export SOFARPC_CONNECT_TIMEOUT_MS=1000
 ```
 
-启动：
+启动时，`sofarpc-mcp` 会在后台 goroutine 里扫描 `SOFARPC_PROJECT_ROOT`
+下的 `.java` 源码，所以第一条 stdio 响应不会被扫描阻塞。隐藏目录、
+测试目录和常见构建产物目录会被跳过。
 
-```sh
-./bin/sofarpc-mcp
-```
+### 手写客户端配置
 
-Server 使用 stdio MCP 协议。
-
-启动时，`sofarpc-mcp` 会在 `SOFARPC_PROJECT_ROOT` 下扫描 `.java`
-源码，并在 pure-Go 路径里构建 describe 所需的 contract information。
-隐藏目录、测试目录和常见构建产物目录会被跳过。
-
-如果你的 Agent 宿主支持项目级 MCP 配置，建议把同样的值写进该项目的 MCP
-server 条目里，这样每次调用就不用重复传 `directUrl`：
+如果你不想跑 `sofarpc-mcp setup`，可以把下面这段直接写进客户端的
+MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
+`~/.codex/config.toml` 下的 `[mcp_servers.sofarpc]`）：
 
 ```json
 {
@@ -89,9 +111,7 @@ server 条目里，这样每次调用就不用重复传 `directUrl`：
       "command": "/abs/path/to/sofarpc-mcp",
       "env": {
         "SOFARPC_PROJECT_ROOT": "/abs/path/to/project",
-        "SOFARPC_DIRECT_URL": "bolt://host:12200",
-        "SOFARPC_PROTOCOL": "bolt",
-        "SOFARPC_SERIALIZATION": "hessian2"
+        "SOFARPC_DIRECT_URL": "bolt://host:12200"
       }
     }
   }
@@ -106,6 +126,9 @@ server 条目里，这样每次调用就不用重复传 `directUrl`：
 4. `sofarpc_invoke`
 5. `sofarpc_replay`
 6. invoke 无法继续时调用 `sofarpc_doctor`
+
+已安装的 `sofarpc-invoke` skill 把这条链条变成机器可读的 playbook，
+包含 errcode 恢复协议。源文件在 `cmd/sofarpc-mcp/skill/SKILL.md`。
 
 ## `sofarpc_invoke` 形状
 
@@ -179,8 +202,9 @@ Java 特定形状，调用方需要自己显式传入。
 
 ```text
 cmd/
-  sofarpc-mcp/           MCP 入口
-  spike-invoke/          direct transport 验证 CLI
+  sofarpc-mcp/
+    skill/               内嵌的 sofarpc-invoke SKILL.md (go:embed 源)
+  spike-invoke/          direct transport 验证 CLI（build tag: spike）
 internal/
   boltclient/            纯 Go BOLT client
   sofarpcwire/           SofaRequest / SofaResponse 编解码
@@ -192,8 +216,10 @@ internal/
     target/              优先级链 + TCP 探测
     contract/            重载解析 + skeleton 生成
     invoke/              plan 构建 + 执行
-  facadesemantic/        contract metadata shapes
+  javamodel/             Java class / field / method value types
   javatype/              Java 类型分类辅助
+.claude/
+  skills/sofarpc-invoke/ 指向 cmd/sofarpc-mcp/skill/ 的 symlink，方便 in-repo 发现
 docs/
   architecture.md        架构说明
 ```

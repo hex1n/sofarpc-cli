@@ -65,48 +65,49 @@ Code auto-discovery works when running inside this checkout too.
 
 ## Quick start
 
-Build:
+For most users the two-step flow above is enough. The sections below
+cover the manual paths — building from source, driving the server
+without `setup`, and editing client config by hand.
+
+### Build from source
 
 ```sh
 go build -o bin/sofarpc-mcp ./cmd/sofarpc-mcp
 ```
 
-Configure the project-level MCP env:
+### Run without client config
 
 ```sh
 export SOFARPC_PROJECT_ROOT=/abs/path/to/project
 export SOFARPC_DIRECT_URL=bolt://host:12200
-export SOFARPC_PROTOCOL=bolt
-export SOFARPC_SERIALIZATION=hessian2
+
+./bin/sofarpc-mcp
 ```
 
-Optional per-target overrides:
+The server speaks stdio MCP. `SOFARPC_PROJECT_ROOT` falls back to the
+process CWD, and `SOFARPC_PROTOCOL` / `SOFARPC_SERIALIZATION` default
+to `bolt` / `hessian2`, so neither needs to be set unless you're
+overriding the defaults.
+
+Optional per-target tuning:
 
 ```sh
-# Alternative target source
 export SOFARPC_REGISTRY_ADDRESS=zookeeper://host:2181
-
-# Optional direct invoke hints
 export SOFARPC_UNIQUE_ID=demo
 export SOFARPC_TIMEOUT_MS=3000
 export SOFARPC_CONNECT_TIMEOUT_MS=1000
 ```
 
-Run:
+On startup `sofarpc-mcp` scans `.java` files under `SOFARPC_PROJECT_ROOT`
+in a background goroutine so the first stdio response is not blocked
+by the scan. Hidden directories, test trees, and common build-output
+directories are skipped.
 
-```sh
-./bin/sofarpc-mcp
-```
+### Hand-written client config
 
-The server speaks stdio MCP.
-
-On startup, `sofarpc-mcp` scans `.java` files under `SOFARPC_PROJECT_ROOT`
-to build describe-time contract information in pure Go. Hidden directories,
-test trees, and common build-output directories are skipped.
-
-If your agent host supports project-level MCP configuration, prefer putting the
-same values on that project’s MCP server entry so `directUrl` does not need to
-be repeated on every call:
+If you prefer not to run `sofarpc-mcp setup`, drop this into the
+client's MCP config (Claude Code: `~/.claude.json` → `mcpServers`;
+Codex: `~/.codex/config.toml` under `[mcp_servers.sofarpc]`):
 
 ```json
 {
@@ -115,9 +116,7 @@ be repeated on every call:
       "command": "/abs/path/to/sofarpc-mcp",
       "env": {
         "SOFARPC_PROJECT_ROOT": "/abs/path/to/project",
-        "SOFARPC_DIRECT_URL": "bolt://host:12200",
-        "SOFARPC_PROTOCOL": "bolt",
-        "SOFARPC_SERIALIZATION": "hessian2"
+        "SOFARPC_DIRECT_URL": "bolt://host:12200"
       }
     }
   }
@@ -132,6 +131,11 @@ be repeated on every call:
 4. `sofarpc_invoke`
 5. `sofarpc_replay`
 6. `sofarpc_doctor` when invoke cannot proceed
+
+The installed `sofarpc-invoke` skill turns this flow into a machine-
+readable playbook for Claude Code / Codex, including the errcode
+recovery protocol. See `cmd/sofarpc-mcp/skill/SKILL.md` for the
+source.
 
 ## `sofarpc_invoke` shape
 
@@ -209,8 +213,9 @@ shapes, the caller must send them explicitly.
 
 ```text
 cmd/
-  sofarpc-mcp/           MCP entrypoint
-  spike-invoke/          direct-transport validation CLI
+  sofarpc-mcp/
+    skill/               embedded sofarpc-invoke SKILL.md (go:embed source)
+  spike-invoke/          direct-transport validation CLI (build tag: spike)
 internal/
   boltclient/            pure-Go BOLT client
   sofarpcwire/           SofaRequest / SofaResponse encoding
@@ -222,8 +227,10 @@ internal/
     target/              precedence chain + TCP probe
     contract/            overload resolution + skeleton generation
     invoke/              plan building + execution
-  facadesemantic/        contract metadata shapes
+  javamodel/             Java class / field / method value types
   javatype/              Java type classification helpers
+.claude/
+  skills/sofarpc-invoke/ symlink to cmd/sofarpc-mcp/skill/ for in-repo discovery
 docs/
   architecture.md        architecture reference
 ```
