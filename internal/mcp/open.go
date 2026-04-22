@@ -47,7 +47,7 @@ type ContractBanner struct {
 	LoadError      string            `json:"loadError,omitempty"`
 }
 
-func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder, loadErr string) {
+func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	envCfg := opts.TargetSources.Env
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
@@ -55,6 +55,7 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder, l
 		Description: "Open a sofarpc workspace. Returns the resolved target, a capability banner, and a session id the agent can reuse in subsequent calls.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in OpenInput) (*sdkmcp.CallToolResult, OpenOutput, error) {
 		store := holder.Get()
+		loadErr := holder.LoadError()
 		ws, err := workspace.Resolve(workspace.Input{
 			Cwd:     in.Cwd,
 			Project: in.Project,

@@ -38,18 +38,20 @@ type DoctorAction struct {
 	Args map[string]any `json:"args,omitempty"`
 }
 
-func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder, loadErr string) {
+func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_doctor",
 		Description: "Run end-to-end self-diagnosis: target resolution, reachability, workspace state, and session readiness.",
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DoctorInput) (*sdkmcp.CallToolResult, DoctorOutput, error) {
+		store := holder.Get()
+		loadErr := holder.LoadError()
 		checks := make([]DoctorCheck, 3)
 		var wg sync.WaitGroup
 		wg.Add(3)
 		go func() { defer wg.Done(); checks[0] = checkTarget(in, sources) }()
-		go func() { defer wg.Done(); checks[1] = checkContract(holder.Get(), loadErr) }()
+		go func() { defer wg.Done(); checks[1] = checkContract(store, loadErr) }()
 		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
 		wg.Wait()
 		out := DoctorOutput{Checks: checks}
