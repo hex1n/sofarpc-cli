@@ -52,15 +52,20 @@ type javaTypedObject struct {
 	fields   map[string]interface{}
 }
 
-type javaArraysArrayList struct {
+// javaArrayList carries a Go slice that should land on the wire as
+// java.util.ArrayList. We use this instead of the Arrays$ArrayList
+// JDK-internal class because some SOFARPC servers' hessian2 factories
+// don't register the internal type and fall back to Map-of-index or fail
+// to decode; java.util.ArrayList is the lowest-common-denominator shape.
+type javaArrayList struct {
 	values []interface{}
 }
 
-func (*javaArraysArrayList) JavaClassName() string { return "java.util.Arrays$ArrayList" }
+func (*javaArrayList) JavaClassName() string { return "java.util.ArrayList" }
 
-func (j *javaArraysArrayList) Get() []interface{} { return append([]interface{}(nil), j.values...) }
+func (j *javaArrayList) Get() []interface{} { return append([]interface{}(nil), j.values...) }
 
-func (j *javaArraysArrayList) Set(values []interface{}) {
+func (j *javaArrayList) Set(values []interface{}) {
 	j.values = append([]interface{}(nil), values...)
 }
 
@@ -247,7 +252,7 @@ func normalizeSlice(items []any) any {
 	for i, item := range items {
 		out[i] = normalizeValue(item)
 	}
-	return &javaArraysArrayList{values: out}
+	return &javaArrayList{values: out}
 }
 
 func normalizeStringMap(input map[string]interface{}) any {
