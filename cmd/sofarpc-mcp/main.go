@@ -19,6 +19,17 @@ import (
 )
 
 func main() {
+	// One subcommand, "setup", registers this binary in Claude Code and
+	// Codex config so a freshly-installed sofarpc-mcp is reachable from
+	// both clients without hand-editing JSON/TOML. Everything else falls
+	// through to the MCP stdio server — that is the binary's job.
+	if len(os.Args) >= 2 && os.Args[1] == "setup" {
+		if err := runSetup(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx); err != nil {
