@@ -208,6 +208,33 @@ func normalizeConfig(cfg Config) Config {
 	return cfg
 }
 
+// Normalize trims whitespace on target fields and infers Mode from
+// DirectURL / RegistryAddress. It is the canonical pre-step for code
+// paths that receive a Config from outside the Resolve pipeline
+// (Probe, direct-transport support checks).
+func Normalize(cfg Config) Config {
+	return normalizeResolvedTarget(cfg)
+}
+
+// SupportsDirectBolt reports whether cfg picks out the single concrete
+// invoke shape the pure-Go runtime can execute today. Empty Protocol /
+// Serialization are treated as "accept defaults"; callers that want to
+// surface a precise reason to the user should read cfg.Protocol /
+// cfg.Serialization directly after calling this.
+func SupportsDirectBolt(cfg Config) bool {
+	cfg = Normalize(cfg)
+	if cfg.Mode != ModeDirect || cfg.DirectURL == "" {
+		return false
+	}
+	if cfg.Protocol != "" && cfg.Protocol != defaultProtocol {
+		return false
+	}
+	if cfg.Serialization != "" && cfg.Serialization != defaultSerialization {
+		return false
+	}
+	return true
+}
+
 func normalizeResolvedTarget(cfg Config) Config {
 	cfg = normalizeConfig(cfg)
 	switch {

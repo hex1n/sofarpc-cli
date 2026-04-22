@@ -45,7 +45,7 @@ type DirectExecution struct {
 // transport when the target is direct+bolt+hessian2. Unsupported targets
 // return Handled=false so callers can fall back to the worker path.
 func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (DirectExecution, error) {
-	if !supportsDirectTransport(plan.Target) {
+	if !target.SupportsDirectBolt(plan.Target) {
 		return DirectExecution{}, nil
 	}
 
@@ -126,34 +126,6 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		Result:      sofarpcwire.FormatValue(result.Decoded.AppResponse),
 		Diagnostics: diagnostics,
 	}, nil
-}
-
-func supportsDirectTransport(cfg target.Config) bool {
-	cfg = normalizeTargetConfig(cfg)
-	if cfg.Mode != target.ModeDirect || cfg.DirectURL == "" {
-		return false
-	}
-	if cfg.Protocol != "" && cfg.Protocol != "bolt" {
-		return false
-	}
-	if cfg.Serialization != "" && cfg.Serialization != "hessian2" {
-		return false
-	}
-	return true
-}
-
-func normalizeTargetConfig(cfg target.Config) target.Config {
-	switch {
-	case cfg.DirectURL != "":
-		cfg.Mode = target.ModeDirect
-	case cfg.RegistryAddress != "":
-		cfg.Mode = target.ModeRegistry
-	}
-	cfg.Protocol = strings.TrimSpace(cfg.Protocol)
-	cfg.Serialization = strings.TrimSpace(cfg.Serialization)
-	cfg.DirectURL = strings.TrimSpace(cfg.DirectURL)
-	cfg.RegistryAddress = strings.TrimSpace(cfg.RegistryAddress)
-	return cfg
 }
 
 func directDialAddr(raw string) (string, error) {
