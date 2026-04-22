@@ -38,7 +38,7 @@ type DoctorAction struct {
 	Args map[string]any `json:"args,omitempty"`
 }
 
-func registerDoctor(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
+func registerDoctor(server *sdkmcp.Server, opts Options, holder *facadeHolder, loadErr string) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
@@ -49,7 +49,7 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *facadeHolder) {
 		var wg sync.WaitGroup
 		wg.Add(3)
 		go func() { defer wg.Done(); checks[0] = checkTarget(in, sources) }()
-		go func() { defer wg.Done(); checks[1] = checkContract(holder.Get()) }()
+		go func() { defer wg.Done(); checks[1] = checkContract(holder.Get(), loadErr) }()
 		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
 		wg.Wait()
 		out := DoctorOutput{Checks: checks}
@@ -102,8 +102,19 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 	}
 }
 
-func checkContract(facade contract.Store) DoctorCheck {
+func checkContract(facade contract.Store, loadErr string) DoctorCheck {
 	if facade == nil {
+		if loadErr != "" {
+			return DoctorCheck{
+				Name:   "contract",
+				Ok:     false,
+				Detail: "contract store failed to load: " + loadErr + "; trusted-mode invoke still works",
+				Data:   map[string]any{"loadError": loadErr},
+				NextStep: &DoctorAction{
+					Tool: "sofarpc_open",
+				},
+			}
+		}
 		return DoctorCheck{
 			Name:   "contract",
 			Ok:     true,

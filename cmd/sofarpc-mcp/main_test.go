@@ -107,7 +107,10 @@ public interface Svc {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	store := loadFacade(root)
+	store, err := loadFacade(root)
+	if err != nil {
+		t.Fatalf("loadFacade: %v", err)
+	}
 	if store == nil {
 		t.Fatal("loadFacade returned nil")
 	}
@@ -120,7 +123,11 @@ public interface Svc {
 }
 
 func TestLoadFacade_EmptyWorkspaceReturnsNil(t *testing.T) {
-	if got := loadFacade(t.TempDir()); got != nil {
+	got, err := loadFacade(t.TempDir())
+	if err != nil {
+		t.Fatalf("loadFacade(empty): %v", err)
+	}
+	if got != nil {
 		t.Fatalf("loadFacade(empty) = %#v, want nil", got)
 	}
 }

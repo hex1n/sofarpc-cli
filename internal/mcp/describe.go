@@ -70,7 +70,10 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *facadeHolder)
 		}
 
 		skeleton := contract.BuildSkeleton(result.Method.ParamTypes, facade)
-		contractBanner := buildContractBanner(facade)
+		// describe runs only when a facade is attached, so any pre-startup
+		// load error is moot here — pass an empty loadErr and let open /
+		// doctor own the load-error surface.
+		contractBanner := buildContractBanner(facade, "")
 		out := DescribeOutput{
 			Service:   in.Service,
 			Method:    in.Method,
