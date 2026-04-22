@@ -41,18 +41,27 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 
 Register the binary with Claude Code and Codex in one shot. The entry
 is idempotent — re-running replaces only the sofarpc server, leaving
-unrelated MCP entries and top-level config keys untouched:
+unrelated MCP entries and top-level config keys untouched. By default
+it also installs the `sofarpc-invoke` agent skill so Claude Code and
+Codex drive the tools without having to read this README:
 
 ```sh
-sofarpc-mcp setup                                         # both clients
+sofarpc-mcp setup                                         # both clients + skill
 sofarpc-mcp setup --claude-code                           # Claude Code only
 sofarpc-mcp setup --codex                                 # Codex only
+sofarpc-mcp setup --install-skill=false                   # MCP config only
 sofarpc-mcp setup --dry-run --direct-url=bolt://host:12200  # preview
 ```
 
 Optional flags (`--project-root`, `--direct-url`, `--registry-address`)
 bake per-machine defaults into the server entry; leave them off if you
 plan to pass `directUrl` at call time instead.
+
+The skill is baked into the binary via `//go:embed`, so a fresh
+`go install` carries it — no repo checkout required. Canonical source
+lives at `cmd/sofarpc-mcp/skill/SKILL.md`; the repo-level
+`.claude/skills/sofarpc-invoke/SKILL.md` is a symlink to it so Claude
+Code auto-discovery works when running inside this checkout too.
 
 ## Quick start
 
