@@ -22,11 +22,10 @@ import (
 )
 
 const (
-	defaultAddr    = "10.74.194.40:12200"
-	defaultService = "com.thfund.salesfundmp.facade.sales.holdings.SalesDailyHoldingsFacade"
-	defaultMethod  = "queryPortfolioAvailableCash"
-	defaultType    = "com.thfund.salesfundmp.facade.model.request.DailyHoldingsQueryRequest"
-	defaultMPCode  = int64(434153733362950144)
+	defaultAddr    = "127.0.0.1:12200"
+	defaultService = "com.example.demo.ExampleFacade"
+	defaultMethod  = "query"
+	defaultType    = "com.example.demo.ExampleRequest"
 )
 
 type output struct {
@@ -119,10 +118,8 @@ func loadArgs(path string) ([]any, error) {
 	if strings.TrimSpace(path) == "" {
 		return []any{
 			map[string]any{
-				"@type":      defaultType,
-				"tradeDate":  "20260414",
-				"mpCode":     defaultMPCode,
-				"mpCodeList": []any{defaultMPCode},
+				"@type": defaultType,
+				"id":    int64(1),
 			},
 		}, nil
 	}

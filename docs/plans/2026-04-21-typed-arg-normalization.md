@@ -414,7 +414,7 @@ func NormalizeArgs(paramTypes []string, args []any, store Store) ([]any, error)
 原因：
 
 - 这是当前真实 pain point 最大、收益最直接的一组
-- 也是你已经在 `salesfundmp` 里验证过的真实调用路径
+- 也是你已经在真实 facade 上验证过的调用路径
 - 做完这三类，agent 侧手写 `@type` 的负担会明显下降
 
 等第一刀稳定后，再补：

@@ -7,6 +7,22 @@ import "fmt"
 // Sofa response envelope or a java throwable) and flatten it into the
 // DecodedResponse shape the invoke pipeline consumes.
 
+// BuildSuccessResponse encodes a SofaResponse envelope that carries
+// appResponse as its application payload with no error or response
+// props. It is the symmetric counterpart to DecodeResponse and exists
+// so tests can synthesize server frames without pinning hand-captured
+// hex fixtures. appResponse may be any value writeValue accepts — a
+// plain scalar, a javaTypedObject, a map, or a list.
+func BuildSuccessResponse(appResponse any) ([]byte, error) {
+	w := newHessianWriter()
+	fields := []string{"isError", "errorMsg", "appResponse", "responseProps"}
+	values := []any{false, nil, appResponse, nil}
+	if err := w.writeObject(ResponseClass, fields, values); err != nil {
+		return nil, err
+	}
+	return w.Bytes(), nil
+}
+
 func decodeSofaResponse(content []byte) (DecodedResponse, error) {
 	decoder := hessianDecoder{data: content}
 	value, err := decoder.readValue()

@@ -276,18 +276,13 @@ func orderedMapKeys(values map[string]interface{}) []string {
 		return nil
 	}
 
-	preferred := []string{"@type", "tradeDate", "mpCode", "mpCodeList"}
 	keys := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, key := range preferred {
-		if _, ok := values[key]; ok {
-			keys = append(keys, key)
-			seen[key] = struct{}{}
-		}
+	if _, ok := values["@type"]; ok {
+		keys = append(keys, "@type")
 	}
 	extra := make([]string, 0, len(values)-len(keys))
 	for key := range values {
-		if _, ok := seen[key]; ok {
+		if key == "@type" {
 			continue
 		}
 		extra = append(extra, key)
@@ -300,39 +295,12 @@ func orderedObjectFieldKeys(values map[string]interface{}) []string {
 	if len(values) == 0 {
 		return nil
 	}
-	preferred := []string{
-		"tradeDate",
-		"mpCode",
-		"mpCodeList",
-		"fundCode",
-		"tradeType",
-		"tradeValue",
-		"shareInTransit",
-		"tradeFeeRules",
-		"conditionExpression",
-		"feeType",
-		"feeValue",
-		"discountFeeValue",
-		"discount",
-		"value",
-	}
 	keys := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, key := range preferred {
-		if _, ok := values[key]; ok {
-			keys = append(keys, key)
-			seen[key] = struct{}{}
-		}
-	}
-	extra := make([]string, 0, len(values)-len(keys))
 	for key := range values {
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		extra = append(extra, key)
+		keys = append(keys, key)
 	}
-	sort.Strings(extra)
-	return append(keys, extra...)
+	sort.Strings(keys)
+	return keys
 }
 
 func stringsToAny(values []string) []interface{} {

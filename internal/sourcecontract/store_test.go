@@ -14,14 +14,14 @@ func TestLoad_ResolvesFacadeAndDTOs(t *testing.T) {
 	writeJava(t, root, "src/main/java/com/foo/Svc.java", `
 package com.foo;
 
-import com.foo.model.OperationResult;
-import com.foo.model.request.DailyHoldingsQueryRequest;
-import com.foo.model.response.DailyHoldingResponse;
+import com.foo.model.Result;
+import com.foo.model.request.ExampleRequest;
+import com.foo.model.response.ExampleResponse;
 import java.util.List;
 
 public interface Svc {
-    OperationResult<DailyHoldingResponse> queryPortfolioAvailableCash(DailyHoldingsQueryRequest request);
-    OperationResult<List<DailyHoldingResponse>> queryAll(List<Long> mpCodes);
+    Result<ExampleResponse> query(ExampleRequest request);
+    Result<List<ExampleResponse>> queryAll(List<Long> ids);
 }
 `)
 	writeJava(t, root, "src/main/java/com/foo/model/request/BaseRequest.java", `
@@ -31,50 +31,50 @@ public class BaseRequest {
     private String traceId;
 }
 `)
-	writeJava(t, root, "src/main/java/com/foo/model/request/DailyHoldingsQueryRequest.java", `
+	writeJava(t, root, "src/main/java/com/foo/model/request/ExampleRequest.java", `
 package com.foo.model.request;
 
 import java.io.Serializable;
 import java.util.List;
 
-public class DailyHoldingsQueryRequest extends BaseRequest implements Serializable {
+public class ExampleRequest extends BaseRequest implements Serializable {
     private static final long serialVersionUID = 1L;
-    private final String tradeDate;
-    private final List<Long> mpCodeList;
-    private final Long mpCode;
+    private final String date;
+    private final List<Long> idList;
+    private final Long id;
 
     public static class Builder {
-        private String tradeDate;
-        public Builder tradeDate(String tradeDate) { return this; }
+        private String date;
+        public Builder date(String date) { return this; }
     }
 }
 `)
-	writeJava(t, root, "src/main/java/com/foo/model/OperationResult.java", `
+	writeJava(t, root, "src/main/java/com/foo/model/Result.java", `
 package com.foo.model;
 
-public class OperationResult<T> {
+public class Result<T> {
     private boolean success;
     private T data;
 }
 `)
-	writeJava(t, root, "src/main/java/com/foo/model/response/DailyHoldingInfo.java", `
+	writeJava(t, root, "src/main/java/com/foo/model/response/ExampleItem.java", `
 package com.foo.model.response;
 
 import java.math.BigDecimal;
 
-public class DailyHoldingInfo {
-    private Long mpCode;
-    private String fundCode;
-    private BigDecimal holdingQuantity;
+public class ExampleItem {
+    private Long id;
+    private String code;
+    private BigDecimal quantity;
 }
 `)
-	writeJava(t, root, "src/main/java/com/foo/model/response/DailyHoldingResponse.java", `
+	writeJava(t, root, "src/main/java/com/foo/model/response/ExampleResponse.java", `
 package com.foo.model.response;
 
 import java.util.List;
 
-public class DailyHoldingResponse {
-    private List<DailyHoldingInfo> dailyHoldingInfos;
+public class ExampleResponse {
+    private List<ExampleItem> items;
 }
 `)
 
@@ -105,19 +105,19 @@ public class DailyHoldingResponse {
 	if len(svc.Methods) != 2 {
 		t.Fatalf("Svc.Methods: got %d want 2", len(svc.Methods))
 	}
-	if got := svc.Methods[0].ParamTypes; !reflect.DeepEqual(got, []string{"com.foo.model.request.DailyHoldingsQueryRequest"}) {
+	if got := svc.Methods[0].ParamTypes; !reflect.DeepEqual(got, []string{"com.foo.model.request.ExampleRequest"}) {
 		t.Fatalf("Svc.Methods[0].ParamTypes: got %v", got)
 	}
-	if got := svc.Methods[0].ReturnType; got != "com.foo.model.OperationResult<com.foo.model.response.DailyHoldingResponse>" {
+	if got := svc.Methods[0].ReturnType; got != "com.foo.model.Result<com.foo.model.response.ExampleResponse>" {
 		t.Fatalf("Svc.Methods[0].ReturnType: got %q", got)
 	}
 	if got := svc.Methods[1].ParamTypes; !reflect.DeepEqual(got, []string{"java.util.List<java.lang.Long>"}) {
 		t.Fatalf("Svc.Methods[1].ParamTypes: got %v", got)
 	}
 
-	req, ok := store.Class("com.foo.model.request.DailyHoldingsQueryRequest")
+	req, ok := store.Class("com.foo.model.request.ExampleRequest")
 	if !ok {
-		t.Fatal("DailyHoldingsQueryRequest not found")
+		t.Fatal("ExampleRequest not found")
 	}
 	if req.Superclass != "com.foo.model.request.BaseRequest" {
 		t.Fatalf("Superclass: got %q", req.Superclass)
@@ -125,21 +125,21 @@ public class DailyHoldingResponse {
 	if !reflect.DeepEqual(req.Interfaces, []string{"java.io.Serializable"}) {
 		t.Fatalf("Interfaces: got %v", req.Interfaces)
 	}
-	if names := fieldNames(req.Fields); !reflect.DeepEqual(names, []string{"tradeDate", "mpCodeList", "mpCode"}) {
+	if names := fieldNames(req.Fields); !reflect.DeepEqual(names, []string{"date", "idList", "id"}) {
 		t.Fatalf("field names: got %v", names)
 	}
 	if got := req.Fields[1].JavaType; got != "java.util.List<java.lang.Long>" {
-		t.Fatalf("mpCodeList type: got %q", got)
+		t.Fatalf("idList type: got %q", got)
 	}
 	if got := req.Fields[2].JavaType; got != "java.lang.Long" {
-		t.Fatalf("mpCode type: got %q", got)
+		t.Fatalf("id type: got %q", got)
 	}
 
-	resp, ok := store.Class("com.foo.model.response.DailyHoldingResponse")
+	resp, ok := store.Class("com.foo.model.response.ExampleResponse")
 	if !ok {
-		t.Fatal("DailyHoldingResponse not found")
+		t.Fatal("ExampleResponse not found")
 	}
-	if len(resp.Fields) != 1 || resp.Fields[0].JavaType != "java.util.List<com.foo.model.response.DailyHoldingInfo>" {
+	if len(resp.Fields) != 1 || resp.Fields[0].JavaType != "java.util.List<com.foo.model.response.ExampleItem>" {
 		t.Fatalf("response fields: %+v", resp.Fields)
 	}
 }

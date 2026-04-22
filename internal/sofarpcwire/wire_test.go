@@ -2,11 +2,8 @@ package sofarpcwire
 
 import (
 	"bytes"
-	"encoding/hex"
 	"testing"
 )
-
-const knownPortfolioAvailableCashResponseHex = "4fbe636f6d2e616c697061792e736f66612e7270632e636f72652e726573706f6e73652e536f6661526573706f6e7365940769734572726f72086572726f724d73670b617070526573706f6e73650d726573706f6e736550726f70736f90464e4fc833636f6d2e6578616d706c652e736572766963656170702e6661636164652e6d6f64656c2e4f7065726174696f6e526573756c7496077375636365737304636f6465076d6573736167650974696d657374616d700464617461086d657461646174616f9154e007737563636573734c0000019dae7234ef4fc847636f6d2e6578616d706c652e736572766963656170702e6661636164652e6d6f64656c2e726573706f6e73652e73616c65732e4461696c79486f6c64696e67526573706f6e736591116461696c79486f6c64696e67496e666f736f92566e014fc843636f6d2e6578616d706c652e736572766963656170702e6661636164652e6d6f64656c2e726573706f6e73652e73616c65732e4461696c79486f6c64696e67496e666f94066d70436f64650866756e64436f64650b686f6c64696e67446174650f686f6c64696e675175616e746974796f934c06066c852f02200004434153480832303236303431344fa46a6176612e6d6174682e426967446563696d616c910576616c75656f9406302e303030307a4d74001e6a6176612e7574696c2e436f6c6c656374696f6e7324456d7074794d61707a4e"
 
 func TestTargetServiceUniqueName(t *testing.T) {
 	t.Parallel()
@@ -70,19 +67,18 @@ func TestNormalizeArgs_PromotesBigDecimalTypedObject(t *testing.T) {
 	}
 }
 
-func TestBuildGenericRequestMatchesJavaContent(t *testing.T) {
+func TestBuildGenericRequestEncodesExpectedStrings(t *testing.T) {
 	t.Parallel()
 
 	req, err := BuildGenericRequest(RequestSpec{
-		Service:    "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade",
-		Method:     "queryPortfolioAvailableCash",
-		ParamTypes: []string{"com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest"},
+		Service:    "com.example.demo.ExampleFacade",
+		Method:     "query",
+		ParamTypes: []string{"com.example.demo.ExampleRequest"},
 		Args: []any{
 			map[string]any{
-				"@type":      "com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest",
-				"tradeDate":  "20260414",
-				"mpCode":     int64(434153733362950144),
-				"mpCodeList": []any{int64(434153733362950144)},
+				"@type": "com.example.demo.ExampleRequest",
+				"id":    int64(1001),
+				"items": []any{int64(1001)},
 			},
 		},
 	})
@@ -97,8 +93,8 @@ func TestBuildGenericRequestMatchesJavaContent(t *testing.T) {
 	}
 	for _, needle := range [][]byte{
 		[]byte(RequestClass),
-		[]byte("com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade:1.0"),
-		[]byte("com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest"),
+		[]byte("com.example.demo.ExampleFacade:1.0"),
+		[]byte("com.example.demo.ExampleRequest"),
 		[]byte("java.util.ArrayList"),
 	} {
 		if !bytes.Contains(req.Content, needle) {
@@ -139,15 +135,14 @@ func TestBuildGenericRequest_NonKnownArgsStillUseCustomEncoder(t *testing.T) {
 	t.Parallel()
 
 	req, err := BuildGenericRequest(RequestSpec{
-		Service:    "com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade",
-		Method:     "queryPortfolioAvailableCash",
-		ParamTypes: []string{"com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest"},
+		Service:    "com.example.demo.ExampleFacade",
+		Method:     "query",
+		ParamTypes: []string{"com.example.demo.ExampleRequest"},
 		Args: []any{
 			map[string]any{
-				"@type":      "com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest",
-				"tradeDate":  "20260414",
-				"mpCode":     int64(1001),
-				"mpCodeList": []any{int64(1001)},
+				"@type": "com.example.demo.ExampleRequest",
+				"id":    int64(1001),
+				"items": []any{int64(1001)},
 			},
 		},
 	})
@@ -160,17 +155,40 @@ func TestBuildGenericRequest_NonKnownArgsStillUseCustomEncoder(t *testing.T) {
 	if req.Content[0] != 'O' {
 		t.Fatalf("content should start with custom object definition tag 'O', got 0x%02x", req.Content[0])
 	}
-	if !bytes.Contains(req.Content, []byte("queryPortfolioAvailableCash")) {
+	if !bytes.Contains(req.Content, []byte("query")) {
 		t.Fatal("content should contain method name")
 	}
 }
 
-func TestDecodeResponseMatchesKnownSuccessPayload(t *testing.T) {
+// TestDecodeResponse_RoundTripsSuccessEnvelope encodes a synthesized
+// SofaResponse via BuildSuccessResponse and asserts DecodeResponse
+// flattens it back into the expected typed-object tree. The fixture
+// is built at runtime so there is no golden hex to drift and no wire
+// bytes captured from a specific production service.
+func TestDecodeResponse_RoundTripsSuccessEnvelope(t *testing.T) {
 	t.Parallel()
 
-	content, err := hex.DecodeString(knownPortfolioAvailableCashResponseHex)
+	appResponse := NormalizeArgs([]any{
+		map[string]any{
+			"@type":   "com.example.demo.Result",
+			"success": true,
+			"message": "ok",
+			"data": map[string]any{
+				"@type": "com.example.demo.ExampleResponse",
+				"items": []any{
+					map[string]any{
+						"@type": "com.example.demo.ExampleItem",
+						"id":    int64(1001),
+						"code":  "ALPHA",
+					},
+				},
+			},
+		},
+	})[0]
+
+	content, err := BuildSuccessResponse(appResponse)
 	if err != nil {
-		t.Fatalf("DecodeString() error = %v", err)
+		t.Fatalf("BuildSuccessResponse() error = %v", err)
 	}
 
 	resp, err := DecodeResponse(content)
@@ -188,7 +206,7 @@ func TestDecodeResponseMatchesKnownSuccessPayload(t *testing.T) {
 	if !ok {
 		t.Fatalf("AppResponse type = %T", resp.AppResponse)
 	}
-	if got := app["type"]; got != "com.example.serviceapp.facade.model.OperationResult" {
+	if got := app["type"]; got != "com.example.demo.Result" {
 		t.Fatalf("app.type = %v", got)
 	}
 
@@ -199,7 +217,7 @@ func TestDecodeResponseMatchesKnownSuccessPayload(t *testing.T) {
 	if got, ok := appFields["success"].(bool); !ok || !got {
 		t.Fatalf("app.success = %#v", appFields["success"])
 	}
-	if got := appFields["message"]; got != "success" {
+	if got := appFields["message"]; got != "ok" {
 		t.Fatalf("app.message = %#v", got)
 	}
 
@@ -211,26 +229,30 @@ func TestDecodeResponseMatchesKnownSuccessPayload(t *testing.T) {
 	if !ok {
 		t.Fatalf("data.fields type = %T", data["fields"])
 	}
-	items, ok := dataFields["dailyHoldingInfos"].([]any)
+	itemsWrapper, ok := dataFields["items"].(map[string]any)
 	if !ok {
-		t.Fatalf("dailyHoldingInfos type = %T", dataFields["dailyHoldingInfos"])
+		t.Fatalf("items type = %T", dataFields["items"])
+	}
+	items, ok := itemsWrapper["items"].([]any)
+	if !ok {
+		t.Fatalf("items.items type = %T", itemsWrapper["items"])
 	}
 	if len(items) != 1 {
-		t.Fatalf("len(dailyHoldingInfos) = %d", len(items))
+		t.Fatalf("len(items) = %d", len(items))
 	}
 
-	holding, ok := items[0].(map[string]any)
+	item, ok := items[0].(map[string]any)
 	if !ok {
-		t.Fatalf("holding type = %T", items[0])
+		t.Fatalf("item type = %T", items[0])
 	}
-	holdingFields, ok := holding["fields"].(map[string]any)
+	itemFields, ok := item["fields"].(map[string]any)
 	if !ok {
-		t.Fatalf("holding.fields type = %T", holding["fields"])
+		t.Fatalf("item.fields type = %T", item["fields"])
 	}
-	if got := holdingFields["mpCode"]; got != int64(434153733362950144) {
-		t.Fatalf("holding.mpCode = %#v", got)
+	if got := itemFields["id"]; got != int64(1001) {
+		t.Fatalf("item.id = %#v", got)
 	}
-	if got := holdingFields["fundCode"]; got != "CASH" {
-		t.Fatalf("holding.fundCode = %#v", got)
+	if got := itemFields["code"]; got != "ALPHA" {
+		t.Fatalf("item.code = %#v", got)
 	}
 }

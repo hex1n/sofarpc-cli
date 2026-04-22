@@ -3,7 +3,6 @@ package invoke
 import (
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"io"
 	"net"
 	"testing"
@@ -13,8 +12,6 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
 )
-
-const knownDirectSuccessResponseHex = "4fbe636f6d2e616c697061792e736f66612e7270632e636f72652e726573706f6e73652e536f6661526573706f6e7365940769734572726f72086572726f724d73670b617070526573706f6e73650d726573706f6e736550726f70736f90464e4fc833636f6d2e746866756e642e73616c657366756e646d702e6661636164652e6d6f64656c2e4f7065726174696f6e526573756c7496077375636365737304636f6465076d6573736167650974696d657374616d700464617461086d657461646174616f9154e007737563636573734c0000019dae7234ef4fc847636f6d2e746866756e642e73616c657366756e646d702e6661636164652e6d6f64656c2e726573706f6e73652e73616c65732e4461696c79486f6c64696e67526573706f6e736591116461696c79486f6c64696e67496e666f736f92566e014fc843636f6d2e746866756e642e73616c657366756e646d702e6661636164652e6d6f64656c2e726573706f6e73652e73616c65732e4461696c79486f6c64696e67496e666f94066d70436f64650866756e64436f64650b686f6c64696e67446174650f686f6c64696e675175616e746974796f934c06066c852f02200004434153480832303236303431344fa46a6176612e6d6174682e426967446563696d616c910576616c75656f9406302e303030307a4d74001e6a6176612e7574696c2e436f6c6c656374696f6e7324456d7074794d61707a4e"
 
 func TestExecuteDirectIfPossible_UnsupportedTargetFallsThrough(t *testing.T) {
 	exec, err := ExecuteDirectIfPossible(context.Background(), Plan{
@@ -36,21 +33,31 @@ func TestExecuteDirectIfPossible_UnsupportedTargetFallsThrough(t *testing.T) {
 }
 
 func TestExecuteDirectIfPossible_RoundTrip(t *testing.T) {
-	directURL, stop := fakeDirectServer(t, knownDirectSuccessResponseHex)
+	appResponse := sofarpcwire.NormalizeArgs([]any{
+		map[string]any{
+			"@type":   "com.example.demo.Result",
+			"success": true,
+			"message": "ok",
+		},
+	})[0]
+	responseBytes, err := sofarpcwire.BuildSuccessResponse(appResponse)
+	if err != nil {
+		t.Fatalf("BuildSuccessResponse: %v", err)
+	}
+	directURL, stop := fakeDirectServer(t, responseBytes)
 	defer stop()
 
 	exec, err := ExecuteDirectIfPossible(context.Background(), Plan{
-		Service:       "com.thfund.salesfundmp.facade.sales.holdings.SalesDailyHoldingsFacade",
-		Method:        "queryPortfolioAvailableCash",
-		ParamTypes:    []string{"com.thfund.salesfundmp.facade.model.request.DailyHoldingsQueryRequest"},
+		Service:       "com.example.demo.ExampleFacade",
+		Method:        "query",
+		ParamTypes:    []string{"com.example.demo.ExampleRequest"},
 		Version:       "2.0",
-		TargetAppName: "salesfundmp",
+		TargetAppName: "demo-app",
 		Args: []any{
 			map[string]any{
-				"@type":      "com.thfund.salesfundmp.facade.model.request.DailyHoldingsQueryRequest",
-				"tradeDate":  "20260414",
-				"mpCode":     int64(434153733362950144),
-				"mpCodeList": []any{int64(434153733362950144)},
+				"@type": "com.example.demo.ExampleRequest",
+				"id":    int64(1001),
+				"items": []any{int64(1001)},
 			},
 		},
 		Target: target.Config{
@@ -67,7 +74,7 @@ func TestExecuteDirectIfPossible_RoundTrip(t *testing.T) {
 	if transport, _ := exec.Diagnostics["transport"].(string); transport != DirectTransportName {
 		t.Fatalf("transport: got %q want %q", transport, DirectTransportName)
 	}
-	if got, _ := exec.Diagnostics["targetServiceUniqueName"].(string); got != "com.thfund.salesfundmp.facade.sales.holdings.SalesDailyHoldingsFacade:2.0" {
+	if got, _ := exec.Diagnostics["targetServiceUniqueName"].(string); got != "com.example.demo.ExampleFacade:2.0" {
 		t.Fatalf("targetServiceUniqueName: got %q", got)
 	}
 	if got, _ := exec.Diagnostics["requestClass"].(string); got != sofarpcwire.RequestClass {
@@ -77,7 +84,7 @@ func TestExecuteDirectIfPossible_RoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("result type = %T", exec.Result)
 	}
-	if got := result["type"]; got != "com.thfund.salesfundmp.facade.model.OperationResult" {
+	if got := result["type"]; got != "com.example.demo.Result" {
 		t.Fatalf("result.type: got %#v", got)
 	}
 }
@@ -105,13 +112,8 @@ func TestExecuteDirectIfPossible_InvalidTargetReturnsErrcode(t *testing.T) {
 	}
 }
 
-func fakeDirectServer(t *testing.T, responseHex string) (string, func()) {
+func fakeDirectServer(t *testing.T, content []byte) (string, func()) {
 	t.Helper()
-
-	content, err := hex.DecodeString(responseHex)
-	if err != nil {
-		t.Fatalf("decode response hex: %v", err)
-	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
