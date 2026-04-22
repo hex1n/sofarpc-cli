@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/boltclient"
@@ -13,6 +14,24 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
 )
+
+// requestIDCounter serializes BOLT request IDs. Seeded from the process
+// start time so IDs don't restart at 1 on each run (useful for log
+// correlation) and are monotonic across concurrent invokes.
+var requestIDCounter atomic.Uint32
+
+func init() {
+	requestIDCounter.Store(uint32(time.Now().UnixNano()))
+}
+
+func nextRequestID() uint32 {
+	for {
+		id := requestIDCounter.Add(1)
+		if id != 0 {
+			return id
+		}
+	}
+}
 
 const DirectTransportName = "direct-bolt"
 
@@ -53,7 +72,7 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		Addr:      addr,
 		Codec:     boltclient.CodecHessian2,
 		Timeout:   timeout,
-		RequestID: uint32(time.Now().UnixNano()),
+		RequestID: nextRequestID(),
 	})
 	if err != nil {
 		return DirectExecution{Handled: true}, targetUnreachableError(phase,

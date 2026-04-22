@@ -38,7 +38,7 @@ func TestNormalizeArgsPromotesTypedObjectsAndSlices(t *testing.T) {
 		t.Fatalf("typeName = %v", got)
 	}
 
-	values, ok := arg.fields["longValues"].(*javaArraysArrayList)
+	values, ok := arg.fields["longValues"].(*javaArrayList)
 	if !ok {
 		t.Fatalf("longValues type = %T", arg.fields["longValues"])
 	}
@@ -99,7 +99,7 @@ func TestBuildGenericRequestMatchesJavaContent(t *testing.T) {
 		[]byte(RequestClass),
 		[]byte("com.example.serviceapp.facade.sales.holdings.SalesDailyHoldingsFacade:1.0"),
 		[]byte("com.example.serviceapp.facade.model.request.DailyHoldingsQueryRequest"),
-		[]byte("java.util.Arrays$ArrayList"),
+		[]byte("java.util.ArrayList"),
 	} {
 		if !bytes.Contains(req.Content, needle) {
 			t.Fatalf("content missing %q", needle)

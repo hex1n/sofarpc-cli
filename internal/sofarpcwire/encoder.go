@@ -135,10 +135,10 @@ func (w *hessianWriter) writeValue(value any) error {
 		return w.writeMap("java.util.LinkedHashMap", map[string]interface{}(typed))
 	case map[string]interface{}:
 		return w.writeMap("", typed)
-	case *javaArraysArrayList:
+	case *javaArrayList:
 		return w.writeTypedList(typed.JavaClassName(), typed.Get())
 	case []any:
-		return w.writeTypedList("java.util.Arrays$ArrayList", typed)
+		return w.writeTypedList("java.util.ArrayList", typed)
 	default:
 		return fmt.Errorf("unsupported hessian value type %T", value)
 	}

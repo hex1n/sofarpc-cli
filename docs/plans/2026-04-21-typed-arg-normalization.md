@@ -1,7 +1,9 @@
 ---
 title: Contract-Aware Argument Normalization
 date: 2026-04-21
-status: proposed
+status: implemented
+landedAt: 2026-04-22
+landedIn: internal/core/contract/normalize.go
 ---
 
 # Contract-Aware Argument Normalization
