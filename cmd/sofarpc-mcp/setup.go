@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,6 +13,15 @@ import (
 	"sort"
 	"strings"
 )
+
+// embeddedSkill is the sofarpc-invoke agent-facing playbook, baked into
+// the binary at compile time so a `go install` user who never clones
+// the repo can still install the skill via `sofarpc-mcp setup`. The
+// canonical source lives at cmd/sofarpc-mcp/skill/SKILL.md; the
+// repo-level .claude/skills/ entry is a symlink to that same file.
+//
+//go:embed skill/SKILL.md
+var embeddedSkill string
 
 // runSetup registers this sofarpc-mcp binary with Claude Code and Codex.
 // The shape of a registration is minimal on purpose: `command` points
@@ -31,6 +41,7 @@ func runSetup(args []string) error {
 		projectRoot  = flags.String("project-root", "", "optional default SOFARPC_PROJECT_ROOT")
 		directURL    = flags.String("direct-url", "", "optional default SOFARPC_DIRECT_URL")
 		registryAddr = flags.String("registry-address", "", "optional default SOFARPC_REGISTRY_ADDRESS")
+		installSkill = flags.Bool("install-skill", true, "also install the sofarpc-invoke skill under ~/.claude/skills and ~/.codex/skills")
 		dryRun       = flags.Bool("dry-run", false, "print the would-be changes without writing")
 	)
 	flags.Usage = func() {
@@ -59,11 +70,23 @@ func runSetup(args []string) error {
 		if err := setupClaudeAt(path, binary, envDefaults, *dryRun); err != nil {
 			return fmt.Errorf("claude-code: %w", err)
 		}
+		if *installSkill {
+			dir := filepath.Join(home, ".claude", "skills", "sofarpc-invoke")
+			if err := installSkillAt(dir, *dryRun); err != nil {
+				return fmt.Errorf("claude-code skill: %w", err)
+			}
+		}
 	}
 	if *codex || bothClients {
 		path := filepath.Join(home, ".codex", "config.toml")
 		if err := setupCodexAt(path, binary, envDefaults, *dryRun); err != nil {
 			return fmt.Errorf("codex: %w", err)
+		}
+		if *installSkill {
+			dir := filepath.Join(home, ".codex", "skills", "sofarpc-invoke")
+			if err := installSkillAt(dir, *dryRun); err != nil {
+				return fmt.Errorf("codex skill: %w", err)
+			}
 		}
 	}
 	return nil
@@ -277,4 +300,28 @@ func stringMapToAny(m map[string]string) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// installSkillAt writes the embedded SKILL.md into dir/SKILL.md via an
+// atomic temp+rename. Re-running replaces the file, so fixes to the
+// skill ship with a new binary + re-run of `setup`. The target
+// directory is created on demand; if MkdirAll fails we surface the
+// error rather than fall back, because a failure here usually means
+// the home dir layout is unusual and the user should see it.
+func installSkillAt(dir string, dryRun bool) error {
+	path := filepath.Join(dir, "SKILL.md")
+	body := []byte(embeddedSkill)
+
+	if dryRun {
+		fmt.Printf("[dry-run] skill %s (%d bytes)\n", path, len(body))
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := atomicWrite(path, body); err != nil {
+		return err
+	}
+	fmt.Printf("skill: installed sofarpc-invoke → %s\n", path)
+	return nil
 }

@@ -185,6 +185,55 @@ func TestSetupCodex_DryRunLeavesFileUntouched(t *testing.T) {
 	}
 }
 
+func TestInstallSkillAt_WritesEmbeddedContent(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sofarpc-invoke")
+	if err := installSkillAt(target, false); err != nil {
+		t.Fatalf("installSkillAt: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(target, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// The frontmatter anchor is the most stable line to pin; the
+	// embed directive failing at build time or the wrong file
+	// getting baked in would both break this.
+	if !strings.Contains(string(body), "name: sofarpc-invoke") {
+		t.Fatalf("skill frontmatter missing:\n%s", body)
+	}
+	if len(body) < 1000 {
+		t.Fatalf("skill body suspiciously small: %d bytes", len(body))
+	}
+}
+
+func TestInstallSkillAt_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sofarpc-invoke")
+	for i := 0; i < 2; i++ {
+		if err := installSkillAt(target, false); err != nil {
+			t.Fatalf("installSkillAt #%d: %v", i, err)
+		}
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "SKILL.md" {
+		t.Fatalf("unexpected dir contents: %#v", entries)
+	}
+}
+
+func TestInstallSkillAt_DryRunLeavesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sofarpc-invoke")
+	if err := installSkillAt(target, true); err != nil {
+		t.Fatalf("installSkillAt dry-run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created file: err=%v", err)
+	}
+}
+
 func TestBuildSetupEnv_OnlyIncludesProvidedKeys(t *testing.T) {
 	got := buildSetupEnv(" /root ", "", "zk://h:1")
 	if got["SOFARPC_PROJECT_ROOT"] != "/root" {
