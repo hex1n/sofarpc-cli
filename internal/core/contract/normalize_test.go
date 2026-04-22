@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -166,5 +167,175 @@ func TestNormalizeArgs_CollectionShapeMismatchFails(t *testing.T) {
 	}, NewInMemoryStore())
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// TestNormalizeArgs_Golden exercises the most common shape-coercion
+// paths as a single table so regressions surface as a focused diff. Each
+// row pins a specific contract behavior (generic erasure, @type
+// override, nested arrays, ...) — use the subtest name when triaging.
+func TestNormalizeArgs_Golden(t *testing.T) {
+	// Shared store covers every row. NewInMemoryStore only fills in
+	// classes the row actually references — unused types stay absent
+	// so we also exercise the unknown-type fallthrough paths.
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Key",
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "id", JavaType: "java.lang.Long"},
+				{Name: "tag", JavaType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.Leaf",
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "name", JavaType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.Mid",
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "leaves", JavaType: "java.util.List<com.foo.Leaf>"},
+			},
+		},
+		javamodel.Class{
+			FQN:        "com.foo.Sub",
+			Kind:       javamodel.KindClass,
+			Superclass: "com.foo.Mid",
+			Fields: []javamodel.Field{
+				{Name: "label", JavaType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:           "com.foo.Mood",
+			Kind:          javamodel.KindEnum,
+			EnumConstants: []string{"HAPPY", "SAD"},
+		},
+	)
+
+	cases := []struct {
+		name       string
+		paramTypes []string
+		args       []any
+		want       []any
+	}{
+		{
+			// Generic erasure: the declared paramType is raw java.util.List
+			// but the agent sends a structured element. Loose normalisation
+			// keeps the element as-is because there is no element spec.
+			name:       "raw_list_preserved",
+			paramTypes: []string{"java.util.List"},
+			args: []any{
+				[]any{map[string]any{"whatever": "goes"}},
+			},
+			want: []any{
+				[]any{map[string]any{"whatever": "goes"}},
+			},
+		},
+		{
+			// @type on the input overrides the declared paramType. The
+			// declared type is still the fallback for field lookup, but
+			// the emitted @type tracks what the agent asserted.
+			name:       "atype_overrides_declared",
+			paramTypes: []string{"com.foo.Mid"},
+			args: []any{
+				map[string]any{
+					"@type": "com.foo.Sub",
+					"label": "hi",
+					"leaves": []any{
+						map[string]any{"name": "one"},
+					},
+				},
+			},
+			want: []any{
+				map[string]any{
+					"@type": "com.foo.Sub",
+					"label": "hi",
+					"leaves": []any{
+						map[string]any{"@type": "com.foo.Leaf", "name": "one"},
+					},
+				},
+			},
+		},
+		{
+			// Map<String, ComplexKey>: keys stay as provided; values get
+			// the nested-object treatment (@type tag + recursive field
+			// normalisation).
+			name:       "map_with_complex_values",
+			paramTypes: []string{"java.util.Map<java.lang.String, com.foo.Key>"},
+			args: []any{
+				map[string]any{
+					"primary":   map[string]any{"id": "10", "tag": "p"},
+					"secondary": map[string]any{"id": 20.0, "tag": "s"},
+				},
+			},
+			want: []any{
+				map[string]any{
+					"primary":   map[string]any{"@type": "com.foo.Key", "id": int64(10), "tag": "p"},
+					"secondary": map[string]any{"@type": "com.foo.Key", "id": int64(20), "tag": "s"},
+				},
+			},
+		},
+		{
+			// Nested arrays: String[][] materialises as []any of []any,
+			// preserving the outer and inner ordering.
+			name:       "nested_string_arrays",
+			paramTypes: []string{"java.lang.String[][]"},
+			args: []any{
+				[]any{
+					[]any{"a", "b"},
+					[]any{"c"},
+				},
+			},
+			want: []any{
+				[]any{
+					[]any{"a", "b"},
+					[]any{"c"},
+				},
+			},
+		},
+		{
+			// Explicit nil inputs propagate through without triggering
+			// the object-shape guard.
+			name:       "null_field_preserved",
+			paramTypes: []string{"com.foo.Leaf"},
+			args: []any{
+				map[string]any{"name": nil},
+			},
+			want: []any{
+				map[string]any{"@type": "com.foo.Leaf", "name": nil},
+			},
+		},
+		{
+			// json.Number is the decoded shape when the MCP client uses
+			// UseNumber; we still narrow to int64 for java.lang.Long.
+			name:       "json_number_to_long",
+			paramTypes: []string{"java.lang.Long"},
+			args:       []any{json.Number("12345")},
+			want:       []any{int64(12345)},
+		},
+		{
+			// Enum values stay as strings — normalisation does not try
+			// to validate the constant name; that is the server's job.
+			name:       "enum_string_passthrough",
+			paramTypes: []string{"com.foo.Mood"},
+			args:       []any{"HAPPY"},
+			want:       []any{"HAPPY"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NormalizeArgs(tc.paramTypes, tc.args, store)
+			if err != nil {
+				t.Fatalf("NormalizeArgs: %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("mismatch\n got:  %#v\nwant: %#v", got, tc.want)
+			}
+		})
 	}
 }
