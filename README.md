@@ -39,6 +39,21 @@ Repo-local helper scripts:
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
+Register the binary with Claude Code and Codex in one shot. The entry
+is idempotent — re-running replaces only the sofarpc server, leaving
+unrelated MCP entries and top-level config keys untouched:
+
+```sh
+sofarpc-mcp setup                                         # both clients
+sofarpc-mcp setup --claude-code                           # Claude Code only
+sofarpc-mcp setup --codex                                 # Codex only
+sofarpc-mcp setup --dry-run --direct-url=bolt://host:12200  # preview
+```
+
+Optional flags (`--project-root`, `--direct-url`, `--registry-address`)
+bake per-machine defaults into the server entry; leave them off if you
+plan to pass `directUrl` at call time instead.
+
 ## Quick start
 
 Build:
