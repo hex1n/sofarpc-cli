@@ -2,11 +2,8 @@ package target
 
 import (
 	"fmt"
-	"net"
-	"net/url"
 	"sort"
 	"strings"
-	"time"
 )
 
 const (
@@ -84,14 +81,6 @@ type Report struct {
 	Layers  []Layer      `json:"layers,omitempty"`
 	Explain []string     `json:"explain,omitempty"`
 	Trace   []FieldTrace `json:"trace,omitempty"`
-}
-
-// ProbeResult is the cheap reachability check surfaced by sofarpc_target
-// and sofarpc_doctor.
-type ProbeResult struct {
-	Reachable bool   `json:"reachable"`
-	Target    string `json:"target,omitempty"`
-	Message   string `json:"message,omitempty"`
 }
 
 type fieldSpec struct {
@@ -184,31 +173,6 @@ func Resolve(input Input, sources Sources) Report {
 		report.Explain = buildExplain(report.Trace)
 	}
 	return report
-}
-
-// Probe performs a cheap TCP reachability check against the resolved
-// target. It does not speak SOFA/BOLT — the goal is only "can we open a
-// socket to the resolved endpoint within the configured timeout".
-func Probe(cfg Config) ProbeResult {
-	cfg = normalizeResolvedTarget(cfg)
-	addr, mode, err := probeAddress(cfg)
-	if err != nil {
-		return ProbeResult{
-			Target:  addr,
-			Message: err.Error(),
-		}
-	}
-
-	timeout := connectTimeout(cfg.ConnectTimeoutMS)
-	conn, err := net.DialTimeout("tcp", addr, timeout)
-	if err != nil {
-		return ProbeResult{
-			Target:  addr,
-			Message: fmt.Sprintf("%s dial failed: %v", mode, err),
-		}
-	}
-	_ = conn.Close()
-	return ProbeResult{Reachable: true, Target: addr}
 }
 
 func configFromInput(in Input) Config {
@@ -335,52 +299,3 @@ func parseTraceInt(raw string) int {
 	return value
 }
 
-func probeAddress(cfg Config) (string, string, error) {
-	switch cfg.Mode {
-	case ModeDirect:
-		addr, err := normalizeDialAddr(cfg.DirectURL)
-		if err != nil {
-			return "", cfg.Mode, fmt.Errorf("invalid directUrl: %w", err)
-		}
-		return addr, cfg.Mode, nil
-	case ModeRegistry:
-		addr, err := normalizeDialAddr(cfg.RegistryAddress)
-		if err != nil {
-			return "", cfg.Mode, fmt.Errorf("invalid registryAddress: %w", err)
-		}
-		return addr, cfg.Mode, nil
-	default:
-		return "", "", fmt.Errorf("target mode unresolved")
-	}
-}
-
-func normalizeDialAddr(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", fmt.Errorf("empty target")
-	}
-	if !strings.Contains(raw, "://") {
-		if _, _, err := net.SplitHostPort(raw); err != nil {
-			return "", err
-		}
-		return raw, nil
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return "", err
-	}
-	if parsed.Host == "" {
-		return "", fmt.Errorf("missing host:port")
-	}
-	if _, _, err := net.SplitHostPort(parsed.Host); err != nil {
-		return "", err
-	}
-	return parsed.Host, nil
-}
-
-func connectTimeout(timeoutMS int) time.Duration {
-	if timeoutMS <= 0 {
-		timeoutMS = defaultConnectTimeoutMS
-	}
-	return time.Duration(timeoutMS) * time.Millisecond
-}
