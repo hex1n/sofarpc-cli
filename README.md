@@ -135,17 +135,25 @@ export SOFARPC_ALLOW_INVOKE=true
 ```
 
 Use that only for development or test targets. For safer local setups,
-restrict callable services and bound `@file` inputs:
+restrict callable services, bound `@file` inputs, and cap how much plan data
+sessions retain for `sessionId` replay:
 
 ```sh
 export SOFARPC_ALLOWED_SERVICES=com.foo.UserFacade,com.foo.OrderFacade
 export SOFARPC_ARGS_FILE_ROOT=/abs/path/to/project
 export SOFARPC_ARGS_FILE_MAX_BYTES=1048576
+export SOFARPC_SESSION_PLAN_MAX_BYTES=1048576
 ```
 
 `@file` arguments are resolved inside `SOFARPC_ARGS_FILE_ROOT` when set,
 otherwise inside `SOFARPC_PROJECT_ROOT`. Files outside that root are
 rejected after symlink resolution. The default file-size limit is 1 MiB.
+
+`SOFARPC_SESSION_PLAN_MAX_BYTES` controls only in-memory session capture for
+`sofarpc_replay` by `sessionId`. When a plan is larger than this limit,
+`sofarpc_invoke` still returns the full plan and can still be replayed by
+passing that plan as `payload`; the plan is just not retained in the session.
+Set it to `0` to disable the captured-plan byte bound.
 
 On startup `sofarpc-mcp` scans `.java` files under `SOFARPC_PROJECT_ROOT`
 in a background goroutine so the first stdio response is not blocked
@@ -208,6 +216,9 @@ source.
 - `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later.
 - Real invocation requires `SOFARPC_ALLOW_INVOKE=true`; keep the default disabled
   when you only want planning, skeletons, and diagnostics.
+- If `sessionId` is provided, the plan is retained for session replay only when
+  its JSON size is at or below `SOFARPC_SESSION_PLAN_MAX_BYTES`; oversized plans
+  are still returned and can be replayed as a literal payload.
 
 When contract information is attached, facade-backed invoke automatically
 normalizes common Java shapes before the wire step:

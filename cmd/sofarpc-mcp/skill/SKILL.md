@@ -14,6 +14,7 @@ Driver for the six-tool `sofarpc-mcp` surface. The binary does one thing — **o
 - Target reachability: either `SOFARPC_DIRECT_URL` is on the server env, or the user supplies `directUrl` at invoke time.
 - Real network calls are disabled unless the server env has `SOFARPC_ALLOW_INVOKE=true`. `dryRun=true` always works and should be the default first step unless the user explicitly asks to send the request.
 - Prefer inline JSON `args`. Use `args: "@path"` only when the user supplied a file, the payload is too large to edit inline, or the same payload must be reused. `@file` must resolve inside `SOFARPC_ARGS_FILE_ROOT` when set, otherwise inside `SOFARPC_PROJECT_ROOT`; files outside that root or over `SOFARPC_ARGS_FILE_MAX_BYTES` (default 1 MiB) are rejected.
+- Session replay by `sessionId` retains only plans up to `SOFARPC_SESSION_PLAN_MAX_BYTES` (default 1 MiB). Oversized plans are still returned by `sofarpc_invoke`; replay them by passing the plan as a literal `payload`.
 
 If the user is on a brand-new checkout and these aren't set, do not guess — run `sofarpc_doctor` and fix in order.
 
@@ -29,7 +30,7 @@ If the user is on a brand-new checkout and these aren't set, do not guess — ru
 
 4. **Real `sofarpc_invoke`** — only after the plan looks correct and the user requested execution. If it is rejected because real invoke is disabled, report the exact `runtime.rejected` message and tell the user to set `SOFARPC_ALLOW_INVOKE=true` on the MCP server entry; do not retry.
 
-5. **`sofarpc_replay`** — for "run it again" or "try with the same args"; use the `sessionId` returned from a prior invoke. Don't rebuild args by hand for a re-run.
+5. **`sofarpc_replay`** — for "run it again" or "try with the same args"; use the `sessionId` returned from a prior invoke when the plan was captured. If `diagnostics.sessionPlanCapture.reason == "plan-too-large"`, replay with the returned plan as `payload` instead.
 
 6. **`sofarpc_doctor`** — run this **before** guessing when `invoke` fails with anything other than a user-code error.
 
@@ -72,6 +73,8 @@ In trusted mode the caller owns the exact payload shape; `@type` tags are requir
 - `dryRun: true` — return the built plan without sending a BOLT request; use this when the user asks "what would this call look like"
 
 Dry-run plans include `schemaVersion`. The current replayable schema is `sofarpc.invoke.plan/v1`.
+
+If `sessionId` is present, the server also tries to capture the plan in memory for `sofarpc_replay` by session id. Plans larger than `SOFARPC_SESSION_PLAN_MAX_BYTES` are not retained; the invoke still succeeds and returns the full plan. In that case use literal `payload` replay.
 
 **Real invoke guardrails**:
 
@@ -125,9 +128,10 @@ Do not prompt the user to fix something `sofarpc_doctor` has not yet diagnosed �
 
 When the user says "run it again" or "try with X changed":
 
-- Same payload: `sofarpc_replay` with the `sessionId`. No args in the body.
+- Same payload: `sofarpc_replay` with the `sessionId` only when the prior invoke captured the plan. No args in the body.
 - Changed subset: first call `sofarpc_replay` with `{"sessionId":"...","dryRun":true}` to retrieve the captured plan. Modify the full `payload` and send it back to `sofarpc_replay` — **not** a new `sofarpc_invoke` (replay skips plan building, so diagnostics line up with the first call).
 - Payload replay requires `schemaVersion: "sofarpc.invoke.plan/v1"`. If replay returns `replay.plan-version-unsupported`, do not patch the version by hand; re-run `sofarpc_invoke` with `dryRun=true` and replay that fresh plan.
+- If invoke returns `diagnostics.sessionPlanCapture.reason == "plan-too-large"`, session replay by id will not have a captured plan. Use the returned `plan` as literal `payload`.
 
 ## Anti-patterns
 
@@ -145,6 +149,6 @@ After a successful invoke, show:
 
 1. `result` (the decoded SofaResponse body) — truncate large fields, tell the user you're truncating
 2. `diagnostics.requestId`, `diagnostics.dialTarget`, and `diagnostics.responseStatus` — the line they'll want to grep logs with
-3. The `sessionId` — so they know what `sofarpc_replay` will target
+3. The `sessionId` — so they know what `sofarpc_replay` will target. If `diagnostics.sessionPlanCapture.reason == "plan-too-large"`, tell the user to replay with the returned plan payload instead of session id.
 
 On failure, lead with `code` and `message`, then the `hint.nextTool` if present. The agent's job is to execute the hint, not editorialize on it.

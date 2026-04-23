@@ -3,6 +3,11 @@ package mcp
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +25,24 @@ const (
 	// defaultSessionCap caps concurrent sessions. Typical agent usage keeps
 	// one or two open workspaces; 256 leaves a wide runway before LRU bites.
 	defaultSessionCap = 256
+
+	// defaultSessionPlanMaxBytes caps how much captured invoke plan data a
+	// session may retain for sessionId replay. It does not truncate or
+	// redact the plan returned to the caller; it only bounds in-memory
+	// session retention.
+	defaultSessionPlanMaxBytes = int64(1 << 20)
+	envSessionPlanMaxBytes     = "SOFARPC_SESSION_PLAN_MAX_BYTES"
 )
+
+// PlanCaptureResult reports whether an invoke plan was attached to a session
+// for sessionId replay. Failed capture is advisory: invoke/dry-run can still
+// return the full plan to the caller, and payload replay remains available.
+type PlanCaptureResult struct {
+	Captured  bool   `json:"captured"`
+	Reason    string `json:"reason,omitempty"`
+	PlanBytes int64  `json:"planBytes,omitempty"`
+	MaxBytes  int64  `json:"maxBytes,omitempty"`
+}
 
 // Session is a per-workspace snapshot the agent can refer back to by ID
 // in subsequent calls, so it does not have to re-specify project/context
@@ -44,7 +66,7 @@ type Session struct {
 // SessionStore is a bounded in-memory registry keyed by session ID.
 //
 // GC runs on-write (Create / UpdatePlan) — no background goroutine, so
-// there is no Stop() lifecycle to manage. Two dimensions bound memory:
+// there is no Stop() lifecycle to manage. Three dimensions bound memory:
 //
 //   - Idle TTL: sessions whose lastUsed is older than ttl are dropped
 //     on the next write. Bumped by Get and UpdatePlan so active
@@ -52,19 +74,25 @@ type Session struct {
 //   - Capacity: when len reaches cap, the LRU entry is evicted to make
 //     room. A zero ttl or cap disables that dimension (unbounded growth
 //     in tests only).
+//   - Captured plan bytes: sessionId replay keeps only plans whose JSON
+//     representation is at or below maxPlanBytes. A zero max disables
+//     the captured-plan byte bound.
 //
 // Safe for concurrent use.
 type SessionStore struct {
-	ttl   time.Duration
-	cap   int
-	clock func() time.Time
-	newID func() string
+	ttl          time.Duration
+	cap          int
+	maxPlanBytes int64
+	clock        func() time.Time
+	newID        func() string
 
 	mu       sync.Mutex
 	sessions map[string]Session
 }
 
-// NewSessionStore returns a store with default TTL (24h) and capacity (256).
+// NewSessionStore returns a store with default TTL (24h), capacity (256),
+// and captured-plan byte limit. SOFARPC_SESSION_PLAN_MAX_BYTES overrides the
+// captured-plan byte limit; set it to 0 to disable that bound.
 func NewSessionStore() *SessionStore {
 	return NewSessionStoreWithLimits(defaultSessionTTL, defaultSessionCap)
 }
@@ -75,11 +103,12 @@ func NewSessionStore() *SessionStore {
 // callers that need to tune the bounds.
 func NewSessionStoreWithLimits(ttl time.Duration, capacity int) *SessionStore {
 	return &SessionStore{
-		ttl:      ttl,
-		cap:      capacity,
-		clock:    time.Now,
-		newID:    randomSessionID,
-		sessions: map[string]Session{},
+		ttl:          ttl,
+		cap:          capacity,
+		maxPlanBytes: sessionPlanMaxBytesFromEnv(),
+		clock:        time.Now,
+		newID:        randomSessionID,
+		sessions:     map[string]Session{},
 	}
 }
 
@@ -97,6 +126,18 @@ func (s *SessionStore) WithClock(fn func() time.Time) *SessionStore {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clock = fn
+	return s
+}
+
+// WithMaxPlanBytes swaps the captured-plan byte limit. A zero value disables
+// the byte bound. Production callers should prefer SOFARPC_SESSION_PLAN_MAX_BYTES.
+func (s *SessionStore) WithMaxPlanBytes(maxBytes int64) *SessionStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if maxBytes < 0 {
+		maxBytes = defaultSessionPlanMaxBytes
+	}
+	s.maxPlanBytes = maxBytes
 	return s
 }
 
@@ -132,26 +173,55 @@ func (s *SessionStore) Get(id string) (Session, bool) {
 	return session, true
 }
 
-// UpdatePlan attaches the most recent invoke plan to a session so that
-// sofarpc_replay can replay it by sessionId. It is a no-op (returning
-// false) when the session does not exist — callers treat replay capture
-// as advisory and should not fail the invoke on this. Also bumps the
-// LRU timestamp since a plan write is a clear "session is alive" signal.
-func (s *SessionStore) UpdatePlan(id string, plan invoke.Plan) bool {
+// CapturePlan attaches the most recent invoke plan to a session so that
+// sofarpc_replay can replay it by sessionId. Oversized plans are not stored,
+// but the session is still treated as active and the caller can replay by
+// passing the returned dry-run plan as payload.
+func (s *SessionStore) CapturePlan(id string, plan invoke.Plan) PlanCaptureResult {
 	if id == "" {
-		return false
+		return PlanCaptureResult{Captured: false, Reason: "empty-session-id"}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	session, ok := s.sessions[id]
 	if !ok {
-		return false
+		return PlanCaptureResult{Captured: false, Reason: "session-not-found"}
 	}
+
+	planBytes, err := planSizeBytes(plan)
+	if err != nil {
+		session.lastUsed = s.clock().UTC()
+		s.sessions[id] = session
+		return PlanCaptureResult{Captured: false, Reason: "plan-size-unavailable"}
+	}
+	if s.maxPlanBytes > 0 && planBytes > s.maxPlanBytes {
+		session.LastPlan = nil
+		session.lastUsed = s.clock().UTC()
+		s.sessions[id] = session
+		return PlanCaptureResult{
+			Captured:  false,
+			Reason:    "plan-too-large",
+			PlanBytes: planBytes,
+			MaxBytes:  s.maxPlanBytes,
+		}
+	}
+
 	clone := plan
 	session.LastPlan = &clone
 	session.lastUsed = s.clock().UTC()
 	s.sessions[id] = session
-	return true
+	return PlanCaptureResult{Captured: true, Reason: "captured", PlanBytes: planBytes, MaxBytes: s.maxPlanBytes}
+}
+
+// UpdatePlan attaches the most recent invoke plan to a session so that
+// sofarpc_replay can replay it by sessionId. It is a no-op (returning
+// false) when the session does not exist or the plan exceeds the captured-plan
+// byte limit — callers treat replay capture as advisory and should not fail
+// the invoke on this. Also bumps the LRU timestamp since a plan write attempt
+// is a clear "session is alive" signal.
+func (s *SessionStore) UpdatePlan(id string, plan invoke.Plan) bool {
+	return s.CapturePlan(id, plan).Captured
 }
 
 // Size returns the number of live sessions. Useful for diagnostics and
@@ -169,6 +239,14 @@ func (s *SessionStore) Cap() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cap
+}
+
+// MaxPlanBytes returns the configured captured-plan byte limit. Zero means
+// unbounded.
+func (s *SessionStore) MaxPlanBytes() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxPlanBytes
 }
 
 // sweepExpiredLocked drops every session whose lastUsed is older than
@@ -216,4 +294,24 @@ func randomSessionID() string {
 		return "ws_" + hex.EncodeToString([]byte(time.Now().UTC().Format("20060102150405.000000000")))
 	}
 	return "ws_" + hex.EncodeToString(buf[:])
+}
+
+func sessionPlanMaxBytesFromEnv() int64 {
+	raw := strings.TrimSpace(os.Getenv(envSessionPlanMaxBytes))
+	if raw == "" {
+		return defaultSessionPlanMaxBytes
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 0 {
+		return defaultSessionPlanMaxBytes
+	}
+	return value
+}
+
+func planSizeBytes(plan invoke.Plan) (int64, error) {
+	body, err := json.Marshal(plan)
+	if err != nil {
+		return 0, fmt.Errorf("marshal plan: %w", err)
+	}
+	return int64(len(body)), nil
 }
