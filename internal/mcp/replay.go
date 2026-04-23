@@ -32,7 +32,7 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 	}
 	server.AddTool(&sdkmcp.Tool{
 		Name:        "sofarpc_replay",
-		Description: "Replay a captured invocation. Accepts a payload from sofarpc_invoke's dryRun output, or a sessionId to look up a captured plan.",
+		Description: "Replay a captured invocation. Accepts a payload from sofarpc_invoke's dryRun output, or a sessionId to look up a captured plan. Replay requires a supported plan schemaVersion.",
 		InputSchema: inputSchema,
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 		in, payload, err := decodeReplayInput(req)
@@ -132,6 +132,9 @@ func planFromSession(id string, sessions *SessionStore) (*invoke.Plan, string, e
 			WithHint("sofarpc_invoke", map[string]any{"sessionId": id, "dryRun": true},
 				"run invoke with this sessionId to capture a plan")
 	}
+	if err := validateReplayPlan(*session.LastPlan); err != nil {
+		return nil, "", err
+	}
 	return session.LastPlan, "session", nil
 }
 
@@ -145,19 +148,29 @@ func planFromPayload(payload json.RawMessage) (*invoke.Plan, error) {
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
 				"produce a plan with invoke dryRun and pass it verbatim")
 	}
+	if err := validateReplayPlan(plan); err != nil {
+		return nil, err
+	}
+	return &plan, nil
+}
+
+func validateReplayPlan(plan invoke.Plan) error {
+	if err := invoke.ValidatePlanSchema(plan, "replay"); err != nil {
+		return err
+	}
 	if plan.Service == "" || plan.Method == "" {
-		return nil, errcode.New(errcode.ArgsInvalid, "replay",
+		return errcode.New(errcode.ArgsInvalid, "replay",
 			"payload is missing service or method").
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
 				"use invoke dryRun to get a valid plan shape")
 	}
 	if plan.Target.Mode == "" {
-		return nil, errcode.New(errcode.TargetMissing, "replay",
+		return errcode.New(errcode.TargetMissing, "replay",
 			"payload has no target mode").
 			WithHint("sofarpc_target", map[string]any{"explain": true},
 				"resolve the target and re-plan")
 	}
-	return &plan, nil
+	return nil
 }
 
 func summarizeReplay(plan *invoke.Plan, source string, dryRun bool) string {
