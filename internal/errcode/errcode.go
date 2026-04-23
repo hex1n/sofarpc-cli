@@ -13,7 +13,9 @@ type Code string
 const (
 	// Input / configuration errors.
 	TargetMissing        Code = "target.missing"
+	TargetInvalid        Code = "target.invalid"
 	TargetUnreachable    Code = "target.unreachable"
+	TargetConnectFailed  Code = "target.connect-failed"
 	ServiceMissing       Code = "input.service-missing"
 	MethodMissing        Code = "input.method-missing"
 	ArgsInvalid          Code = "input.args-invalid"
@@ -25,8 +27,10 @@ const (
 	FacadeNotConfigured Code = "workspace.facade-not-configured"
 
 	// Runtime / invoke errors.
+	SerializeFailed    Code = "runtime.serialize-failed"
 	DeserializeFailed  Code = "runtime.deserialize-failed"
 	InvocationTimeout  Code = "runtime.timeout"
+	ProtocolFailed     Code = "runtime.protocol-failed"
 	InvocationRejected Code = "runtime.rejected"
 )
 
