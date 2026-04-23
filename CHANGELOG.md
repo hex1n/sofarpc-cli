@@ -16,6 +16,8 @@ All notable changes to this project are recorded here.
 - Added `SOFARPC_SESSION_PLAN_MAX_BYTES` to bound how much plan data sessions retain for `sessionId` replay.
 - Added diagnostics for skipped session plan capture when a plan exceeds the session capture limit.
 - Added doctor visibility into session count, capacity, and session plan capture limit.
+- Added optional `e2e` build-tagged direct BOLT/Hessian2 smoke test covering the real `invoke.Execute -> sofarpcwire -> boltclient` path.
+- Added a manual GitHub Actions `e2e` workflow for optional smoke validation.
 
 ### Changed
 
