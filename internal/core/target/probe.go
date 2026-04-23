@@ -3,7 +3,6 @@ package target
 import (
 	"fmt"
 	"net"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -59,70 +58,12 @@ func inferProbeMode(cfg Config) Config {
 func dialTarget(cfg Config) (string, error) {
 	switch cfg.Mode {
 	case ModeDirect:
-		return parseBoltAddress(cfg.DirectURL)
+		return ParseDirectDialAddress(cfg.DirectURL)
 	case ModeRegistry:
-		return parseRegistryAddress(cfg.RegistryAddress)
+		return ParseRegistryDialAddress(cfg.RegistryAddress)
 	case "":
 		return "", fmt.Errorf("target mode not resolved")
 	default:
 		return "", fmt.Errorf("unknown target mode %q", cfg.Mode)
 	}
-}
-
-// parseBoltAddress accepts `bolt://host:port`, `host:port`, `host` and
-// returns `host:port` (defaulting the port to 12200 — SOFARPC's well-known
-// default — when missing).
-func parseBoltAddress(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", fmt.Errorf("directUrl is empty")
-	}
-	if strings.Contains(raw, "://") {
-		parsed, err := url.Parse(raw)
-		if err != nil {
-			return "", fmt.Errorf("parse directUrl: %w", err)
-		}
-		if parsed.Host == "" {
-			return "", fmt.Errorf("directUrl has no host: %q", raw)
-		}
-		return ensurePort(parsed.Host, "12200"), nil
-	}
-	return ensurePort(raw, "12200"), nil
-}
-
-func parseRegistryAddress(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", fmt.Errorf("registryAddress is empty")
-	}
-	if strings.Contains(raw, "://") {
-		parsed, err := url.Parse(raw)
-		if err != nil {
-			return "", fmt.Errorf("parse registryAddress: %w", err)
-		}
-		if parsed.Host == "" {
-			return "", fmt.Errorf("registryAddress has no host: %q", raw)
-		}
-		return ensurePort(parsed.Host, "2181"), nil
-	}
-	return ensurePort(raw, "2181"), nil
-}
-
-// ensurePort attaches defaultPort when host has no explicit port. It
-// handles IPv6 literals via net.SplitHostPort heuristics.
-func ensurePort(host, defaultPort string) string {
-	if host == "" {
-		return host
-	}
-	if strings.HasPrefix(host, "[") {
-		// IPv6 literal — trust the caller, but add port if missing.
-		if strings.Contains(host, "]:") {
-			return host
-		}
-		return host + ":" + defaultPort
-	}
-	if _, _, err := net.SplitHostPort(host); err == nil {
-		return host
-	}
-	return host + ":" + defaultPort
 }
