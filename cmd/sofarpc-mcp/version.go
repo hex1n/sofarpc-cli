@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 )
 
@@ -25,19 +26,34 @@ type versionInfo struct {
 }
 
 func buildVersion() string {
-	if strings.TrimSpace(version) == "" {
-		return "dev"
+	trimmed := strings.TrimSpace(version)
+	if trimmed != "" && trimmed != "dev" {
+		return trimmed
 	}
-	return strings.TrimSpace(version)
+	if info, ok := debug.ReadBuildInfo(); ok {
+		mainVersion := strings.TrimSpace(info.Main.Version)
+		if mainVersion != "" && mainVersion != "(devel)" {
+			return mainVersion
+		}
+	}
+	return "dev"
 }
 
 func currentVersionInfo() versionInfo {
 	return versionInfo{
 		Name:    "sofarpc-mcp",
 		Version: buildVersion(),
-		Commit:  strings.TrimSpace(commit),
-		Date:    strings.TrimSpace(date),
+		Commit:  normalizeBuildField(commit),
+		Date:    normalizeBuildField(date),
 	}
+}
+
+func normalizeBuildField(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "unknown"
+	}
+	return raw
 }
 
 func runVersion(w io.Writer, args []string) error {
