@@ -29,6 +29,15 @@ Fresh machine, no Java runtime required:
 go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@latest
 ```
 
+For repeatable installs, prefer a released tag once one exists:
+
+```sh
+go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@v0.1.0
+```
+
+Use `@latest` only when you intentionally want the newest commit on the default
+branch.
+
 Repo-local helper scripts:
 
 ```sh
@@ -73,6 +82,26 @@ without `setup`, and editing client config by hand.
 
 ```sh
 go build -o bin/sofarpc-mcp ./cmd/sofarpc-mcp
+```
+
+Release builds can inject version metadata:
+
+```sh
+VERSION=$(git describe --tags --always --dirty)
+COMMIT=$(git rev-parse --short HEAD)
+DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+go build \
+  -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+  -o bin/sofarpc-mcp \
+  ./cmd/sofarpc-mcp
+```
+
+Inspect the installed binary:
+
+```sh
+sofarpc-mcp version
+sofarpc-mcp version -json
 ```
 
 ### Run without client config
@@ -230,6 +259,15 @@ In this mode the plan is marked `contractSource: "trusted"`. No overload
 disambiguation, automatic type normalization, or skeleton generation happens.
 If the remote side needs `@type`, `BigDecimal`, or other Java-specific payload
 shapes, the caller must send them explicitly.
+
+## Release checklist
+
+1. Confirm CI is green on `main`.
+2. Update `CHANGELOG.md`.
+3. Create a version tag such as `v0.1.0`.
+4. Build with version metadata injected through `-ldflags`.
+5. Verify `sofarpc-mcp version` and `sofarpc-mcp version -json`.
+6. Install from the tag with `go install ...@v0.1.0`.
 
 ## Repo layout
 
