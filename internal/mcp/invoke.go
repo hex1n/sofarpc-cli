@@ -79,30 +79,28 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			return invokeToolResult(out, errorText("invoke failed", err), true), nil
 		}
 
-		if sessions != nil && decoded.SessionID != "" {
-			sessions.UpdatePlan(decoded.SessionID, plan)
-		}
+		capture := capturePlanForSession(sessions, decoded.SessionID, plan)
 
 		if decoded.DryRun {
-			out := InvokeOutput{Ok: true, Plan: &plan}
+			out := InvokeOutput{Ok: true, Plan: &plan, Diagnostics: diagnosticsWithCapture(nil, capture)}
 			return invokeToolResult(out, summarizeInvokePlan(plan, true), false), nil
 		}
 
 		if err := validateRealInvoke(plan.Service); err != nil {
-			out := InvokeOutput{Plan: &plan, Error: asErrcodeError(err)}
+			out := InvokeOutput{Plan: &plan, Diagnostics: diagnosticsWithCapture(nil, capture), Error: asErrcodeError(err)}
 			return invokeToolResult(out, errorText("invoke rejected", err), true), nil
 		}
 
 		outcome, execErr := invoke.Execute(ctx, plan, "invoke")
 		if execErr != nil {
-			out := InvokeOutput{Plan: &plan, Diagnostics: outcome.Diagnostics, Error: asErrcodeError(execErr)}
+			out := InvokeOutput{Plan: &plan, Diagnostics: diagnosticsWithCapture(outcome.Diagnostics, capture), Error: asErrcodeError(execErr)}
 			return invokeToolResult(out, errorText("invoke failed", execErr), true), nil
 		}
 		out := InvokeOutput{
 			Ok:          true,
 			Plan:        &plan,
 			Result:      outcome.Result,
-			Diagnostics: outcome.Diagnostics,
+			Diagnostics: diagnosticsWithCapture(outcome.Diagnostics, capture),
 		}
 		return invokeToolResult(out, summarizeInvokePlan(plan, false), false), nil
 	})
@@ -341,6 +339,26 @@ func serviceAllowed(service string) bool {
 		}
 	}
 	return false
+}
+
+func capturePlanForSession(sessions *SessionStore, sessionID string, plan invoke.Plan) *PlanCaptureResult {
+	if sessions == nil || sessionID == "" {
+		return nil
+	}
+	capture := sessions.CapturePlan(sessionID, plan)
+	return &capture
+}
+
+func diagnosticsWithCapture(base map[string]any, capture *PlanCaptureResult) map[string]any {
+	if capture == nil || capture.Captured {
+		return base
+	}
+	out := map[string]any{}
+	for k, v := range base {
+		out[k] = v
+	}
+	out["sessionPlanCapture"] = capture
+	return out
 }
 
 // describeHintArgs builds the NextArgs payload for a describe hint. We
