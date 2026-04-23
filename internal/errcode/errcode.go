@@ -26,6 +26,9 @@ const (
 	// Workspace / project errors.
 	FacadeNotConfigured Code = "workspace.facade-not-configured"
 
+	// Replay / captured plan errors.
+	PlanVersionUnsupported Code = "replay.plan-version-unsupported"
+
 	// Runtime / invoke errors.
 	SerializeFailed    Code = "runtime.serialize-failed"
 	DeserializeFailed  Code = "runtime.deserialize-failed"
