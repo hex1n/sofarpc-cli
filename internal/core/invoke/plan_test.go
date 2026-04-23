@@ -100,6 +100,34 @@ func TestBuildPlan_UserArgsPassThrough(t *testing.T) {
 	}
 }
 
+func TestBuildPlan_SingleArgBareValuePassThrough(t *testing.T) {
+	facade := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
+			},
+		},
+	)
+	plan, err := BuildPlan(
+		Input{
+			Service: "com.foo.Svc",
+			Method:  "doThing",
+			Args:    "hello",
+			Target:  target.Input{DirectURL: "bolt://h:1"},
+		},
+		facade,
+		target.Sources{},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if got := plan.Args[0]; got != "hello" {
+		t.Fatalf("user args should pass through, got %v", got)
+	}
+}
+
 func TestBuildPlan_NormalizesFacadeBackedArgs(t *testing.T) {
 	facade := contract.NewInMemoryStore(
 		javamodel.Class{
@@ -246,6 +274,26 @@ func TestBuildPlan_TrustedMode_HappyPath(t *testing.T) {
 	}
 	if len(plan.Overloads) != 0 {
 		t.Fatalf("overloads should be empty in trusted mode, got %d", len(plan.Overloads))
+	}
+}
+
+func TestBuildPlan_TrustedMode_SingleArgBareValue(t *testing.T) {
+	plan, err := BuildPlan(
+		Input{
+			Service:    "com.foo.Svc",
+			Method:     "doThing",
+			ParamTypes: []string{"java.lang.String"},
+			Args:       "hello",
+			Target:     target.Input{DirectURL: "bolt://h:1"},
+		},
+		nil,
+		target.Sources{},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if got := plan.Args[0]; got != "hello" {
+		t.Fatalf("args[0]: got %v want hello", got)
 	}
 }
 

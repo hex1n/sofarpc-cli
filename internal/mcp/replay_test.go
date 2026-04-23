@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -183,6 +184,41 @@ func TestReplay_PayloadMissingTargetModeIsTargetMissing(t *testing.T) {
 	}
 }
 
+func TestReplay_DecodePayloadPreservesLargeLongString(t *testing.T) {
+	in, payload, err := decodeReplayInput(&sdkmcp.CallToolRequest{
+		Params: &sdkmcp.CallToolParamsRaw{
+			Arguments: json.RawMessage(`{
+				"dryRun": true,
+				"payload": {
+					"service": "com.foo.Svc",
+					"method": "doThing",
+					"paramTypes": ["com.foo.Req"],
+					"args": [{"id":"434153733362950144"}],
+					"target": {"mode":"direct","directUrl":"bolt://h:1"},
+					"argSource": "user"
+				}
+			}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("decodeReplayInput: %v", err)
+	}
+	if !in.DryRun {
+		t.Fatalf("dryRun: got false")
+	}
+	plan, err := planFromPayload(payload)
+	if err != nil {
+		t.Fatalf("planFromPayload: %v", err)
+	}
+	arg, ok := plan.Args[0].(map[string]any)
+	if !ok {
+		t.Fatalf("arg type: %T", plan.Args[0])
+	}
+	if got, _ := arg["id"].(string); got != "434153733362950144" {
+		t.Fatalf("id: got %#v", arg["id"])
+	}
+}
+
 func samplePlan() invoke.Plan {
 	return invoke.Plan{
 		Service:    "com.foo.Svc",
@@ -208,6 +244,15 @@ func sampleRegistryPlan() invoke.Plan {
 
 func callReplay(t *testing.T, opts Options, args map[string]any) ReplayOutput {
 	t.Helper()
+	body, err := json.Marshal(args)
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	return callReplayRaw(t, opts, body)
+}
+
+func callReplayRaw(t *testing.T, opts Options, raw json.RawMessage) ReplayOutput {
+	t.Helper()
 	server := New(opts)
 	ctx := context.Background()
 	client := connect(t, ctx, server)
@@ -215,7 +260,7 @@ func callReplay(t *testing.T, opts Options, args map[string]any) ReplayOutput {
 
 	result, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
 		Name:      "sofarpc_replay",
-		Arguments: args,
+		Arguments: raw,
 	})
 	if err != nil {
 		t.Fatalf("call replay: %v", err)
@@ -225,7 +270,9 @@ func callReplay(t *testing.T, opts Options, args map[string]any) ReplayOutput {
 		t.Fatalf("marshal structured: %v", err)
 	}
 	var out ReplayOutput
-	if err := json.Unmarshal(body, &out); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&out); err != nil {
 		t.Fatalf("unmarshal structured: %v", err)
 	}
 	return out
