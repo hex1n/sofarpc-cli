@@ -21,14 +21,24 @@ import (
 func main() {
 	// One subcommand, "setup", registers this binary in Claude Code and
 	// Codex config so a freshly-installed sofarpc-mcp is reachable from
-	// both clients without hand-editing JSON/TOML. Everything else falls
-	// through to the MCP stdio server — that is the binary's job.
-	if len(os.Args) >= 2 && os.Args[1] == "setup" {
-		if err := runSetup(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+	// both clients without hand-editing JSON/TOML. "version" / --version
+	// are side-effect-free inspection paths. Everything else falls through
+	// to the MCP stdio server — that is the binary's job.
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "setup":
+			if err := runSetup(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "version", "--version", "-v":
+			if err := runVersion(os.Stdout, os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -42,6 +52,7 @@ func run(ctx context.Context) error {
 	projectRoot := projectRootFromEnv()
 	server := mcpserver.New(mcpserver.Options{
 		TargetSources: target.Sources{Env: envConfig(), ProjectRoot: projectRoot},
+		ServerVersion: buildVersion(),
 		// Guard against the typed-nil-in-interface pitfall: when
 		// loadContractStore returns a nil *sourcecontract.Store, wrap it
 		// as an untyped nil contract.Store so holder readers see "no

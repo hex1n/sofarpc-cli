@@ -5,19 +5,25 @@
 package mcp
 
 import (
+	"strings"
+
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
-	serverName    = "sofarpc-mcp"
-	serverVersion = "0.0.0-dev"
+	serverName           = "sofarpc-mcp"
+	defaultServerVersion = "0.0.0-dev"
 )
 
 // Options carries the ambient state the handlers need. The entrypoint
 // (cmd/sofarpc-mcp) fills this from SOFARPC_* env — the server itself
 // does no I/O at construction.
+//
+// ServerVersion, when set, is surfaced through the MCP implementation
+// metadata. Release builds should pass the same value printed by the
+// CLI version command.
 //
 // ContractLoadError, when non-nil, signals that the entrypoint tried to
 // materialize a contract store but failed. Handlers surface it in
@@ -31,6 +37,7 @@ const (
 // the sync Contract fields are used as-is.
 type Options struct {
 	TargetSources     target.Sources
+	ServerVersion     string
 	Sessions          *SessionStore
 	Contract          contract.Store
 	ContractLoadError error
@@ -45,7 +52,7 @@ func New(opts Options) *sdkmcp.Server {
 	holder := newContractHolder(opts.Contract, loadErrorMessage(opts.ContractLoadError))
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{
 		Name:    serverName,
-		Version: serverVersion,
+		Version: normalizeServerVersion(opts.ServerVersion),
 	}, nil)
 	if opts.ContractLoader != nil {
 		go func() {
@@ -60,6 +67,14 @@ func New(opts Options) *sdkmcp.Server {
 	registerReplay(server, opts)
 	registerDoctor(server, opts, holder)
 	return server
+}
+
+func normalizeServerVersion(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return defaultServerVersion
+	}
+	return version
 }
 
 // loadErrorMessage keeps the contract-banner surface free of raw error
