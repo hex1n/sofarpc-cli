@@ -71,6 +71,8 @@ In trusted mode the caller owns the exact payload shape; `@type` tags are requir
 - `timeoutMs` — bump for slow methods
 - `dryRun: true` — return the built plan without sending a BOLT request; use this when the user asks "what would this call look like"
 
+Dry-run plans include `schemaVersion`. The current replayable schema is `sofarpc.invoke.plan/v1`.
+
 **Real invoke guardrails**:
 
 - Non-dry-run calls require `SOFARPC_ALLOW_INVOKE=true` in the MCP server env.
@@ -110,6 +112,7 @@ Common codes and the expected response:
 | `target.connect-failed` | direct invoke could not connect | call `sofarpc_target` with `{"explain": true}` and report `diagnostics.dialTarget` if present |
 | `contract.method-not-found` | overload resolution failed | call `sofarpc_describe` to list overloads; ask user which signature |
 | `workspace.facade-not-configured` | contract needed but store missing | confirm `SOFARPC_PROJECT_ROOT`; fall back to trusted mode with user-supplied `types` |
+| `replay.plan-version-unsupported` | replay payload/session plan is missing or has an unsupported `schemaVersion` | run `sofarpc_invoke` with `dryRun=true` again and replay the fresh plan |
 | `runtime.serialize-failed` | request payload could not be encoded | call `sofarpc_describe`; inspect `paramTypes`, normalized `plan.args`, and `@type` shape |
 | `runtime.deserialize-failed` | Hessian decode crashed on the response | surface the diagnostics block verbatim; don't retry |
 | `runtime.timeout` | direct invoke timed out | call `sofarpc_doctor`; consider `timeoutMs` only after target reachability is proven |
@@ -124,6 +127,7 @@ When the user says "run it again" or "try with X changed":
 
 - Same payload: `sofarpc_replay` with the `sessionId`. No args in the body.
 - Changed subset: first call `sofarpc_replay` with `{"sessionId":"...","dryRun":true}` to retrieve the captured plan. Modify the full `payload` and send it back to `sofarpc_replay` — **not** a new `sofarpc_invoke` (replay skips plan building, so diagnostics line up with the first call).
+- Payload replay requires `schemaVersion: "sofarpc.invoke.plan/v1"`. If replay returns `replay.plan-version-unsupported`, do not patch the version by hand; re-run `sofarpc_invoke` with `dryRun=true` and replay that fresh plan.
 
 ## Anti-patterns
 

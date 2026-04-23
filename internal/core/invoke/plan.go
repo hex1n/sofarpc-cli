@@ -15,6 +15,8 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
+const PlanSchemaVersion = "sofarpc.invoke.plan/v1"
+
 // Input is what sofarpc_invoke passes in. Target fields are merged into
 // target.Sources via target.Resolve — BuildPlan does that internally.
 type Input struct {
@@ -31,6 +33,7 @@ type Input struct {
 // requested, sofarpc_invoke returns this verbatim; otherwise it hands
 // the wire fields to the direct transport.
 type Plan struct {
+	SchemaVersion  string             `json:"schemaVersion"`
 	Service        string             `json:"service"`
 	Method         string             `json:"method"`
 	ParamTypes     []string           `json:"paramTypes"`
@@ -44,6 +47,25 @@ type Plan struct {
 	ContractSource string             `json:"contractSource,omitempty"`
 	TargetLayers   []target.Layer     `json:"targetLayers,omitempty"`
 	ArgSource      string             `json:"argSource,omitempty"`
+}
+
+// ValidatePlanSchema rejects payload/session plans produced by incompatible
+// future or pre-versioned plan shapes. Replay callers should run this before
+// dry-run output or execution so unknown payloads are never treated as valid.
+func ValidatePlanSchema(plan Plan, phase string) error {
+	if strings.TrimSpace(plan.SchemaVersion) == PlanSchemaVersion {
+		return nil
+	}
+	if strings.TrimSpace(plan.SchemaVersion) == "" {
+		return errcode.New(errcode.PlanVersionUnsupported, phase,
+			fmt.Sprintf("plan schemaVersion is missing; expected %q", PlanSchemaVersion)).
+			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
+				"produce a fresh replayable plan with invoke dryRun")
+	}
+	return errcode.New(errcode.PlanVersionUnsupported, phase,
+		fmt.Sprintf("unsupported plan schemaVersion %q; expected %q", plan.SchemaVersion, PlanSchemaVersion)).
+		WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
+			"produce a fresh replayable plan with invoke dryRun")
 }
 
 // BuildPlan resolves target + contract + args and returns a Plan.
@@ -87,6 +109,7 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 	}
 
 	return Plan{
+		SchemaVersion:  PlanSchemaVersion,
 		Service:        in.Service,
 		Method:         in.Method,
 		ParamTypes:     resolved.Method.ParamTypes,
@@ -150,6 +173,7 @@ func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
 				"align args length with paramTypes")
 	}
 	return Plan{
+		SchemaVersion:  PlanSchemaVersion,
 		Service:        in.Service,
 		Method:         in.Method,
 		ParamTypes:     in.ParamTypes,
