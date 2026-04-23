@@ -3,6 +3,7 @@ package invoke
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -74,6 +75,9 @@ func TestExecuteDirectIfPossible_RoundTrip(t *testing.T) {
 	if transport, _ := exec.Diagnostics["transport"].(string); transport != DirectTransportName {
 		t.Fatalf("transport: got %q want %q", transport, DirectTransportName)
 	}
+	if dialTarget, _ := exec.Diagnostics["dialTarget"].(string); dialTarget == "" {
+		t.Fatalf("expected dialTarget diagnostic")
+	}
 	if got, _ := exec.Diagnostics["targetServiceUniqueName"].(string); got != "com.example.demo.ExampleFacade:2.0" {
 		t.Fatalf("targetServiceUniqueName: got %q", got)
 	}
@@ -97,7 +101,7 @@ func TestExecuteDirectIfPossible_InvalidTargetReturnsErrcode(t *testing.T) {
 		Args:       []any{"hello"},
 		Target: target.Config{
 			Mode:      target.ModeDirect,
-			DirectURL: "bolt://bad-target",
+			DirectURL: "bolt://",
 		},
 	}, "invoke")
 	if err == nil {
@@ -107,8 +111,53 @@ func TestExecuteDirectIfPossible_InvalidTargetReturnsErrcode(t *testing.T) {
 	if !ok {
 		t.Fatalf("error type = %T", err)
 	}
-	if ecerr.Code != errcode.TargetUnreachable {
-		t.Fatalf("code: got %q want %q", ecerr.Code, errcode.TargetUnreachable)
+	if ecerr.Code != errcode.TargetInvalid {
+		t.Fatalf("code: got %q want %q", ecerr.Code, errcode.TargetInvalid)
+	}
+}
+
+func TestClassifyDirectInvokeError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want errcode.Code
+	}{
+		{
+			name: "timeout",
+			err:  errors.New("context deadline exceeded"),
+			want: errcode.InvocationTimeout,
+		},
+		{
+			name: "connect failed",
+			err:  errors.New("dial tcp 127.0.0.1:12200: connect: connection refused"),
+			want: errcode.TargetConnectFailed,
+		},
+		{
+			name: "serialize failed",
+			err:  errors.New("hessian encode java.math.BigDecimal: invalid value"),
+			want: errcode.SerializeFailed,
+		},
+		{
+			name: "protocol failed",
+			err:  errors.New("unexpected bolt command code"),
+			want: errcode.ProtocolFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := classifyDirectInvokeError("invoke", "bolt://127.0.0.1:12200", tt.err)
+			if got.Code != tt.want {
+				t.Fatalf("code = %s, want %s", got.Code, tt.want)
+			}
+			if got.Hint == nil || got.Hint.NextTool == "" {
+				t.Fatalf("expected recovery hint, got %#v", got.Hint)
+			}
+		})
 	}
 }
 

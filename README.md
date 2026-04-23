@@ -98,6 +98,26 @@ export SOFARPC_TIMEOUT_MS=3000
 export SOFARPC_CONNECT_TIMEOUT_MS=1000
 ```
 
+Real network calls are disabled by default. `dryRun=true` always works,
+but non-dry-run `sofarpc_invoke` requires an explicit opt-in:
+
+```sh
+export SOFARPC_ALLOW_INVOKE=true
+```
+
+Use that only for development or test targets. For safer local setups,
+restrict callable services and bound `@file` inputs:
+
+```sh
+export SOFARPC_ALLOWED_SERVICES=com.foo.UserFacade,com.foo.OrderFacade
+export SOFARPC_ARGS_FILE_ROOT=/abs/path/to/project
+export SOFARPC_ARGS_FILE_MAX_BYTES=1048576
+```
+
+`@file` arguments are resolved inside `SOFARPC_ARGS_FILE_ROOT` when set,
+otherwise inside `SOFARPC_PROJECT_ROOT`. Files outside that root are
+rejected after symlink resolution. The default file-size limit is 1 MiB.
+
 On startup `sofarpc-mcp` scans `.java` files under `SOFARPC_PROJECT_ROOT`
 in a background goroutine so the first stdio response is not blocked
 by the scan. Hidden directories, test trees, and common build-output
@@ -157,6 +177,8 @@ source.
 - `directUrl` and `registryAddress` are per-call overrides; otherwise MCP env
   wins.
 - `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later.
+- Real invocation requires `SOFARPC_ALLOW_INVOKE=true`; keep the default disabled
+  when you only want planning, skeletons, and diagnostics.
 
 When contract information is attached, facade-backed invoke automatically
 normalizes common Java shapes before the wire step:

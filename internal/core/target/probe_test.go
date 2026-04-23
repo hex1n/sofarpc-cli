@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestParseBoltAddress(t *testing.T) {
+func TestParseDirectDialAddressLegacyCases(t *testing.T) {
 	cases := []struct {
 		name    string
 		in      string
@@ -19,12 +19,10 @@ func TestParseBoltAddress(t *testing.T) {
 		{"plain host port", "host:12345", "host:12345", ""},
 		{"plain host default port", "plainhost", "plainhost:12200", ""},
 		{"scheme missing host", "bolt://", "", "no host"},
-		// url.Parse accepts opaque strings liberally; we only want to prove
-		// the error path is reachable when there's literally no host.
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseBoltAddress(tc.in)
+			got, err := ParseDirectDialAddress(tc.in)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err: got %v, want contains %q", err, tc.wantErr)
@@ -41,7 +39,7 @@ func TestParseBoltAddress(t *testing.T) {
 	}
 }
 
-func TestParseRegistryAddress(t *testing.T) {
+func TestParseRegistryDialAddressLegacyCases(t *testing.T) {
 	cases := []struct {
 		name    string
 		in      string
@@ -57,7 +55,7 @@ func TestParseRegistryAddress(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseRegistryAddress(tc.in)
+			got, err := ParseRegistryDialAddress(tc.in)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err: got %v, want contains %q", err, tc.wantErr)

@@ -3,8 +3,6 @@ package invoke
 import (
 	"context"
 	"fmt"
-	"net"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -49,9 +47,9 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		return DirectExecution{}, nil
 	}
 
-	addr, err := directDialAddr(plan.Target.DirectURL)
+	addr, err := target.ParseDirectDialAddress(plan.Target.DirectURL)
 	if err != nil {
-		return DirectExecution{Handled: true}, targetUnreachableError(phase,
+		return DirectExecution{Handled: true}, targetInvalidError(phase,
 			fmt.Sprintf("invalid directUrl %q: %v", plan.Target.DirectURL, err))
 	}
 
@@ -75,13 +73,13 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		RequestID: nextRequestID(),
 	})
 	if err != nil {
-		return DirectExecution{Handled: true}, targetUnreachableError(phase,
-			fmt.Sprintf("invoke direct target %s: %v", plan.Target.DirectURL, err))
+		return DirectExecution{Handled: true}, classifyDirectInvokeError(phase, plan.Target.DirectURL, err)
 	}
 
 	diagnostics := map[string]any{
 		"transport":               DirectTransportName,
 		"target":                  plan.Target.DirectURL,
+		"dialTarget":              addr,
 		"requestId":               result.RequestID,
 		"requestCodec":            boltclient.CodecHessian2,
 		"requestClass":            result.Request.Class,
@@ -128,34 +126,43 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 	}, nil
 }
 
-func directDialAddr(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", fmt.Errorf("empty target")
-	}
-	if !strings.Contains(raw, "://") {
-		if _, _, err := net.SplitHostPort(raw); err != nil {
-			return "", err
-		}
-		return raw, nil
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return "", err
-	}
-	if parsed.Host == "" {
-		return "", fmt.Errorf("missing host:port")
-	}
-	if _, _, err := net.SplitHostPort(parsed.Host); err != nil {
-		return "", err
-	}
-	return parsed.Host, nil
+func targetInvalidError(phase, message string) *errcode.Error {
+	return errcode.New(errcode.TargetInvalid, phase, message).
+		WithHint("sofarpc_target", map[string]any{"explain": true},
+			"inspect the resolved direct target address")
 }
 
-func targetUnreachableError(phase, message string) *errcode.Error {
-	return errcode.New(errcode.TargetUnreachable, phase, message).
-		WithHint("sofarpc_target", map[string]any{"explain": true},
-			"inspect the resolved direct target and reachability")
+func classifyDirectInvokeError(phase, directURL string, err error) *errcode.Error {
+	msg := strings.ToLower(err.Error())
+	human := fmt.Sprintf("invoke direct target %s: %v", directURL, err)
+
+	switch {
+	case strings.Contains(msg, "context deadline exceeded"),
+		strings.Contains(msg, "timeout"),
+		strings.Contains(msg, "i/o timeout"):
+		return errcode.New(errcode.InvocationTimeout, phase, human).
+			WithHint("sofarpc_doctor", nil,
+				"inspect timeoutMs, connectTimeoutMs, and target reachability")
+	case strings.Contains(msg, "dial"),
+		strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "no such host"),
+		strings.Contains(msg, "network is unreachable"),
+		strings.Contains(msg, "cannot assign requested address"):
+		return errcode.New(errcode.TargetConnectFailed, phase, human).
+			WithHint("sofarpc_target", map[string]any{"explain": true},
+				"inspect the resolved direct target and reachability")
+	case strings.Contains(msg, "hessian"),
+		strings.Contains(msg, "encode"),
+		strings.Contains(msg, "serialize"),
+		strings.Contains(msg, "marshal"):
+		return errcode.New(errcode.SerializeFailed, phase, human).
+			WithHint("sofarpc_describe", nil,
+				"inspect paramTypes and argument shape")
+	default:
+		return errcode.New(errcode.ProtocolFailed, phase, human).
+			WithHint("sofarpc_doctor", nil,
+				"run structured diagnostics for the direct invoke path")
+	}
 }
 
 func cloneStringMap(input map[string]string) map[string]string {
