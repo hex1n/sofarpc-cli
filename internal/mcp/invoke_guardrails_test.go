@@ -54,6 +54,7 @@ func TestValidateRealInvokeRespectsAllowedServices(t *testing.T) {
 
 func TestResolveArgsFilePathRejectsEscapes(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv(envArgsFileRoot, root)
 	outside := t.TempDir()
 	path := filepath.Join(outside, "args.json")
 	if err := os.WriteFile(path, []byte(`{"ok":true}`), 0o644); err != nil {
