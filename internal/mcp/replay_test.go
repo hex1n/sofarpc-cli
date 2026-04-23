@@ -30,6 +30,9 @@ func TestReplay_PayloadDryRunReturnsPlan(t *testing.T) {
 	if out.Plan == nil || out.Plan.Service != plan.Service || out.Plan.Method != plan.Method {
 		t.Fatalf("plan round-trip mismatch: %+v", out.Plan)
 	}
+	if out.Plan.SchemaVersion != invoke.PlanSchemaVersion {
+		t.Fatalf("schemaVersion: got %q want %q", out.Plan.SchemaVersion, invoke.PlanSchemaVersion)
+	}
 }
 
 func TestReplay_PayloadNonDryRunWithUnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
@@ -143,6 +146,9 @@ func TestReplay_SessionPlanRoundTrip(t *testing.T) {
 	if !inv.Ok {
 		t.Fatalf("invoke should succeed; error=%+v", inv.Error)
 	}
+	if inv.Plan == nil || inv.Plan.SchemaVersion != invoke.PlanSchemaVersion {
+		t.Fatalf("captured plan schemaVersion = %+v", inv.Plan)
+	}
 
 	// Now replay against the session.
 	out := callReplay(t, opts, map[string]any{
@@ -157,6 +163,48 @@ func TestReplay_SessionPlanRoundTrip(t *testing.T) {
 	}
 	if out.Plan == nil || out.Plan.Method != "doThing" {
 		t.Fatalf("plan round-trip mismatch: %+v", out.Plan)
+	}
+	if out.Plan.SchemaVersion != invoke.PlanSchemaVersion {
+		t.Fatalf("schemaVersion: got %q want %q", out.Plan.SchemaVersion, invoke.PlanSchemaVersion)
+	}
+}
+
+func TestReplay_PayloadMissingSchemaVersionIsRejected(t *testing.T) {
+	plan := samplePlan()
+	plan.SchemaVersion = ""
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": plan,
+		"dryRun":  true,
+	})
+	if out.Error == nil || out.Error.Code != errcode.PlanVersionUnsupported {
+		t.Fatalf("expected PlanVersionUnsupported, got %+v", out.Error)
+	}
+}
+
+func TestReplay_PayloadUnsupportedSchemaVersionIsRejected(t *testing.T) {
+	plan := samplePlan()
+	plan.SchemaVersion = "sofarpc.invoke.plan/v999"
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": plan,
+		"dryRun":  true,
+	})
+	if out.Error == nil || out.Error.Code != errcode.PlanVersionUnsupported {
+		t.Fatalf("expected PlanVersionUnsupported, got %+v", out.Error)
+	}
+}
+
+func TestReplay_SessionUnsupportedSchemaVersionIsRejected(t *testing.T) {
+	sessions := NewSessionStore()
+	plan := samplePlan()
+	plan.SchemaVersion = "sofarpc.invoke.plan/v999"
+	session := sessions.Create(Session{ProjectRoot: "/tmp", LastPlan: &plan})
+
+	out := callReplay(t, Options{Sessions: sessions}, map[string]any{
+		"sessionId": session.ID,
+		"dryRun":    true,
+	})
+	if out.Error == nil || out.Error.Code != errcode.PlanVersionUnsupported {
+		t.Fatalf("expected PlanVersionUnsupported, got %+v", out.Error)
 	}
 }
 
@@ -190,6 +238,7 @@ func TestReplay_DecodePayloadPreservesLargeLongString(t *testing.T) {
 			Arguments: json.RawMessage(`{
 				"dryRun": true,
 				"payload": {
+					"schemaVersion": "sofarpc.invoke.plan/v1",
 					"service": "com.foo.Svc",
 					"method": "doThing",
 					"paramTypes": ["com.foo.Req"],
@@ -221,10 +270,11 @@ func TestReplay_DecodePayloadPreservesLargeLongString(t *testing.T) {
 
 func samplePlan() invoke.Plan {
 	return invoke.Plan{
-		Service:    "com.foo.Svc",
-		Method:     "doThing",
-		ParamTypes: []string{"java.lang.String"},
-		Args:       []any{"hello"},
+		SchemaVersion: invoke.PlanSchemaVersion,
+		Service:       "com.foo.Svc",
+		Method:        "doThing",
+		ParamTypes:    []string{"java.lang.String"},
+		Args:          []any{"hello"},
 		Target: target.Config{
 			Mode:      target.ModeDirect,
 			DirectURL: "bolt://h:1",
