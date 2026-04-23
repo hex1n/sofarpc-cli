@@ -67,6 +67,8 @@ In trusted mode the caller owns the exact payload shape; `@type` tags are requir
 - `timeoutMs` — bump for slow methods
 - `dryRun: true` — return the built plan without sending a BOLT request; use this when the user asks "what would this call look like"
 
+Dry-run plans include `schemaVersion`. The current replayable schema is `sofarpc.invoke.plan/v1`.
+
 ## Error recovery protocol
 
 Every failure returns `{code, message, phase, hint?}`. The `hint.nextTool` / `hint.nextArgs` pair is a **machine instruction**, not a suggestion. Follow it literally before re-deriving.
@@ -79,6 +81,7 @@ Common codes and the expected response:
 | `target.unreachable` | TCP probe failed | call `sofarpc_doctor`; likely wrong host, VPN down, or firewall |
 | `contract.method-not-found` | overload resolution failed | call `sofarpc_describe` to list overloads; ask user which signature |
 | `workspace.facade-not-configured` | contract needed but store missing | confirm `SOFARPC_PROJECT_ROOT`; fall back to trusted mode with user-supplied `types` |
+| `replay.plan-version-unsupported` | replay payload/session plan is missing or has an unsupported `schemaVersion` | run `sofarpc_invoke` with `dryRun=true` again and replay the fresh plan |
 | `runtime.deserialize-failed` | Hessian decode crashed on the response | surface the diagnostics block verbatim; don't retry |
 | `runtime.rejected` | server refused | report `responseStatus` and `responseClass` from diagnostics; don't retry blindly |
 
@@ -90,6 +93,7 @@ When the user says "run it again" or "try with X changed":
 
 - Same payload: `sofarpc_replay` with the `sessionId`. No args in the body.
 - Changed subset: fetch the captured plan, diff, and send `sofarpc_replay` with a full `payload` containing the modified plan — **not** a new `sofarpc_invoke` (replay skips plan building, so the diagnostics line up with the first call).
+- Payload replay requires `schemaVersion: "sofarpc.invoke.plan/v1"`. If replay returns `replay.plan-version-unsupported`, do not patch the version by hand; re-run `sofarpc_invoke` with `dryRun=true` and replay that fresh plan.
 
 ## Anti-patterns
 
