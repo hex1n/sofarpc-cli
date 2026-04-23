@@ -107,7 +107,7 @@ func TestBuildSkeleton_PrimitivesAndStrings(t *testing.T) {
 	if string(sk[0]) != `""` {
 		t.Fatalf("String skeleton: %s", sk[0])
 	}
-	if string(sk[1]) != `0` {
+	if string(sk[1]) != `"0"` {
 		t.Fatalf("Long skeleton: %s", sk[1])
 	}
 	if string(sk[2]) != `false` {

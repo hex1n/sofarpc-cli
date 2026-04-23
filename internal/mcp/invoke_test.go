@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -231,6 +232,30 @@ func TestInvoke_UserArgsPassThrough(t *testing.T) {
 	}
 }
 
+func TestInvoke_SingleParamAllowsBareValue(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
+			},
+		},
+	)
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
+		"service":   "com.foo.Svc",
+		"method":    "doThing",
+		"directUrl": "bolt://h:1",
+		"args":      "hello",
+		"dryRun":    true,
+	})
+	if !out.Ok {
+		t.Fatalf("dry-run should succeed; got error=%+v", out.Error)
+	}
+	if got := out.Plan.Args[0]; got != "hello" {
+		t.Fatalf("args[0]: got %v want hello", got)
+	}
+}
+
 func TestInvoke_DryRunNormalizesFacadeBackedArgs(t *testing.T) {
 	store := contract.NewInMemoryStore(
 		javamodel.Class{
@@ -277,12 +302,12 @@ func TestInvoke_DryRunNormalizesFacadeBackedArgs(t *testing.T) {
 	}
 }
 
-func TestInvoke_ArgsWrongTypeIsErrcode(t *testing.T) {
+func TestInvoke_MultiArgBareValueIsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(
 		javamodel.Class{
 			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
 			Methods: []javamodel.Method{
-				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
+				{Name: "doThing", ParamTypes: []string{"java.lang.String", "java.lang.String"}},
 			},
 		},
 	)
@@ -309,18 +334,24 @@ func TestInvoke_ArgsWrongTypeIsErrcode(t *testing.T) {
 	}
 }
 
-func TestInvoke_ArgsAtFileLoadsJSONArray(t *testing.T) {
+func TestInvoke_ArgsAtFileLoadsJSONValue(t *testing.T) {
 	store := contract.NewInMemoryStore(
 		javamodel.Class{
 			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
 			Methods: []javamodel.Method{
-				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
+				{Name: "doThing", ParamTypes: []string{"com.foo.Req"}},
+			},
+		},
+		javamodel.Class{
+			FQN: "com.foo.Req", Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "id", JavaType: "java.lang.Long"},
 			},
 		},
 	)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "args.json")
-	if err := os.WriteFile(path, []byte(`["from-file"]`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"id": 7}`), 0o644); err != nil {
 		t.Fatalf("write args file: %v", err)
 	}
 
@@ -337,8 +368,12 @@ func TestInvoke_ArgsAtFileLoadsJSONArray(t *testing.T) {
 	if out.Plan.ArgSource != "user" {
 		t.Fatalf("argSource: got %q want user", out.Plan.ArgSource)
 	}
-	if got := out.Plan.Args[0]; got != "from-file" {
-		t.Fatalf("args[0]: got %v want %q", got, "from-file")
+	arg, ok := out.Plan.Args[0].(map[string]any)
+	if !ok {
+		t.Fatalf("arg type: %T", out.Plan.Args[0])
+	}
+	if got := arg["id"]; got != json.Number("7") {
+		t.Fatalf("args[0].id: got %#v want 7", got)
 	}
 }
 
@@ -362,12 +397,12 @@ func TestInvoke_ArgsAtFileMissingIsErrcode(t *testing.T) {
 	}
 }
 
-func TestInvoke_ArgsAtFileNonArrayIsErrcode(t *testing.T) {
+func TestInvoke_ArgsAtFileMultiArgNonArrayIsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(
 		javamodel.Class{
 			FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
 			Methods: []javamodel.Method{
-				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
+				{Name: "doThing", ParamTypes: []string{"java.lang.String", "java.lang.String"}},
 			},
 		},
 	)
@@ -385,6 +420,34 @@ func TestInvoke_ArgsAtFileNonArrayIsErrcode(t *testing.T) {
 	})
 	if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
 		t.Fatalf("expected ArgsInvalid, got %+v", out.Error)
+	}
+}
+
+func TestDecodeInvokeInput_PreservesLargeLongFromRawJSON(t *testing.T) {
+	req := &sdkmcp.CallToolRequest{
+		Params: &sdkmcp.CallToolParamsRaw{
+			Arguments: json.RawMessage(`{
+				"service":"com.foo.Svc",
+				"method":"doThing",
+				"directUrl":"bolt://h:1",
+				"dryRun":true,
+				"args":{"id":434153733362950144}
+			}`),
+		},
+	}
+	in, args, err := decodeInvokeInput(req)
+	if err != nil {
+		t.Fatalf("decodeInvokeInput: %v", err)
+	}
+	if in.Service != "com.foo.Svc" || in.Method != "doThing" {
+		t.Fatalf("decoded input: %+v", in)
+	}
+	obj, ok := args.(map[string]any)
+	if !ok {
+		t.Fatalf("args type: %T", args)
+	}
+	if got, _ := obj["id"].(json.Number); got.String() != "434153733362950144" {
+		t.Fatalf("id: got %#v", obj["id"])
 	}
 }
 
@@ -410,6 +473,15 @@ func TestInvoke_ArgsEmptyAtIsErrcode(t *testing.T) {
 
 func callInvoke(t *testing.T, opts Options, args map[string]any) InvokeOutput {
 	t.Helper()
+	body, err := json.Marshal(args)
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	return callInvokeRaw(t, opts, body)
+}
+
+func callInvokeRaw(t *testing.T, opts Options, raw json.RawMessage) InvokeOutput {
+	t.Helper()
 	server := New(opts)
 	ctx := context.Background()
 	client := connect(t, ctx, server)
@@ -417,7 +489,7 @@ func callInvoke(t *testing.T, opts Options, args map[string]any) InvokeOutput {
 
 	result, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
 		Name:      "sofarpc_invoke",
-		Arguments: args,
+		Arguments: raw,
 	})
 	if err != nil {
 		t.Fatalf("call invoke: %v", err)
@@ -427,7 +499,9 @@ func callInvoke(t *testing.T, opts Options, args map[string]any) InvokeOutput {
 		t.Fatalf("marshal structured: %v", err)
 	}
 	var out InvokeOutput
-	if err := json.Unmarshal(body, &out); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&out); err != nil {
 		t.Fatalf("unmarshal structured: %v", err)
 	}
 	return out

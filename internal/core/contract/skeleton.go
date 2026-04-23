@@ -42,6 +42,12 @@ func buildValue(spec TypeSpec, store Store, lookup javatype.ClassLookup, seen ma
 	role := javatype.Classify(spec.Base, lookup)
 	switch role {
 	case javatype.RolePassthrough:
+		if spec.Base == "long" || spec.Base == "java.lang.Long" {
+			// MCP clients frequently round JSON numbers above 2^53-1. Use a
+			// decimal string placeholder so agents naturally send Long values in
+			// the only representation that round-trips safely through the host.
+			return json.RawMessage(`"0"`)
+		}
 		if spec.Base == "java.math.BigDecimal" || spec.Base == "java.math.BigInteger" {
 			return decimalObject(spec.Base)
 		}

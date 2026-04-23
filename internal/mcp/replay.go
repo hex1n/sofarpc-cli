@@ -1,11 +1,12 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,29 +26,36 @@ type ReplayOutput struct {
 
 func registerReplay(server *sdkmcp.Server, opts Options) {
 	sessions := opts.Sessions
-	sdkmcp.AddTool(server, &sdkmcp.Tool{
+	inputSchema, err := jsonschema.For[ReplayInput](nil)
+	if err != nil {
+		panic(fmt.Sprintf("infer replay input schema: %v", err))
+	}
+	server.AddTool(&sdkmcp.Tool{
 		Name:        "sofarpc_replay",
 		Description: "Replay a captured invocation. Accepts a payload from sofarpc_invoke's dryRun output, or a sessionId to look up a captured plan.",
-	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in ReplayInput) (*sdkmcp.CallToolResult, ReplayOutput, error) {
-		plan, source, err := extractPlan(in, sessions)
+		InputSchema: inputSchema,
+	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		in, payload, err := decodeReplayInput(req)
 		if err != nil {
 			out := ReplayOutput{Error: asErrcodeError(err)}
-			return errorReplayResult(err), out, nil
+			return invokeToolResult(out, errorText("replay failed", err), true), nil
+		}
+
+		plan, source, err := extractPlan(in, payload, sessions)
+		if err != nil {
+			out := ReplayOutput{Error: asErrcodeError(err)}
+			return invokeToolResult(out, errorText("replay failed", err), true), nil
 		}
 
 		if in.DryRun {
 			out := ReplayOutput{Ok: true, Plan: plan, Source: source}
-			return &sdkmcp.CallToolResult{
-				Content: []sdkmcp.Content{
-					&sdkmcp.TextContent{Text: summarizeReplay(plan, source, true)},
-				},
-			}, out, nil
+			return invokeToolResult(out, summarizeReplay(plan, source, true), false), nil
 		}
 
 		outcome, execErr := invoke.Execute(ctx, *plan, "replay")
 		if execErr != nil {
 			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: outcome.Diagnostics, Error: asErrcodeError(execErr)}
-			return errorReplayResult(execErr), out, nil
+			return invokeToolResult(out, errorText("replay failed", execErr), true), nil
 		}
 		out := ReplayOutput{
 			Ok:          true,
@@ -56,19 +64,38 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 			Result:      outcome.Result,
 			Diagnostics: outcome.Diagnostics,
 		}
-		return &sdkmcp.CallToolResult{
-			Content: []sdkmcp.Content{
-				&sdkmcp.TextContent{Text: summarizeReplay(plan, source, false)},
-			},
-		}, out, nil
+		return invokeToolResult(out, summarizeReplay(plan, source, false), false), nil
 	})
+}
+
+type rawReplayInput struct {
+	SessionID string          `json:"sessionId,omitempty"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+	DryRun    bool            `json:"dryRun,omitempty"`
+}
+
+func decodeReplayInput(req *sdkmcp.CallToolRequest) (ReplayInput, json.RawMessage, error) {
+	if req == nil || len(req.Params.Arguments) == 0 {
+		return ReplayInput{}, nil, nil
+	}
+	var raw rawReplayInput
+	dec := json.NewDecoder(bytes.NewReader(req.Params.Arguments))
+	dec.UseNumber()
+	if err := dec.Decode(&raw); err != nil {
+		return ReplayInput{}, nil, errcode.New(errcode.ArgsInvalid, "replay",
+			fmt.Sprintf("parse tool arguments: %v", err))
+	}
+	return ReplayInput{
+		SessionID: raw.SessionID,
+		DryRun:    raw.DryRun,
+	}, raw.Payload, nil
 }
 
 // extractPlan decides whether to load the plan from a session or from
 // the supplied payload. Exactly one source must be set.
-func extractPlan(in ReplayInput, sessions *SessionStore) (*invoke.Plan, string, error) {
+func extractPlan(in ReplayInput, payload json.RawMessage, sessions *SessionStore) (*invoke.Plan, string, error) {
 	hasSession := in.SessionID != ""
-	hasPayload := in.Payload != nil
+	hasPayload := len(bytes.TrimSpace(payload)) > 0 && !bytes.Equal(bytes.TrimSpace(payload), []byte("null"))
 	switch {
 	case hasSession && hasPayload:
 		return nil, "", errcode.New(errcode.ArgsInvalid, "replay",
@@ -82,7 +109,7 @@ func extractPlan(in ReplayInput, sessions *SessionStore) (*invoke.Plan, string, 
 	case hasSession:
 		return planFromSession(in.SessionID, sessions)
 	default:
-		plan, err := planFromPayload(in.Payload)
+		plan, err := planFromPayload(payload)
 		return plan, "payload", err
 	}
 }
@@ -108,14 +135,11 @@ func planFromSession(id string, sessions *SessionStore) (*invoke.Plan, string, e
 	return session.LastPlan, "session", nil
 }
 
-func planFromPayload(payload any) (*invoke.Plan, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, errcode.New(errcode.ArgsInvalid, "replay",
-			fmt.Sprintf("payload not JSON-serialisable: %v", err))
-	}
+func planFromPayload(payload json.RawMessage) (*invoke.Plan, error) {
 	var plan invoke.Plan
-	if err := json.Unmarshal(body, &plan); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.UseNumber()
+	if err := dec.Decode(&plan); err != nil {
 		return nil, errcode.New(errcode.ArgsInvalid, "replay",
 			fmt.Sprintf("payload is not a plan: %v", err)).
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
@@ -134,20 +158,6 @@ func planFromPayload(payload any) (*invoke.Plan, error) {
 				"resolve the target and re-plan")
 	}
 	return &plan, nil
-}
-
-func errorReplayResult(err error) *sdkmcp.CallToolResult {
-	text := "replay failed"
-	var ecerr *errcode.Error
-	if errors.As(err, &ecerr) {
-		text = fmt.Sprintf("%s: %s", ecerr.Code, ecerr.Message)
-	} else if err != nil {
-		text = err.Error()
-	}
-	return &sdkmcp.CallToolResult{
-		IsError: true,
-		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: text}},
-	}
 }
 
 func summarizeReplay(plan *invoke.Plan, source string, dryRun bool) string {

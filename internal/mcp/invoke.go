@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
@@ -28,53 +30,58 @@ type InvokeOutput struct {
 func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
-	sdkmcp.AddTool(server, &sdkmcp.Tool{
+	inputSchema, err := jsonschema.For[InvokeInput](nil)
+	if err != nil {
+		panic(fmt.Sprintf("infer invoke input schema: %v", err))
+	}
+	server.AddTool(&sdkmcp.Tool{
 		Name:        "sofarpc_invoke",
-		Description: "Plan and execute a SOFARPC generic invocation. args accepts either a JSON array matching paramTypes, or a string \"@<path>\" that references a JSON-array file (relative paths resolve against the MCP server's CWD). dryRun=true returns the plan without executing the request.",
-	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in InvokeInput) (*sdkmcp.CallToolResult, InvokeOutput, error) {
+		Description: "Plan and execute a SOFARPC generic invocation. args accepts inline JSON or a string \"@<path>\" that references a JSON file (relative paths resolve against the MCP server's CWD). Single-parameter methods may pass the value directly; multi-parameter methods must pass a JSON array. dryRun=true returns the plan without executing the request.",
+		InputSchema: inputSchema,
+	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 		store := holder.Get()
-		args, err := normalizeArgs(in.Service, in.Method, in.Args)
+		decoded, args, err := decodeInvokeInput(req)
 		if err != nil {
-			return errorInvokeResult(err), InvokeOutput{Error: asErrcodeError(err)}, nil
+			return invokeToolResult(InvokeOutput{Error: asErrcodeError(err)}, errorText("invoke failed", err), true), nil
+		}
+		args, err = normalizeArgs(decoded.Service, decoded.Method, args)
+		if err != nil {
+			return invokeToolResult(InvokeOutput{Error: asErrcodeError(err)}, errorText("invoke failed", err), true), nil
 		}
 
 		plan, err := invoke.BuildPlan(invoke.Input{
-			Service:       in.Service,
-			Method:        in.Method,
-			ParamTypes:    in.Types,
+			Service:       decoded.Service,
+			Method:        decoded.Method,
+			ParamTypes:    decoded.Types,
 			Args:          args,
-			Version:       in.Version,
-			TargetAppName: in.TargetAppName,
+			Version:       decoded.Version,
+			TargetAppName: decoded.TargetAppName,
 			Target: target.Input{
-				Service:          in.Service,
-				DirectURL:        in.DirectURL,
-				RegistryAddress:  in.RegistryAddress,
-				RegistryProtocol: in.RegistryProtocol,
-				TimeoutMS:        in.TimeoutMS,
+				Service:          decoded.Service,
+				DirectURL:        decoded.DirectURL,
+				RegistryAddress:  decoded.RegistryAddress,
+				RegistryProtocol: decoded.RegistryProtocol,
+				TimeoutMS:        decoded.TimeoutMS,
 			},
 		}, store, sources)
 		if err != nil {
 			out := InvokeOutput{Error: asErrcodeError(err)}
-			return errorInvokeResult(err), out, nil
+			return invokeToolResult(out, errorText("invoke failed", err), true), nil
 		}
 
-		if sessions != nil && in.SessionID != "" {
-			sessions.UpdatePlan(in.SessionID, plan)
+		if sessions != nil && decoded.SessionID != "" {
+			sessions.UpdatePlan(decoded.SessionID, plan)
 		}
 
-		if in.DryRun {
+		if decoded.DryRun {
 			out := InvokeOutput{Ok: true, Plan: &plan}
-			return &sdkmcp.CallToolResult{
-				Content: []sdkmcp.Content{
-					&sdkmcp.TextContent{Text: summarizeInvokePlan(plan, true)},
-				},
-			}, out, nil
+			return invokeToolResult(out, summarizeInvokePlan(plan, true), false), nil
 		}
 
 		outcome, execErr := invoke.Execute(ctx, plan, "invoke")
 		if execErr != nil {
 			out := InvokeOutput{Plan: &plan, Diagnostics: outcome.Diagnostics, Error: asErrcodeError(execErr)}
-			return errorInvokeResult(execErr), out, nil
+			return invokeToolResult(out, errorText("invoke failed", execErr), true), nil
 		}
 		out := InvokeOutput{
 			Ok:          true,
@@ -82,39 +89,91 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			Result:      outcome.Result,
 			Diagnostics: outcome.Diagnostics,
 		}
-		return &sdkmcp.CallToolResult{
-			Content: []sdkmcp.Content{
-				&sdkmcp.TextContent{Text: summarizeInvokePlan(plan, false)},
-			},
-		}, out, nil
+		return invokeToolResult(out, summarizeInvokePlan(plan, false), false), nil
 	})
 }
 
-// normalizeArgs coerces the loosely-typed Args field into []any:
-//   - nil                 → nil (plan renders a skeleton).
-//   - []any               → pass through verbatim.
-//   - "@<path>" string    → read the file, parse as a JSON array.
-//   - anything else       → input.args-invalid.
+type rawInvokeInput struct {
+	Service          string          `json:"service,omitempty"`
+	Method           string          `json:"method,omitempty"`
+	Types            []string        `json:"types,omitempty"`
+	Args             json.RawMessage `json:"args,omitempty"`
+	Version          string          `json:"version,omitempty"`
+	TargetAppName    string          `json:"targetAppName,omitempty"`
+	DirectURL        string          `json:"directUrl,omitempty"`
+	RegistryAddress  string          `json:"registryAddress,omitempty"`
+	RegistryProtocol string          `json:"registryProtocol,omitempty"`
+	TimeoutMS        int             `json:"timeoutMs,omitempty"`
+	DryRun           bool            `json:"dryRun,omitempty"`
+	SessionID        string          `json:"sessionId,omitempty"`
+}
+
+func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
+	if req == nil || len(req.Params.Arguments) == 0 {
+		return InvokeInput{}, nil, nil
+	}
+	var raw rawInvokeInput
+	dec := json.NewDecoder(bytes.NewReader(req.Params.Arguments))
+	dec.UseNumber()
+	if err := dec.Decode(&raw); err != nil {
+		return InvokeInput{}, nil, errcode.New(errcode.ArgsInvalid, "invoke",
+			fmt.Sprintf("parse tool arguments: %v", err))
+	}
+	args, err := decodeJSONValue(raw.Args)
+	if err != nil {
+		return InvokeInput{}, nil, errcode.New(errcode.ArgsInvalid, "invoke",
+			fmt.Sprintf("parse args as JSON: %v", err)).
+			WithHint("sofarpc_describe", describeHintArgs(raw.Service, raw.Method),
+				"send args as valid JSON or use @<path>")
+	}
+	return InvokeInput{
+		Service:          raw.Service,
+		Method:           raw.Method,
+		Types:            raw.Types,
+		Version:          raw.Version,
+		TargetAppName:    raw.TargetAppName,
+		DirectURL:        raw.DirectURL,
+		RegistryAddress:  raw.RegistryAddress,
+		RegistryProtocol: raw.RegistryProtocol,
+		TimeoutMS:        raw.TimeoutMS,
+		DryRun:           raw.DryRun,
+		SessionID:        raw.SessionID,
+	}, args, nil
+}
+
+func decodeJSONValue(raw json.RawMessage) (any, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, nil
+	}
+	var parsed any
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.UseNumber()
+	if err := dec.Decode(&parsed); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+// normalizeArgs normalizes the loosely-typed args field:
+//   - nil              → nil (plan renders a skeleton).
+//   - "@<path>" string → read the file, parse as JSON with UseNumber.
+//   - anything else    → pass through verbatim for BuildPlan to shape-check.
 //
 // Relative paths are resolved against the MCP server process's CWD. The
-// file must contain a JSON array; non-array content is rejected so the
-// failure shape matches inline args.
+// file may contain either a single JSON value or an array. Single-value
+// payloads are accepted so one-arg methods do not need an extra wrapper.
 //
 // service/method are threaded in only to pre-fill the describe hint on
 // failure — empty values are dropped so the agent never sees a hint it
 // can't follow verbatim.
-func normalizeArgs(service, method string, raw any) ([]any, error) {
+func normalizeArgs(service, method string, raw any) (any, error) {
 	switch v := raw.(type) {
 	case nil:
 		return nil, nil
-	case []any:
-		return v, nil
 	case string:
 		if !strings.HasPrefix(v, "@") {
-			return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-				fmt.Sprintf("args string must start with '@' to reference a file, got %q", v)).
-				WithHint("sofarpc_describe", describeHintArgs(service, method),
-					"send a JSON array inline or use @<path>")
+			return v, nil
 		}
 		path := strings.TrimPrefix(v, "@")
 		if path == "" {
@@ -125,38 +184,28 @@ func normalizeArgs(service, method string, raw any) ([]any, error) {
 		}
 		return readArgsFile(service, method, path)
 	default:
-		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("args must be a JSON array or '@<path>' string, got %T", raw)).
-			WithHint("sofarpc_describe", describeHintArgs(service, method),
-				"see the method's paramTypes")
+		return raw, nil
 	}
 }
 
-// readArgsFile loads path and decodes it as a JSON array. Errors are
+// readArgsFile loads path and decodes it as JSON with UseNumber. Errors are
 // wrapped into input.args-invalid so the agent sees one shape regardless
 // of whether args came inline or from disk.
-func readArgsFile(service, method, path string) ([]any, error) {
+func readArgsFile(service, method, path string) (any, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
 			fmt.Sprintf("read args file %q: %v", path, err)).
-			WithHint("sofarpc_doctor", nil, "check the path and that the mcp process can read it")
+				WithHint("sofarpc_doctor", nil, "check the path and that the mcp process can read it")
 	}
-	var parsed any
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	parsed, err := decodeJSONValue(body)
+	if err != nil {
 		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
 			fmt.Sprintf("parse args file %q as JSON: %v", path, err)).
 			WithHint("sofarpc_describe", describeHintArgs(service, method),
-				"the file must contain a JSON array matching paramTypes")
+				"the file must contain valid JSON matching paramTypes")
 	}
-	list, ok := parsed.([]any)
-	if !ok {
-		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("args file %q must contain a JSON array, got %T", path, parsed)).
-			WithHint("sofarpc_describe", describeHintArgs(service, method),
-				"wrap the value in [] so it matches paramTypes")
-	}
-	return list, nil
+	return parsed, nil
 }
 
 // describeHintArgs builds the NextArgs payload for a describe hint. We
@@ -177,18 +226,27 @@ func describeHintArgs(service, method string) map[string]any {
 	return args
 }
 
-func errorInvokeResult(err error) *sdkmcp.CallToolResult {
-	text := "invoke failed"
-	var ecerr *errcode.Error
-	if errors.As(err, &ecerr) {
-		text = fmt.Sprintf("%s: %s", ecerr.Code, ecerr.Message)
-	} else if err != nil {
-		text = err.Error()
-	}
-	return &sdkmcp.CallToolResult{
-		IsError: true,
+func invokeToolResult(out any, text string, isError bool) *sdkmcp.CallToolResult {
+	result := &sdkmcp.CallToolResult{
+		IsError: isError,
 		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: text}},
 	}
+	if body, err := json.Marshal(out); err == nil {
+		result.StructuredContent = json.RawMessage(body)
+	}
+	return result
+}
+
+func errorText(prefix string, err error) string {
+	text := prefix
+	var ecerr *errcode.Error
+	if errors.As(err, &ecerr) {
+		return fmt.Sprintf("%s: %s", ecerr.Code, ecerr.Message)
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return text
 }
 
 func summarizeInvokePlan(plan invoke.Plan, dryRun bool) string {

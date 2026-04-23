@@ -21,7 +21,7 @@ type Input struct {
 	Service       string
 	Method        string
 	ParamTypes    []string
-	Args          []any
+	Args          any
 	Version       string
 	TargetAppName string
 	Target        target.Input
@@ -134,9 +134,17 @@ func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
 			WithHint("sofarpc_doctor", nil,
 				"doctor reports whether this workspace can describe methods or must use trusted-mode invoke")
 	}
-	if len(in.Args) != len(in.ParamTypes) {
+	args, err := coerceArgsVector(in.Args, len(in.ParamTypes))
+	if err != nil {
 		return Plan{}, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("arity mismatch: got %d args, paramTypes has %d", len(in.Args), len(in.ParamTypes))).
+			fmt.Sprintf("trusted mode expects %d arg(s): %v", len(in.ParamTypes), err)).
+			WithHint("sofarpc_describe",
+				describeHintArgs(in.Service, in.Method),
+				"align args shape with paramTypes")
+	}
+	if len(args) != len(in.ParamTypes) {
+		return Plan{}, errcode.New(errcode.ArgsInvalid, "invoke",
+			fmt.Sprintf("arity mismatch: got %d args, paramTypes has %d", len(args), len(in.ParamTypes))).
 			WithHint("sofarpc_describe",
 				describeHintArgs(in.Service, in.Method),
 				"align args length with paramTypes")
@@ -145,7 +153,7 @@ func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
 		Service:        in.Service,
 		Method:         in.Method,
 		ParamTypes:     in.ParamTypes,
-		Args:           in.Args,
+		Args:           args,
 		Version:        strings.TrimSpace(in.Version),
 		TargetAppName:  strings.TrimSpace(in.TargetAppName),
 		Target:         report.Target,
@@ -168,19 +176,27 @@ func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
 // NextArgs on arity errors — passing empty strings would give the agent
 // a hint it can't follow, so an empty value is dropped from NextArgs
 // rather than emitted.
-func resolveArgs(service, method string, userArgs []any, paramTypes []string, facade contract.Store) ([]any, string, error) {
+func resolveArgs(service, method string, userArgs any, paramTypes []string, facade contract.Store) ([]any, string, error) {
 	if userArgs == nil {
 		skeleton := contract.BuildSkeleton(paramTypes, facade)
 		return decodeSkeleton(skeleton), "skeleton", nil
 	}
-	if len(userArgs) != len(paramTypes) {
+	vector, err := coerceArgsVector(userArgs, len(paramTypes))
+	if err != nil {
 		return nil, "", errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("arity mismatch: got %d args, method takes %d", len(userArgs), len(paramTypes))).
+			fmt.Sprintf("method takes %d arg(s): %v", len(paramTypes), err)).
 			WithHint("sofarpc_describe",
 				describeHintArgs(service, method),
 				"describe the method to see its paramTypes")
 	}
-	normalized, err := contract.NormalizeArgs(paramTypes, userArgs, facade)
+	if len(vector) != len(paramTypes) {
+		return nil, "", errcode.New(errcode.ArgsInvalid, "invoke",
+			fmt.Sprintf("arity mismatch: got %d args, method takes %d", len(vector), len(paramTypes))).
+			WithHint("sofarpc_describe",
+				describeHintArgs(service, method),
+				"describe the method to see its paramTypes")
+	}
+	normalized, err := contract.NormalizeArgs(paramTypes, vector, facade)
 	if err != nil {
 		return nil, "", errcode.New(errcode.ArgsInvalid, "invoke",
 			fmt.Sprintf("normalize args: %v", err)).
@@ -189,6 +205,19 @@ func resolveArgs(service, method string, userArgs []any, paramTypes []string, fa
 				"describe the method to inspect field types or pass a canonical payload")
 	}
 	return normalized, "user", nil
+}
+
+func coerceArgsVector(raw any, arity int) ([]any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	if values, ok := raw.([]any); ok {
+		return values, nil
+	}
+	if arity == 1 {
+		return []any{raw}, nil
+	}
+	return nil, fmt.Errorf("pass args as a JSON array for multi-arg methods, got %T", raw)
 }
 
 // describeHintArgs builds the NextArgs payload for a describe hint. We
