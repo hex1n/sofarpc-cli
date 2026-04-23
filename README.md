@@ -271,6 +271,27 @@ disambiguation, automatic type normalization, or skeleton generation happens.
 If the remote side needs `@type`, `BigDecimal`, or other Java-specific payload
 shapes, the caller must send them explicitly.
 
+## Testing
+
+Default validation stays lightweight:
+
+```sh
+go vet ./...
+go test -race ./...
+go build ./...
+```
+
+Optional e2e smoke tests are behind the `e2e` build tag:
+
+```sh
+go test -tags=e2e ./tests/e2e/...
+```
+
+The current e2e smoke starts a local fake BOLT server and exercises the real
+`invoke.Execute -> sofarpcwire -> boltclient` path. It does not require Java or
+an external SOFARPC service. The GitHub Actions `e2e` workflow is manual
+(`workflow_dispatch`) so default CI remains fast.
+
 ## Release checklist
 
 1. Confirm CI is green on `main`.
@@ -304,6 +325,8 @@ internal/
   skills/sofarpc-invoke/ symlink to cmd/sofarpc-mcp/skill/ for in-repo discovery
 docs/
   architecture.md        architecture reference
+tests/
+  e2e/                   optional build-tagged e2e smoke tests
 ```
 
 ## Status
