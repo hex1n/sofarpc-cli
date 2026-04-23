@@ -177,10 +177,8 @@ func checkContract(store contract.Store, loadErr string) DoctorCheck {
 }
 
 // checkSessions reports the session store's current load relative to its
-// capacity. It is purely informational — Ok is always true — so adding
-// it never downgrades the overall doctor verdict. Agents that expose a
-// dashboard can read size/cap and surface a warning near full; the
-// on-write LRU keeps the store correct even without external action.
+// capacity and captured-plan byte limit. It is purely informational — Ok is
+// always true — so adding it never downgrades the overall doctor verdict.
 func checkSessions(store *SessionStore) DoctorCheck {
 	if store == nil {
 		return DoctorCheck{
@@ -191,17 +189,29 @@ func checkSessions(store *SessionStore) DoctorCheck {
 	}
 	size := store.Size()
 	capacity := store.Cap()
+	maxPlanBytes := store.MaxPlanBytes()
+	data := map[string]any{
+		"size":         size,
+		"capacity":     capacity,
+		"maxPlanBytes": maxPlanBytes,
+	}
+	planLimit := fmt.Sprintf("session plan max=%d bytes", maxPlanBytes)
+	if maxPlanBytes <= 0 {
+		planLimit = "session plan capture unbounded"
+	}
 	if capacity <= 0 {
 		return DoctorCheck{
 			Name:   "sessions",
 			Ok:     true,
-			Detail: fmt.Sprintf("%d session(s); capacity unbounded", size),
+			Detail: fmt.Sprintf("%d session(s); capacity unbounded; %s", size, planLimit),
+			Data:   data,
 		}
 	}
 	return DoctorCheck{
 		Name:   "sessions",
 		Ok:     true,
-		Detail: fmt.Sprintf("%d/%d session(s); LRU evicts on overflow", size, capacity),
+		Detail: fmt.Sprintf("%d/%d session(s); LRU evicts on overflow; %s", size, capacity, planLimit),
+		Data:   data,
 	}
 }
 
