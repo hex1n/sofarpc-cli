@@ -13,11 +13,15 @@ All notable changes to this project are recorded here.
 - Added `schemaVersion` to invoke plans so dry-run output has an explicit replay contract.
 - Added replay schema validation that rejects missing or unsupported plan versions before dry-run replay or execution.
 - Added plan schema and replay compatibility tests.
+- Added `SOFARPC_SESSION_PLAN_MAX_BYTES` to bound how much plan data sessions retain for `sessionId` replay.
+- Added diagnostics for skipped session plan capture when a plan exceeds the session capture limit.
+- Added doctor visibility into session count, capacity, and session plan capture limit.
 
 ### Changed
 
 - Recommended tag-based installs for repeatable environments while keeping `@latest` available for development snapshots.
 - `sofarpc_replay` now requires captured plans to use the current `sofarpc.invoke.plan/v1` schema.
+- Oversized plans are still returned by `sofarpc_invoke`, but are no longer retained in session memory for `sessionId` replay.
 
 ## v0.1.0 - planned
 
