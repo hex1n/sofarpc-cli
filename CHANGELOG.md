@@ -10,10 +10,14 @@ All notable changes to this project are recorded here.
 - Added build-time version metadata injection through `-ldflags` for version, commit, and build date.
 - Added MCP server version injection so the MCP implementation metadata matches the CLI build version.
 - Added release-oriented documentation covering tag installs, version inspection, and release checklist.
+- Added `schemaVersion` to invoke plans so dry-run output has an explicit replay contract.
+- Added replay schema validation that rejects missing or unsupported plan versions before dry-run replay or execution.
+- Added plan schema and replay compatibility tests.
 
 ### Changed
 
 - Recommended tag-based installs for repeatable environments while keeping `@latest` available for development snapshots.
+- `sofarpc_replay` now requires captured plans to use the current `sofarpc.invoke.plan/v1` schema.
 
 ## v0.1.0 - planned
 
