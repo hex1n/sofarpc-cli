@@ -77,8 +77,8 @@ flowchart TB
 The architectural split is:
 
 - `internal/mcp` exposes the public tool contract.
-- `internal/sourcecontract` materializes contract information by scanning
-  project Java sources at startup.
+- `internal/sourcecontract` materializes contract information lazily by
+  scanning project Java sources only when a tool first needs contracts.
 - `internal/core` owns planning, target resolution, contract handling, and
   execution policy.
 - `internal/boltclient` and `internal/sofarpcwire` own the wire protocol.
