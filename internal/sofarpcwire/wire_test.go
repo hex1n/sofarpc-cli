@@ -2,6 +2,7 @@ package sofarpcwire
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -254,5 +255,61 @@ func TestDecodeResponse_RoundTripsSuccessEnvelope(t *testing.T) {
 	}
 	if got := itemFields["code"]; got != "ALPHA" {
 		t.Fatalf("item.code = %#v", got)
+	}
+}
+
+func TestDecodeResponseRejectsOverlargeFixedList(t *testing.T) {
+	t.Parallel()
+
+	_, err := DecodeResponse([]byte{'V', 'l', 0x00, 0x01, 0x86, 0xa1})
+	if err == nil {
+		t.Fatal("expected oversized list to be rejected")
+	}
+	if !strings.Contains(err.Error(), "list length") || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("error = %v, want list limit message", err)
+	}
+}
+
+func TestDecodeResponseRejectsOverlargeObjectDefinition(t *testing.T) {
+	t.Parallel()
+
+	_, err := DecodeResponse([]byte{'O', 0x91, 'X', 'I', 0x00, 0x01, 0x86, 0xa1})
+	if err == nil {
+		t.Fatal("expected oversized object definition to be rejected")
+	}
+	if !strings.Contains(err.Error(), "object field count") || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("error = %v, want object field limit message", err)
+	}
+}
+
+func TestHessianDecoderRejectsNestedDepth(t *testing.T) {
+	t.Parallel()
+
+	decoder := hessianDecoder{
+		data:   []byte{'V', 'V', 'z', 'z'},
+		limits: hessianDecoderLimits{MaxDepth: 1},
+	}
+	_, err := decoder.readValue()
+	if err == nil {
+		t.Fatal("expected nested value to be rejected")
+	}
+	if !strings.Contains(err.Error(), "nesting depth") {
+		t.Fatalf("error = %v, want depth limit message", err)
+	}
+}
+
+func TestHessianDecoderRejectsOverlargeBytes(t *testing.T) {
+	t.Parallel()
+
+	decoder := hessianDecoder{
+		data:   []byte{'B', 0x00, 0x04, 't', 'e', 's', 't'},
+		limits: hessianDecoderLimits{MaxScalarBytes: 3},
+	}
+	_, err := decoder.readValue()
+	if err == nil {
+		t.Fatal("expected bytes value to be rejected")
+	}
+	if !strings.Contains(err.Error(), "bytes byte length") || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("error = %v, want scalar byte limit message", err)
 	}
 }

@@ -48,7 +48,7 @@ func ResolveMethod(store Store, service, method string, paramTypes []string) (Re
 			WithHint("sofarpc_doctor", nil, "facade index may be missing or stale")
 	}
 
-	overloads := collectOverloads(cls, method)
+	overloads := collectOverloads(store, cls, method)
 	if len(overloads) == 0 {
 		return Result{}, errcode.New(errcode.MethodNotFound, "contract",
 			fmt.Sprintf("no method %q on %s", method, service)).
@@ -67,14 +67,45 @@ func ResolveMethod(store Store, service, method string, paramTypes []string) (Re
 	}, nil
 }
 
-func collectOverloads(cls javamodel.Class, name string) []javamodel.Method {
+func collectOverloads(store Store, cls javamodel.Class, name string) []javamodel.Method {
 	var out []javamodel.Method
-	for _, m := range cls.Methods {
-		if m.Name == name {
-			out = append(out, m)
+	seen := map[string]bool{}
+	seenSignatures := map[string]bool{}
+
+	var walk func(javamodel.Class)
+	walk = func(current javamodel.Class) {
+		if current.FQN == "" || seen[current.FQN] {
+			return
+		}
+		seen[current.FQN] = true
+		for _, m := range current.Methods {
+			if m.Name == name {
+				signature := methodSignature(m)
+				if seenSignatures[signature] {
+					continue
+				}
+				seenSignatures[signature] = true
+				out = append(out, m)
+			}
+		}
+		for _, ifaceName := range current.Interfaces {
+			if iface, ok := store.Class(rawJavaTypeName(ifaceName)); ok {
+				walk(iface)
+			}
+		}
+		if current.Superclass != "" {
+			if super, ok := store.Class(rawJavaTypeName(current.Superclass)); ok {
+				walk(super)
+			}
 		}
 	}
+
+	walk(cls)
 	return out
+}
+
+func methodSignature(m javamodel.Method) string {
+	return m.Name + "(" + strings.Join(m.ParamTypes, ",") + ")"
 }
 
 func pickOverload(service, method string, overloads []javamodel.Method, paramTypes []string) (int, error) {

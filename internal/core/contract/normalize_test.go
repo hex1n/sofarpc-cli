@@ -147,6 +147,77 @@ func TestNormalizeArgs_InheritedFieldsAreVisible(t *testing.T) {
 	}
 }
 
+func TestNormalizeArgs_RejectsUnassignableExplicitAtType(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{FQN: "com.foo.Base", Kind: javamodel.KindClass},
+		javamodel.Class{FQN: "com.foo.Other", Kind: javamodel.KindClass},
+	)
+
+	_, err := NormalizeArgs([]string{"com.foo.Base"}, []any{
+		map[string]any{"@type": "com.foo.Other"},
+	}, store)
+	if err == nil {
+		t.Fatal("expected explicit @type mismatch to fail")
+	}
+}
+
+func TestNormalizeArgs_AllowsAssignableExplicitAtType(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{FQN: "com.foo.Base", Kind: javamodel.KindClass},
+		javamodel.Class{
+			FQN:        "com.foo.Child",
+			Kind:       javamodel.KindClass,
+			Superclass: "com.foo.Base",
+			Fields:     []javamodel.Field{{Name: "id", JavaType: "java.lang.Long"}},
+		},
+	)
+
+	args, err := NormalizeArgs([]string{"com.foo.Base"}, []any{
+		map[string]any{"@type": "com.foo.Child", "id": "9"},
+	}, store)
+	if err != nil {
+		t.Fatalf("NormalizeArgs: %v", err)
+	}
+	child := args[0].(map[string]any)
+	if child["@type"] != "com.foo.Child" || child["id"] != int64(9) {
+		t.Fatalf("child: %#v", child)
+	}
+}
+
+func TestNormalizeArgs_AllowsAssignableParameterizedInterfaceAtType(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Base",
+			Kind: javamodel.KindInterface,
+		},
+		javamodel.Class{
+			FQN:        "com.foo.Child",
+			Kind:       javamodel.KindClass,
+			Interfaces: []string{"com.foo.Base<com.foo.Foo>"},
+		},
+	)
+
+	args, err := NormalizeArgs([]string{"com.foo.Base<com.foo.Foo>"}, []any{
+		map[string]any{"@type": "com.foo.Child"},
+	}, store)
+	if err != nil {
+		t.Fatalf("NormalizeArgs: %v", err)
+	}
+	child := args[0].(map[string]any)
+	if child["@type"] != "com.foo.Child" {
+		t.Fatalf("child: %#v", child)
+	}
+}
+
+func TestNormalizeArgs_RejectsWrongExplicitDecimalAtType(t *testing.T) {
+	_, err := NormalizeArgs([]string{"java.math.BigDecimal"}, []any{
+		map[string]any{"@type": "java.math.BigInteger", "value": "10"},
+	}, NewInMemoryStore())
+	if err == nil {
+		t.Fatal("expected explicit decimal @type mismatch to fail")
+	}
+}
+
 func TestNormalizeArgs_ObjectShapeMismatchFails(t *testing.T) {
 	store := NewInMemoryStore(
 		javamodel.Class{

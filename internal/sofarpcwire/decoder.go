@@ -30,6 +30,11 @@ const (
 	hessianDoubleByte  = 0x69
 	hessianDoubleShort = 0x6a
 	hessianDoubleFloat = 0x6b
+
+	defaultHessianMaxDepth           = 128
+	defaultHessianMaxCollectionItems = 100_000
+	defaultHessianMaxRefs            = 100_000
+	defaultHessianMaxScalarBytes     = 16 << 20
 )
 
 // hessianClassDef records one typed object definition seen earlier in
@@ -40,6 +45,13 @@ type hessianClassDef struct {
 	FieldNames []string
 }
 
+type hessianDecoderLimits struct {
+	MaxDepth           int
+	MaxCollectionItems int
+	MaxRefs            int
+	MaxScalarBytes     int
+}
+
 // hessianDecoder is a minimal Hessian v1 reader tuned for the SOFARPC
 // response envelope. It maintains three tables as required by the spec:
 // a ref table for already-decoded values, a class-def table for typed
@@ -47,12 +59,19 @@ type hessianClassDef struct {
 type hessianDecoder struct {
 	data      []byte
 	offset    int
+	depth     int
 	refs      []any
 	classDefs []hessianClassDef
 	types     []string
+	limits    hessianDecoderLimits
 }
 
 func (d *hessianDecoder) readValue() (any, error) {
+	if err := d.enterValue(); err != nil {
+		return nil, err
+	}
+	defer d.leaveValue()
+
 	tag, err := d.readByte()
 	if err != nil {
 		return nil, err
@@ -205,6 +224,9 @@ func (d *hessianDecoder) readList() (any, error) {
 
 	items := make([]any, 0)
 	if length >= 0 {
+		if err := d.checkCollectionLength("list", length); err != nil {
+			return nil, err
+		}
 		items = make([]any, 0, length)
 		for i := 0; i < length; i++ {
 			value, err := d.readValue()
@@ -217,6 +239,7 @@ func (d *hessianDecoder) readList() (any, error) {
 			d.offset++
 		}
 	} else {
+		count := 0
 		for {
 			next, ok := d.peekByte()
 			if !ok {
@@ -231,18 +254,26 @@ func (d *hessianDecoder) readList() (any, error) {
 				return nil, err
 			}
 			items = append(items, value)
+			count++
+			if err := d.checkCollectionLength("list", count); err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	if typeName == "" {
-		d.refs = append(d.refs, items)
+		if err := d.addRef(items); err != nil {
+			return nil, err
+		}
 		return items, nil
 	}
 	list := map[string]any{
 		"type":  typeName,
 		"items": items,
 	}
-	d.refs = append(d.refs, list)
+	if err := d.addRef(list); err != nil {
+		return nil, err
+	}
 	return list, nil
 }
 
@@ -258,6 +289,9 @@ func (d *hessianDecoder) readFixedTypedList() (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := d.checkCollectionLength("typed list", length); err != nil {
+		return nil, err
+	}
 
 	items := make([]any, 0, length)
 	for i := 0; i < length; i++ {
@@ -271,7 +305,9 @@ func (d *hessianDecoder) readFixedTypedList() (any, error) {
 		"type":  d.types[ref],
 		"items": items,
 	}
-	d.refs = append(d.refs, list)
+	if err := d.addRef(list); err != nil {
+		return nil, err
+	}
 	return list, nil
 }
 
@@ -282,15 +318,18 @@ func (d *hessianDecoder) readMap() (any, error) {
 	}
 
 	entries := make(map[string]any)
-	if typeName == "" {
-		d.refs = append(d.refs, entries)
-	} else {
-		d.refs = append(d.refs, map[string]any{
+	var out any = entries
+	if typeName != "" {
+		out = map[string]any{
 			"type":    typeName,
 			"entries": entries,
-		})
+		}
+	}
+	if err := d.addRef(out); err != nil {
+		return nil, err
 	}
 
+	count := 0
 	for {
 		next, ok := d.peekByte()
 		if !ok {
@@ -309,15 +348,13 @@ func (d *hessianDecoder) readMap() (any, error) {
 			return nil, err
 		}
 		entries[fmt.Sprint(key)] = value
+		count++
+		if err := d.checkCollectionLength("map", count); err != nil {
+			return nil, err
+		}
 	}
 
-	if typeName == "" {
-		return entries, nil
-	}
-	return map[string]any{
-		"type":    typeName,
-		"entries": entries,
-	}, nil
+	return out, nil
 }
 
 func (d *hessianDecoder) readObjectDefinition() error {
@@ -329,6 +366,9 @@ func (d *hessianDecoder) readObjectDefinition() error {
 	if err != nil {
 		return err
 	}
+	if err := d.checkCollectionLength("object field count", fieldCount); err != nil {
+		return err
+	}
 
 	fieldNames := make([]string, fieldCount)
 	for i := range fieldNames {
@@ -338,11 +378,10 @@ func (d *hessianDecoder) readObjectDefinition() error {
 		}
 		fieldNames[i] = name
 	}
-	d.classDefs = append(d.classDefs, hessianClassDef{
+	return d.addClassDef(hessianClassDef{
 		Type:       typeName,
 		FieldNames: fieldNames,
 	})
-	return nil
 }
 
 func (d *hessianDecoder) readObjectInstance() (any, error) {
@@ -361,7 +400,9 @@ func (d *hessianDecoder) readObjectInstance() (any, error) {
 		"fields":     fields,
 		"fieldNames": append([]string(nil), def.FieldNames...),
 	}
-	d.refs = append(d.refs, object)
+	if err := d.addRef(object); err != nil {
+		return nil, err
+	}
 
 	for _, name := range def.FieldNames {
 		value, err := d.readValue()
@@ -393,7 +434,9 @@ func (d *hessianDecoder) readType() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		d.types = append(d.types, typeName)
+		if err := d.addType(typeName); err != nil {
+			return "", err
+		}
 		return typeName, nil
 	case 'T', hessianTypeRef:
 		d.offset++
@@ -436,4 +479,92 @@ func (d *hessianDecoder) readRef(ref int) (any, error) {
 		return nil, d.errorf("unknown ref %d", ref)
 	}
 	return d.refs[ref], nil
+}
+
+func defaultHessianDecoderLimits() hessianDecoderLimits {
+	return hessianDecoderLimits{
+		MaxDepth:           defaultHessianMaxDepth,
+		MaxCollectionItems: defaultHessianMaxCollectionItems,
+		MaxRefs:            defaultHessianMaxRefs,
+		MaxScalarBytes:     defaultHessianMaxScalarBytes,
+	}
+}
+
+func (d *hessianDecoder) ensureLimits() {
+	defaults := defaultHessianDecoderLimits()
+	if d.limits.MaxDepth <= 0 {
+		d.limits.MaxDepth = defaults.MaxDepth
+	}
+	if d.limits.MaxCollectionItems <= 0 {
+		d.limits.MaxCollectionItems = defaults.MaxCollectionItems
+	}
+	if d.limits.MaxRefs <= 0 {
+		d.limits.MaxRefs = defaults.MaxRefs
+	}
+	if d.limits.MaxScalarBytes <= 0 {
+		d.limits.MaxScalarBytes = defaults.MaxScalarBytes
+	}
+}
+
+func (d *hessianDecoder) enterValue() error {
+	d.ensureLimits()
+	d.depth++
+	if d.depth > d.limits.MaxDepth {
+		d.depth--
+		return d.errorf("hessian nesting depth %d exceeds limit %d", d.depth+1, d.limits.MaxDepth)
+	}
+	return nil
+}
+
+func (d *hessianDecoder) leaveValue() {
+	d.depth--
+}
+
+func (d *hessianDecoder) checkCollectionLength(kind string, length int) error {
+	d.ensureLimits()
+	if length < 0 {
+		return d.errorf("%s length %d is invalid", kind, length)
+	}
+	if length > d.limits.MaxCollectionItems {
+		return d.errorf("%s length %d exceeds limit %d", kind, length, d.limits.MaxCollectionItems)
+	}
+	return nil
+}
+
+func (d *hessianDecoder) checkScalarByteLength(kind string, length int) error {
+	d.ensureLimits()
+	if length < 0 {
+		return d.errorf("%s byte length %d is invalid", kind, length)
+	}
+	if length > d.limits.MaxScalarBytes {
+		return d.errorf("%s byte length %d exceeds limit %d", kind, length, d.limits.MaxScalarBytes)
+	}
+	return nil
+}
+
+func (d *hessianDecoder) addRef(value any) error {
+	d.ensureLimits()
+	if len(d.refs)+1 > d.limits.MaxRefs {
+		return d.errorf("hessian ref table size %d exceeds limit %d", len(d.refs)+1, d.limits.MaxRefs)
+	}
+	d.refs = append(d.refs, value)
+	return nil
+}
+
+func (d *hessianDecoder) addClassDef(def hessianClassDef) error {
+	d.ensureLimits()
+	if len(d.classDefs)+1 > d.limits.MaxRefs {
+		return d.errorf("hessian class definition table size %d exceeds limit %d", len(d.classDefs)+1, d.limits.MaxRefs)
+	}
+	d.classDefs = append(d.classDefs, def)
+	return nil
+}
+
+func (d *hessianDecoder) addType(typeName string) error {
+	d.ensureLimits()
+	if len(d.types)+1 > d.limits.MaxRefs {
+		return d.errorf("hessian type table size %d exceeds limit %d", len(d.types)+1, d.limits.MaxRefs)
+	}
+	d.types = append(d.types, typeName)
+	return nil
 }

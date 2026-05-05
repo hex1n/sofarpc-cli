@@ -21,7 +21,7 @@ func ResolvedFields(store Store, fqn string) []javamodel.Field {
 			return
 		}
 		if cls.Superclass != "" {
-			walk(cls.Superclass)
+			walk(rawJavaTypeName(cls.Superclass))
 		}
 		for _, field := range cls.Fields {
 			if i, exists := index[field.Name]; exists {

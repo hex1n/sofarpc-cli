@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
+	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 )
 
@@ -49,6 +51,88 @@ func TestValidateRealInvokeRespectsAllowedServices(t *testing.T) {
 	}
 	if ecerr.Code != errcode.InvocationRejected {
 		t.Fatalf("code = %s, want %s", ecerr.Code, errcode.InvocationRejected)
+	}
+}
+
+func TestValidateExecutionPolicyRejectsDirectTargetOverrideByDefault(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+	t.Setenv(envAllowTargetOverride, "false")
+
+	err := validateExecutionPolicy(invoke.Plan{
+		Service: "com.foo.Svc",
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://override.example:12200",
+		},
+	}, "invoke", target.Sources{})
+	if err == nil {
+		t.Fatal("expected direct target override to be rejected")
+	}
+	ecerr, ok := err.(*errcode.Error)
+	if !ok {
+		t.Fatalf("error type = %T", err)
+	}
+	if ecerr.Code != errcode.InvocationRejected {
+		t.Fatalf("code = %s, want %s", ecerr.Code, errcode.InvocationRejected)
+	}
+}
+
+func TestValidateExecutionPolicyAllowsEnvDirectTargetByDefault(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+	t.Setenv(envAllowTargetOverride, "false")
+
+	err := validateExecutionPolicy(invoke.Plan{
+		Service: "com.foo.Svc",
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "env.example:12200",
+		},
+	}, "invoke", target.Sources{
+		Env: target.Config{DirectURL: "bolt://env.example:12200"},
+	})
+	if err != nil {
+		t.Fatalf("env direct target should be allowed: %v", err)
+	}
+}
+
+func TestValidateExecutionPolicyRespectsAllowedTargetHosts(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+	t.Setenv(envAllowTargetOverride, "true")
+	t.Setenv(envAllowedTargetHosts, "allowed.example,127.0.0.1:12200")
+
+	err := validateExecutionPolicy(invoke.Plan{
+		Service: "com.foo.Svc",
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://blocked.example:12200",
+		},
+	}, "replay", target.Sources{})
+	if err == nil {
+		t.Fatal("expected blocked target host to be rejected")
+	}
+	ecerr, ok := err.(*errcode.Error)
+	if !ok {
+		t.Fatalf("error type = %T", err)
+	}
+	if ecerr.Code != errcode.InvocationRejected {
+		t.Fatalf("code = %s, want %s", ecerr.Code, errcode.InvocationRejected)
+	}
+	if ecerr.Phase != "replay" {
+		t.Fatalf("phase = %q, want replay", ecerr.Phase)
+	}
+
+	err = validateExecutionPolicy(invoke.Plan{
+		Service: "com.foo.Svc",
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://allowed.example:12200",
+		},
+	}, "invoke", target.Sources{})
+	if err != nil {
+		t.Fatalf("allowed target host rejected: %v", err)
 	}
 }
 

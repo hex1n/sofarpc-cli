@@ -26,6 +26,7 @@ type ReplayOutput struct {
 
 func registerReplay(server *sdkmcp.Server, opts Options) {
 	sessions := opts.Sessions
+	sources := opts.TargetSources
 	inputSchema, err := jsonschema.For[ReplayInput](nil)
 	if err != nil {
 		panic(fmt.Sprintf("infer replay input schema: %v", err))
@@ -50,6 +51,11 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 		if in.DryRun {
 			out := ReplayOutput{Ok: true, Plan: plan, Source: source}
 			return invokeToolResult(out, summarizeReplay(plan, source, true), false), nil
+		}
+
+		if err := validateExecutionPolicy(*plan, "replay", sources); err != nil {
+			out := ReplayOutput{Plan: plan, Source: source, Error: asErrcodeError(err)}
+			return invokeToolResult(out, errorText("replay rejected", err), true), nil
 		}
 
 		outcome, execErr := invoke.Execute(ctx, *plan, "replay")

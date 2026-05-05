@@ -3,6 +3,7 @@ package boltclient
 import (
 	"bytes"
 	"encoding/binary"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +71,77 @@ func TestReadResponse(t *testing.T) {
 	}
 	if resp.Header["sofa_head_generic_type"] != "2" {
 		t.Fatalf("generic header = %q", resp.Header["sofa_head_generic_type"])
+	}
+}
+
+func TestReadResponseRejectsOversizedBodyBeforeAllocation(t *testing.T) {
+	t.Parallel()
+
+	raw := validResponseHeader()
+	binary.BigEndian.PutUint32(raw[16:20], uint32(DefaultMaxResponseBytes+1))
+
+	_, err := ReadResponse(bytes.NewReader(raw))
+	if err == nil {
+		t.Fatal("expected oversized response to be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("error = %v, want limit message", err)
+	}
+}
+
+func TestReadResponseRejectsUnexpectedFrameMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func([]byte)
+		want   string
+	}{
+		{
+			name: "type",
+			mutate: func(raw []byte) {
+				raw[1] = RequestType
+			},
+			want: "frame type",
+		},
+		{
+			name: "command code",
+			mutate: func(raw []byte) {
+				binary.BigEndian.PutUint16(raw[2:4], CmdCodeRPCRequest)
+			},
+			want: "command code",
+		},
+		{
+			name: "command version",
+			mutate: func(raw []byte) {
+				raw[4] = CmdVersion + 1
+			},
+			want: "command version",
+		},
+		{
+			name: "codec",
+			mutate: func(raw []byte) {
+				raw[9] = CodecHessian2 + 1
+			},
+			want: "codec",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			raw := validResponseHeader()
+			tt.mutate(raw)
+			_, err := ReadResponse(bytes.NewReader(raw))
+			if err == nil {
+				t.Fatal("expected response to be rejected")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -166,4 +238,15 @@ func TestEncodeRequestFrameLayout(t *testing.T) {
 	if got := frame[headerEnd:]; !bytes.Equal(got, content) {
 		t.Fatalf("content bytes = % x want % x", got, content)
 	}
+}
+
+func validResponseHeader() []byte {
+	raw := make([]byte, responseHeaderLengthV1)
+	raw[0] = ProtocolCodeV1
+	raw[1] = ResponseType
+	binary.BigEndian.PutUint16(raw[2:4], CmdCodeRPCResponse)
+	raw[4] = CmdVersion
+	binary.BigEndian.PutUint32(raw[5:9], 42)
+	raw[9] = CodecHessian2
+	return raw
 }

@@ -125,6 +125,9 @@ func normalizeObject(spec TypeSpec, raw any, store Store, lookup javatype.ClassL
 	typeName := spec.Base
 	if explicit, ok := values["@type"].(string); ok && strings.TrimSpace(explicit) != "" {
 		typeName = strings.TrimSpace(explicit)
+		if err := validateExplicitType(spec.Base, typeName, store); err != nil {
+			return nil, err
+		}
 	}
 	fieldTypes := resolvedFieldMap(store, typeName)
 	out := make(map[string]any, len(values)+1)
@@ -188,11 +191,68 @@ func normalizeScalar(base string, raw any) (any, error) {
 			return value, nil
 		}
 	case "java.math.BigDecimal", "java.math.BigInteger":
+		if values, ok := stringMap(raw); ok {
+			if explicit, ok := values["@type"].(string); ok && strings.TrimSpace(explicit) != "" && strings.TrimSpace(explicit) != base {
+				return nil, fmt.Errorf("explicit @type %q is not assignable to declared type %s", strings.TrimSpace(explicit), base)
+			}
+		}
 		if value, ok := decimalObjectFor(base, raw); ok {
 			return value, nil
 		}
 	}
 	return raw, nil
+}
+
+func validateExplicitType(declared, actual string, store Store) error {
+	declared = rawJavaTypeName(declared)
+	actual = rawJavaTypeName(actual)
+	if declared == "" || actual == "" || declared == "java.lang.Object" || declared == actual {
+		return nil
+	}
+	if typeAssignable(store, actual, declared) {
+		return nil
+	}
+	return fmt.Errorf("explicit @type %q is not assignable to declared type %s", actual, declared)
+}
+
+func typeAssignable(store Store, actual, declared string) bool {
+	if store == nil {
+		return false
+	}
+	seen := map[string]bool{}
+	var walk func(string) bool
+	walk = func(name string) bool {
+		name = rawJavaTypeName(name)
+		if name == "" || seen[name] {
+			return false
+		}
+		if name == declared {
+			return true
+		}
+		seen[name] = true
+		cls, ok := store.Class(name)
+		if !ok {
+			return false
+		}
+		if walk(cls.Superclass) {
+			return true
+		}
+		for _, iface := range cls.Interfaces {
+			if walk(iface) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(actual)
+}
+
+func rawJavaTypeName(name string) string {
+	spec := ParseTypeSpec(strings.TrimSpace(name))
+	if spec.Base == "" {
+		return strings.TrimSpace(name)
+	}
+	return spec.Base
 }
 
 func normalizeBool(raw any) any {

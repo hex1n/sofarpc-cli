@@ -23,23 +23,42 @@ import (
 // Load builds a light FQN->path index; Class(fqn) parses and caches a class on
 // first access.
 type Store struct {
-	mu            sync.RWMutex
-	index         map[string]string
-	cache         map[string]javamodel.Class
-	indexedFiles  int
-	indexFailures map[string]string
-	parseFailures map[string]string
+	mu                   sync.RWMutex
+	index                map[string]string
+	symbols              symbolTable
+	cache                map[string]javamodel.Class
+	indexedFiles         int
+	indexFailureCount    int
+	indexFailures        map[string]string
+	duplicateClasses     map[string][]string
+	skippedDirs          map[string]int
+	generatedSourceFiles int
+	moduleRoots          int
+	hints                []string
+	parseFailureCount    int
+	parseFailures        map[string]string
+	resolutionIssueCount int
+	resolutionIssues     map[string][]string
 }
 
 // Diagnostics surfaces the store's current health so sofarpc_open and
 // sofarpc_doctor can report how many files were scanned, how many
 // parsed successfully, and where the failures clustered.
 type Diagnostics struct {
-	IndexedClasses int               `json:"indexedClasses"`
-	IndexedFiles   int               `json:"indexedFiles"`
-	ParsedClasses  int               `json:"parsedClasses"`
-	IndexFailures  map[string]string `json:"indexFailures,omitempty"`
-	ParseFailures  map[string]string `json:"parseFailures,omitempty"`
+	IndexedClasses       int                 `json:"indexedClasses"`
+	IndexedFiles         int                 `json:"indexedFiles"`
+	ParsedClasses        int                 `json:"parsedClasses"`
+	IndexFailureCount    int                 `json:"indexFailureCount,omitempty"`
+	ParseFailureCount    int                 `json:"parseFailureCount,omitempty"`
+	ResolutionIssueCount int                 `json:"resolutionIssueCount,omitempty"`
+	IndexFailures        map[string]string   `json:"indexFailures,omitempty"`
+	ParseFailures        map[string]string   `json:"parseFailures,omitempty"`
+	ResolutionIssues     map[string][]string `json:"resolutionIssues,omitempty"`
+	DuplicateClasses     map[string][]string `json:"duplicateClasses,omitempty"`
+	SkippedDirs          map[string]int      `json:"skippedDirs,omitempty"`
+	GeneratedSourceFiles int                 `json:"generatedSourceFiles,omitempty"`
+	ModuleRoots          int                 `json:"moduleRoots,omitempty"`
+	Hints                []string            `json:"hints,omitempty"`
 }
 
 // Load scans projectRoot for Java source files and returns a Store when at
@@ -60,7 +79,7 @@ func Load(projectRoot string) (*Store, error) {
 		return nil, nil
 	}
 
-	index, files, failures, err := scanProjectIndex(projectRoot)
+	index, files, stats, err := scanProjectIndex(projectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -68,11 +87,20 @@ func Load(projectRoot string) (*Store, error) {
 		return nil, nil
 	}
 	return &Store{
-		index:         index,
-		cache:         map[string]javamodel.Class{},
-		indexedFiles:  files,
-		indexFailures: failures,
-		parseFailures: map[string]string{},
+		index:                index,
+		symbols:              newProjectSymbolTable(index),
+		cache:                map[string]javamodel.Class{},
+		indexedFiles:         files,
+		indexFailureCount:    stats.indexFailureCount,
+		indexFailures:        stats.indexFailures,
+		duplicateClasses:     stats.duplicateClasses,
+		skippedDirs:          stats.skippedDirs,
+		generatedSourceFiles: stats.generatedSourceFiles,
+		moduleRoots:          len(stats.moduleRoots),
+		hints:                stats.hints(),
+		parseFailureCount:    0,
+		parseFailures:        map[string]string{},
+		resolutionIssues:     map[string][]string{},
 	}, nil
 }
 
@@ -95,7 +123,7 @@ func (s *Store) Class(fqn string) (javamodel.Class, bool) {
 		return javamodel.Class{}, false
 	}
 
-	classes, ok := parseJavaFileClasses(path)
+	classes, resolutionIssues, ok := parseJavaFileClasses(path, s.symbols)
 	if !ok || len(classes) == 0 {
 		s.recordParseFailure(fqn, "parseJavaFile returned no top-level declaration")
 		return javamodel.Class{}, false
@@ -112,9 +140,12 @@ func (s *Store) Class(fqn string) (javamodel.Class, bool) {
 	for _, cls := range classes {
 		s.cache[cls.FQN] = cls
 	}
+	for _, issue := range resolutionIssues {
+		s.recordResolutionIssueLocked(issue)
+	}
 	cls, exists := s.cache[fqn]
 	if !exists {
-		s.recordParseFailure(fqn, "parsed file did not materialize requested class")
+		s.recordParseFailureLocked(fqn, "parsed file did not materialize requested class")
 		return javamodel.Class{}, false
 	}
 	return cls, true
@@ -139,11 +170,20 @@ func (s *Store) Diagnostics() Diagnostics {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return Diagnostics{
-		IndexedClasses: len(s.index),
-		IndexedFiles:   s.indexedFiles,
-		ParsedClasses:  len(s.cache),
-		IndexFailures:  cloneStringMap(s.indexFailures),
-		ParseFailures:  cloneStringMap(s.parseFailures),
+		IndexedClasses:       len(s.index),
+		IndexedFiles:         s.indexedFiles,
+		ParsedClasses:        len(s.cache),
+		IndexFailureCount:    s.indexFailureCount,
+		ParseFailureCount:    s.parseFailureCount,
+		ResolutionIssueCount: s.resolutionIssueCount,
+		IndexFailures:        cloneStringMap(s.indexFailures),
+		ParseFailures:        cloneStringMap(s.parseFailures),
+		ResolutionIssues:     cloneStringSliceMap(s.resolutionIssues),
+		DuplicateClasses:     cloneStringSliceMap(s.duplicateClasses),
+		SkippedDirs:          cloneIntMap(s.skippedDirs),
+		GeneratedSourceFiles: s.generatedSourceFiles,
+		ModuleRoots:          s.moduleRoots,
+		Hints:                append([]string(nil), s.hints...),
 	}
 }
 
@@ -182,5 +222,34 @@ func (s *Store) recordParseFailure(fqn, detail string) {
 	if _, exists := s.parseFailures[fqn]; exists {
 		return
 	}
+	s.recordParseFailureLocked(fqn, detail)
+}
+
+func (s *Store) recordParseFailureLocked(fqn, detail string) {
+	if s.parseFailures == nil {
+		s.parseFailures = map[string]string{}
+	}
+	if _, exists := s.parseFailures[fqn]; exists {
+		return
+	}
+	s.parseFailureCount++
 	s.parseFailures[fqn] = detail
+}
+
+func (s *Store) recordResolutionIssueLocked(issue typeResolutionIssue) {
+	classFQN := strings.TrimSpace(issue.ClassFQN)
+	message := strings.TrimSpace(issue.message())
+	if classFQN == "" || message == "" {
+		return
+	}
+	if s.resolutionIssues == nil {
+		s.resolutionIssues = map[string][]string{}
+	}
+	for _, existing := range s.resolutionIssues[classFQN] {
+		if existing == message {
+			return
+		}
+	}
+	s.resolutionIssues[classFQN] = append(s.resolutionIssues[classFQN], message)
+	s.resolutionIssueCount++
 }

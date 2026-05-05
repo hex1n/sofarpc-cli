@@ -116,6 +116,18 @@ func TestExecuteDirectIfPossible_InvalidTargetReturnsErrcode(t *testing.T) {
 	}
 }
 
+func TestMaxResponseBytesFromEnv(t *testing.T) {
+	t.Setenv(envMaxResponseBytes, "4096")
+	if got := maxResponseBytesFromEnv(); got != 4096 {
+		t.Fatalf("maxResponseBytesFromEnv = %d, want 4096", got)
+	}
+
+	t.Setenv(envMaxResponseBytes, "invalid")
+	if got := maxResponseBytesFromEnv(); got != boltclient.DefaultMaxResponseBytes {
+		t.Fatalf("invalid env fallback = %d, want %d", got, boltclient.DefaultMaxResponseBytes)
+	}
+}
+
 func TestClassifyDirectInvokeError(t *testing.T) {
 	t.Parallel()
 

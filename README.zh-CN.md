@@ -149,6 +149,14 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
 - `targetAppName` 会设置 direct transport 的 target app header。
 - `directUrl` / `registryAddress` 是单次覆盖；否则以 MCP env 为准。
 - `dryRun=true` 返回的 plan 可以直接交给 `sofarpc_replay`。
+- 真实 `sofarpc_invoke` 和 `sofarpc_replay` 都需要 `SOFARPC_ALLOW_INVOKE=true`；
+  可用 `SOFARPC_ALLOWED_SERVICES` 限制允许调用的 service FQN。
+- 非 dry-run direct 调用默认只执行 MCP env 中的 `SOFARPC_DIRECT_URL`；如果要允许
+  单次 `directUrl` 覆盖或 literal replay payload 里的 target，需要显式设置
+  `SOFARPC_ALLOW_TARGET_OVERRIDE=true`。可用 `SOFARPC_ALLOWED_TARGET_HOSTS` 继续限制
+  允许访问的 host 或 host:port。
+- direct BOLT response body 在分配和解码前会受
+  `SOFARPC_MAX_RESPONSE_BYTES` 限制，默认 16 MiB。
 
 当 contract information 存在时，facade-backed invoke 会在进入 wire 之前自动
 归一化常见 Java 形状：

@@ -115,6 +115,9 @@ func (d *hessianDecoder) readChunkedString(initial byte) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if err := d.checkScalarByteLength("string", len(out)+len(chunk)); err != nil {
+			return "", err
+		}
 		out = append(out, chunk...)
 
 		if tag != 's' {
@@ -154,6 +157,9 @@ func (d *hessianDecoder) readBytesWithTag(tag byte) ([]byte, error) {
 		if d.offset+length > len(d.data) {
 			return nil, d.errorf("short byte slice")
 		}
+		if err := d.checkScalarByteLength("bytes", len(out)+length); err != nil {
+			return nil, err
+		}
 		out = append(out, d.data[d.offset:d.offset+length]...)
 		d.offset += length
 
@@ -191,6 +197,9 @@ func (d *hessianDecoder) readUTF8Chars(charLen int) (string, error) {
 }
 
 func (d *hessianDecoder) readUTF8Bytes(charLen int) ([]byte, error) {
+	if charLen < 0 {
+		return nil, d.errorf("utf8 string length %d is invalid", charLen)
+	}
 	start := d.offset
 	count := 0
 	for count < charLen {
@@ -204,7 +213,11 @@ func (d *hessianDecoder) readUTF8Bytes(charLen int) ([]byte, error) {
 		d.offset += size
 		count++
 	}
-	return append([]byte(nil), d.data[start:d.offset]...), nil
+	raw := append([]byte(nil), d.data[start:d.offset]...)
+	if err := d.checkScalarByteLength("string", len(raw)); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func (d *hessianDecoder) readInt32() (int, error) {

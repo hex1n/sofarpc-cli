@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
@@ -35,7 +36,73 @@ func TestReplay_PayloadDryRunReturnsPlan(t *testing.T) {
 	}
 }
 
+func TestReplay_NonDryRunRequiresAllowInvokeEnv(t *testing.T) {
+	t.Setenv(envAllowInvoke, "false")
+
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": samplePlan(),
+	})
+	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
+		t.Fatalf("expected InvocationRejected, got %+v", out.Error)
+	}
+	if out.Error.Phase != "replay" {
+		t.Fatalf("phase = %q, want replay", out.Error.Phase)
+	}
+	if !strings.Contains(out.Error.Message, envAllowInvoke) {
+		t.Fatalf("error message should mention %s: %q", envAllowInvoke, out.Error.Message)
+	}
+	if out.Plan == nil || out.Source != "payload" {
+		t.Fatalf("rejected replay should keep plan/source: plan=%+v source=%q", out.Plan, out.Source)
+	}
+}
+
+func TestReplay_NonDryRunRespectsAllowedServices(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "com.foo.OtherFacade")
+
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": samplePlan(),
+	})
+	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
+		t.Fatalf("expected InvocationRejected, got %+v", out.Error)
+	}
+	if out.Error.Phase != "replay" {
+		t.Fatalf("phase = %q, want replay", out.Error.Phase)
+	}
+	if !strings.Contains(out.Error.Message, envAllowedServices) {
+		t.Fatalf("error message should mention %s: %q", envAllowedServices, out.Error.Message)
+	}
+	if out.Plan == nil || out.Source != "payload" {
+		t.Fatalf("rejected replay should keep plan/source: plan=%+v source=%q", out.Plan, out.Source)
+	}
+}
+
+func TestReplay_NonDryRunRejectsTargetOverrideByDefault(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+	t.Setenv(envAllowTargetOverride, "false")
+
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": samplePlan(),
+	})
+	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
+		t.Fatalf("expected InvocationRejected, got %+v", out.Error)
+	}
+	if out.Error.Phase != "replay" {
+		t.Fatalf("phase = %q, want replay", out.Error.Phase)
+	}
+	if !strings.Contains(out.Error.Message, envAllowTargetOverride) {
+		t.Fatalf("error message should mention %s: %q", envAllowTargetOverride, out.Error.Message)
+	}
+	if out.Plan == nil || out.Source != "payload" {
+		t.Fatalf("rejected replay should keep plan/source: plan=%+v source=%q", out.Plan, out.Source)
+	}
+}
+
 func TestReplay_PayloadNonDryRunWithUnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+
 	out := callReplay(t, Options{}, map[string]any{
 		"payload": sampleRegistryPlan(),
 	})
@@ -48,6 +115,9 @@ func TestReplay_PayloadNonDryRunWithUnsupportedTargetSurfacesInvocationRejected(
 }
 
 func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+
 	plan := samplePlan()
 	appResponse := sofarpcwire.NormalizeArgs([]any{
 		map[string]any{
@@ -64,7 +134,11 @@ func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
 	defer stop()
 	plan.Target.DirectURL = directURL
 
-	out := callReplay(t, Options{}, map[string]any{
+	out := callReplay(t, Options{
+		TargetSources: target.Sources{
+			Env: target.Config{DirectURL: directURL},
+		},
+	}, map[string]any{
 		"payload": plan,
 	})
 	if !out.Ok {
