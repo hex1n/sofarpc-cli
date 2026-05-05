@@ -13,8 +13,10 @@ Driver for the six-tool `sofarpc-mcp` surface. The binary does one thing — **o
 - `SOFARPC_PROJECT_ROOT` is set on the server entry **or** the current CWD is the Java project; the server scans `.java` files from that root to power `describe`.
 - Target reachability: either `SOFARPC_DIRECT_URL` is on the server env, or the user supplies `directUrl` at invoke time.
 - Real network calls are disabled unless the server env has `SOFARPC_ALLOW_INVOKE=true`. `dryRun=true` always works and should be the default first step unless the user explicitly asks to send the request.
+- Non-dry-run direct calls default to the MCP server env `SOFARPC_DIRECT_URL`. Per-call `directUrl` overrides and literal replay payload targets require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`; `SOFARPC_ALLOWED_TARGET_HOSTS` can further restrict host or host:port values.
 - Prefer inline JSON `args`. Use `args: "@path"` only when the user supplied a file, the payload is too large to edit inline, or the same payload must be reused. `@file` must resolve inside `SOFARPC_ARGS_FILE_ROOT` when set, otherwise inside `SOFARPC_PROJECT_ROOT`; files outside that root or over `SOFARPC_ARGS_FILE_MAX_BYTES` (default 1 MiB) are rejected.
 - Session replay by `sessionId` retains only plans up to `SOFARPC_SESSION_PLAN_MAX_BYTES` (default 1 MiB). Oversized plans are still returned by `sofarpc_invoke`; replay them by passing the plan as a literal `payload`.
+- Direct BOLT response bodies are capped by `SOFARPC_MAX_RESPONSE_BYTES` (default 16 MiB) before allocation and Hessian decoding.
 
 If the user is on a brand-new checkout and these aren't set, do not guess — run `sofarpc_doctor` and fix in order.
 
@@ -80,6 +82,8 @@ If `sessionId` is present, the server also tries to capture the plan in memory f
 
 - Non-dry-run calls require `SOFARPC_ALLOW_INVOKE=true` in the MCP server env.
 - `SOFARPC_ALLOWED_SERVICES` optionally restricts service FQNs; `*` allows all.
+- Per-call target overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`; `SOFARPC_ALLOWED_TARGET_HOSTS` optionally restricts direct target host or host:port values.
+- `SOFARPC_MAX_RESPONSE_BYTES` bounds the direct BOLT response body before decode.
 - `registryAddress` is inspectable, but the executable mainline is direct + BOLT + Hessian2; use `directUrl` for real invoke.
 
 **Args input preference**:

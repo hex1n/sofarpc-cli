@@ -10,3 +10,6 @@ __pycache__/
 .pytest-tmp/
 .pytest_tmp/
 pytest_tmp/
+runtime-worker-java/target/
+spoon-indexer-java/target/
+internal/app/

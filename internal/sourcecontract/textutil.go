@@ -214,6 +214,46 @@ func skipTypeParameters(s string) string {
 	return s
 }
 
+func readTypeParameterBounds(s string) (map[string]string, string) {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "<") {
+		return nil, s
+	}
+	depth := 0
+	end := -1
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+			if depth == 0 {
+				end = i
+				i = len(s)
+			}
+		}
+	}
+	if end < 0 {
+		return nil, s
+	}
+	bounds := map[string]string{}
+	for _, part := range splitTopLevel(s[1:end], ',') {
+		name, rest := readIdentifier(part)
+		if name == "" {
+			continue
+		}
+		bound := "java.lang.Object"
+		if clause, ok := readClause(rest, "extends"); ok {
+			pieces := splitTopLevel(clause, '&')
+			if len(pieces) > 0 && strings.TrimSpace(pieces[0]) != "" {
+				bound = strings.TrimSpace(pieces[0])
+			}
+		}
+		bounds[name] = bound
+	}
+	return bounds, strings.TrimSpace(s[end+1:])
+}
+
 func readIdentifier(s string) (string, string) {
 	s = strings.TrimSpace(s)
 	if s == "" || !isIdentStart(s[0]) {
@@ -350,15 +390,6 @@ func isModifier(token string) bool {
 func isPrimitive(s string) bool {
 	switch s {
 	case "boolean", "byte", "short", "int", "long", "float", "double", "char", "void":
-		return true
-	default:
-		return false
-	}
-}
-
-func isJavaLang(s string) bool {
-	switch s {
-	case "String", "Object", "Boolean", "Byte", "Short", "Integer", "Long", "Float", "Double", "Character", "Number", "Enum", "Throwable", "Exception", "RuntimeException", "Iterable", "Class", "Void":
 		return true
 	default:
 		return false

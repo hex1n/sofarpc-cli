@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,11 +20,13 @@ import (
 )
 
 const (
-	envAllowInvoke      = "SOFARPC_ALLOW_INVOKE"
-	envAllowedServices  = "SOFARPC_ALLOWED_SERVICES"
-	envArgsFileRoot     = "SOFARPC_ARGS_FILE_ROOT"
-	envArgsFileMaxBytes = "SOFARPC_ARGS_FILE_MAX_BYTES"
-	defaultArgsFileMax = int64(1 << 20)
+	envAllowInvoke         = "SOFARPC_ALLOW_INVOKE"
+	envAllowedServices     = "SOFARPC_ALLOWED_SERVICES"
+	envAllowTargetOverride = "SOFARPC_ALLOW_TARGET_OVERRIDE"
+	envAllowedTargetHosts  = "SOFARPC_ALLOWED_TARGET_HOSTS"
+	envArgsFileRoot        = "SOFARPC_ARGS_FILE_ROOT"
+	envArgsFileMaxBytes    = "SOFARPC_ARGS_FILE_MAX_BYTES"
+	defaultArgsFileMax     = int64(1 << 20)
 )
 
 // InvokeOutput is the structured payload for sofarpc_invoke. Ok=true
@@ -86,7 +89,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			return invokeToolResult(out, summarizeInvokePlan(plan, true), false), nil
 		}
 
-		if err := validateRealInvoke(plan.Service); err != nil {
+		if err := validateExecutionPolicy(plan, "invoke", sources); err != nil {
 			out := InvokeOutput{Plan: &plan, Diagnostics: diagnosticsWithCapture(nil, capture), Error: asErrcodeError(err)}
 			return invokeToolResult(out, errorText("invoke rejected", err), true), nil
 		}
@@ -304,18 +307,117 @@ func argsFileMaxBytes() int64 {
 	return value
 }
 
+func validateExecutionPolicy(plan invoke.Plan, phase string, sources target.Sources) error {
+	if err := validateRealInvokeForPhase(plan.Service, phase); err != nil {
+		return err
+	}
+	return validateTargetPolicy(plan, phase, sources)
+}
+
 func validateRealInvoke(service string) error {
+	return validateRealInvokeForPhase(service, "invoke")
+}
+
+func validateRealInvokeForPhase(service, phase string) error {
+	if strings.TrimSpace(phase) == "" {
+		phase = "invoke"
+	}
 	if !envBool(envAllowInvoke) {
-		return errcode.New(errcode.InvocationRejected, "invoke",
+		return errcode.New(errcode.InvocationRejected, phase,
 			"real invoke is disabled; set SOFARPC_ALLOW_INVOKE=true to enable non-dry-run calls").
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true}, "inspect the plan safely first")
 	}
 	if !serviceAllowed(service) {
-		return errcode.New(errcode.InvocationRejected, "invoke",
+		return errcode.New(errcode.InvocationRejected, phase,
 			fmt.Sprintf("service %q is not allowed by SOFARPC_ALLOWED_SERVICES", service)).
 			WithHint("sofarpc_doctor", nil, "inspect invoke safety configuration")
 	}
 	return nil
+}
+
+func validateTargetPolicy(plan invoke.Plan, phase string, sources target.Sources) error {
+	cfg := target.Normalize(plan.Target)
+	if cfg.Mode != target.ModeDirect || cfg.DirectURL == "" {
+		return nil
+	}
+
+	envCfg := target.Normalize(sources.Env)
+	if !envBool(envAllowTargetOverride) {
+		switch {
+		case envCfg.DirectURL == "":
+			return errcode.New(errcode.InvocationRejected, phase,
+				fmt.Sprintf("direct target %q is not allowed; set SOFARPC_DIRECT_URL on the MCP server env or set SOFARPC_ALLOW_TARGET_OVERRIDE=true", cfg.DirectURL)).
+				WithHint("sofarpc_target", map[string]any{"explain": true},
+					"inspect the resolved target before enabling real invoke")
+		default:
+			same, err := sameDirectTarget(cfg.DirectURL, envCfg.DirectURL)
+			if err != nil {
+				return errcode.New(errcode.TargetInvalid, phase, err.Error()).
+					WithHint("sofarpc_target", map[string]any{"explain": true},
+						"inspect the resolved direct target address")
+			}
+			if !same {
+				return errcode.New(errcode.InvocationRejected, phase,
+					fmt.Sprintf("direct target %q does not match SOFARPC_DIRECT_URL; set SOFARPC_ALLOW_TARGET_OVERRIDE=true to allow per-call target overrides", cfg.DirectURL)).
+					WithHint("sofarpc_target", map[string]any{"explain": true},
+						"inspect the resolved target layers")
+			}
+		}
+	}
+
+	allowed, host, err := directTargetHostAllowed(cfg.DirectURL)
+	if err != nil {
+		return errcode.New(errcode.TargetInvalid, phase, err.Error()).
+			WithHint("sofarpc_target", map[string]any{"explain": true},
+				"inspect the resolved direct target address")
+	}
+	if !allowed {
+		return errcode.New(errcode.InvocationRejected, phase,
+			fmt.Sprintf("direct target host %q is not allowed by SOFARPC_ALLOWED_TARGET_HOSTS", host)).
+			WithHint("sofarpc_doctor", nil, "inspect invoke safety configuration")
+	}
+	return nil
+}
+
+func sameDirectTarget(left, right string) (bool, error) {
+	leftDial, err := target.ParseDirectDialAddress(left)
+	if err != nil {
+		return false, err
+	}
+	rightDial, err := target.ParseDirectDialAddress(right)
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(leftDial, rightDial), nil
+}
+
+func directTargetHostAllowed(directURL string) (bool, string, error) {
+	raw := strings.TrimSpace(os.Getenv(envAllowedTargetHosts))
+	if raw == "" {
+		return true, "", nil
+	}
+	dialTarget, err := target.ParseDirectDialAddress(directURL)
+	if err != nil {
+		return false, "", err
+	}
+	host, port, err := net.SplitHostPort(dialTarget)
+	if err != nil {
+		return false, "", fmt.Errorf("parse direct target host: %w", err)
+	}
+	normalizedDial := net.JoinHostPort(host, port)
+	for _, item := range strings.Split(raw, ",") {
+		allowed := strings.TrimSpace(item)
+		if allowed == "" {
+			continue
+		}
+		if allowed == "*" ||
+			strings.EqualFold(allowed, host) ||
+			strings.EqualFold(allowed, dialTarget) ||
+			strings.EqualFold(allowed, normalizedDial) {
+			return true, host, nil
+		}
+	}
+	return false, host, nil
 }
 
 func envBool(name string) bool {

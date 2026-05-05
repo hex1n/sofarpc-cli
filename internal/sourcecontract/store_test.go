@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
@@ -376,6 +377,260 @@ public class Outer {
 	}
 }
 
+func TestLoad_ResolvesJDK8GenericBounds(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/Base.java", `
+package com.foo;
+public class Base {
+    private String id;
+}
+`)
+	writeJava(t, root, "src/main/java/com/foo/Holder.java", `
+package com.foo;
+public class Holder<T extends Base> {
+    private T value;
+    public T echo(T input) { return input; }
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	holder, ok := store.Class("com.foo.Holder")
+	if !ok {
+		t.Fatal("Holder not found")
+	}
+	if got := holder.Fields[0].JavaType; got != "com.foo.Base" {
+		t.Fatalf("generic bound field type: got %q", got)
+	}
+	if got := holder.Methods[0].ReturnType; got != "com.foo.Base" {
+		t.Fatalf("generic bound return type: got %q", got)
+	}
+	if got := holder.Methods[0].ParamTypes; !reflect.DeepEqual(got, []string{"com.foo.Base"}) {
+		t.Fatalf("generic bound param types: got %v", got)
+	}
+}
+
+func TestLoad_ResolvesSelfReferentialGenericBoundsConservatively(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/Box.java", `
+package com.foo;
+
+public class Box<T extends Comparable<T>> {
+    private T value;
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	box, ok := store.Class("com.foo.Box")
+	if !ok {
+		t.Fatal("Box not found")
+	}
+	if got := box.Fields[0].JavaType; got != "java.lang.Comparable<java.lang.Object>" {
+		t.Fatalf("self-referential bound field type: got %q", got)
+	}
+}
+
+func TestLoad_ResolvesCommonImplicitJavaLangTypes(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/CommonLang.java", `
+package com.foo;
+
+public class CommonLang<T extends CharSequence> implements Runnable, Cloneable, AutoCloseable {
+    private StringBuilder builder;
+    private T value;
+    private Thread thread;
+    private StackTraceElement frame;
+
+    public void run() {}
+    public void close() {}
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cls, ok := store.Class("com.foo.CommonLang")
+	if !ok {
+		t.Fatal("CommonLang not found")
+	}
+	if got := cls.Interfaces; !reflect.DeepEqual(got, []string{"java.lang.Runnable", "java.lang.Cloneable", "java.lang.AutoCloseable"}) {
+		t.Fatalf("interfaces: got %v", got)
+	}
+	wantFields := []javamodel.Field{
+		{Name: "builder", JavaType: "java.lang.StringBuilder"},
+		{Name: "value", JavaType: "java.lang.CharSequence"},
+		{Name: "thread", JavaType: "java.lang.Thread"},
+		{Name: "frame", JavaType: "java.lang.StackTraceElement"},
+	}
+	if !reflect.DeepEqual(cls.Fields, wantFields) {
+		t.Fatalf("fields:\n got: %+v\nwant: %+v", cls.Fields, wantFields)
+	}
+}
+
+func TestLoad_ResolvesCurrentPackageTypesFromProjectIndex(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/Request.java", `
+package com.foo;
+public class Request {}
+`)
+	writeJava(t, root, "src/main/java/com/foo/Svc.java", `
+package com.foo;
+public class Svc {
+    private Request request;
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cls, ok := store.Class("com.foo.Svc")
+	if !ok {
+		t.Fatal("Svc not found")
+	}
+	if got := cls.Fields[0].JavaType; got != "com.foo.Request" {
+		t.Fatalf("current-package field type: got %q", got)
+	}
+}
+
+func TestLoad_ResolvesWildcardImportsAgainstKnownSymbols(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/other/Other.java", `
+package com.other;
+public class Other {}
+`)
+	writeJava(t, root, "src/main/java/com/foo/UsesWildcards.java", `
+package com.foo;
+
+import com.other.*;
+import java.util.*;
+
+public class UsesWildcards {
+    private List<String> names;
+    private Map.Entry<String, String> entry;
+    private Other other;
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cls, ok := store.Class("com.foo.UsesWildcards")
+	if !ok {
+		t.Fatal("UsesWildcards not found")
+	}
+	wantFields := []javamodel.Field{
+		{Name: "names", JavaType: "java.util.List<java.lang.String>"},
+		{Name: "entry", JavaType: "java.util.Map.Entry<java.lang.String, java.lang.String>"},
+		{Name: "other", JavaType: "com.other.Other"},
+	}
+	if !reflect.DeepEqual(cls.Fields, wantFields) {
+		t.Fatalf("fields:\n got: %+v\nwant: %+v", cls.Fields, wantFields)
+	}
+}
+
+func TestLoad_LeavesUnknownWildcardTypesUnqualified(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/UsesMissingWildcard.java", `
+package com.foo;
+
+import com.external.*;
+
+public class UsesMissingWildcard {
+    private Missing value;
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cls, ok := store.Class("com.foo.UsesMissingWildcard")
+	if !ok {
+		t.Fatal("UsesMissingWildcard not found")
+	}
+	if got := cls.Fields[0].JavaType; got != "Missing" {
+		t.Fatalf("unknown wildcard field type: got %q", got)
+	}
+	diag := store.Diagnostics()
+	if diag.ResolutionIssueCount != 1 {
+		t.Fatalf("resolution issue count: got %d want 1 (%+v)", diag.ResolutionIssueCount, diag.ResolutionIssues)
+	}
+	if issues := diag.ResolutionIssues["com.foo.UsesMissingWildcard"]; len(issues) != 1 || !strings.Contains(issues[0], "Missing: unresolved type") {
+		t.Fatalf("resolution issues: %+v", diag.ResolutionIssues)
+	}
+}
+
+func TestLoad_LeavesAmbiguousWildcardTypesUnqualified(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/UsesAmbiguousWildcard.java", `
+package com.foo;
+
+import java.sql.*;
+import java.util.*;
+
+public class UsesAmbiguousWildcard {
+    private Date value;
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cls, ok := store.Class("com.foo.UsesAmbiguousWildcard")
+	if !ok {
+		t.Fatal("UsesAmbiguousWildcard not found")
+	}
+	if got := cls.Fields[0].JavaType; got != "Date" {
+		t.Fatalf("ambiguous wildcard field type: got %q", got)
+	}
+	diag := store.Diagnostics()
+	if diag.ResolutionIssueCount != 1 {
+		t.Fatalf("resolution issue count: got %d want 1 (%+v)", diag.ResolutionIssueCount, diag.ResolutionIssues)
+	}
+	issues := diag.ResolutionIssues["com.foo.UsesAmbiguousWildcard"]
+	if len(issues) != 1 || !strings.Contains(issues[0], "Date: ambiguous on-demand import") {
+		t.Fatalf("resolution issues: %+v", diag.ResolutionIssues)
+	}
+	if !strings.Contains(issues[0], "java.sql.Date") || !strings.Contains(issues[0], "java.util.Date") {
+		t.Fatalf("ambiguous candidates missing: %v", issues)
+	}
+}
+
+func TestLoad_PrefersCurrentPackageTypesOverImplicitJavaLang(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/Thread.java", `
+package com.foo;
+public class Thread {}
+`)
+	writeJava(t, root, "src/main/java/com/foo/UsesThread.java", `
+package com.foo;
+public class UsesThread {
+    private Thread value;
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cls, ok := store.Class("com.foo.UsesThread")
+	if !ok {
+		t.Fatal("UsesThread not found")
+	}
+	if got := cls.Fields[0].JavaType; got != "com.foo.Thread" {
+		t.Fatalf("current-package shadow type: got %q", got)
+	}
+}
+
 func TestLoad_DiagnosticsReportsIndexAndParseState(t *testing.T) {
 	root := t.TempDir()
 	writeJava(t, root, "src/main/java/com/foo/A.java", `
@@ -407,6 +662,51 @@ public class A {
 	}
 	if len(diag.ParseFailures) != 0 {
 		t.Fatalf("unexpected parse failures: %+v", diag.ParseFailures)
+	}
+}
+
+func TestLoad_DiagnosticsReportsDuplicatesSkippedDirsAndHints(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "module-a/src/main/java/com/foo/Dupe.java", `
+package com.foo;
+public class Dupe {}
+`)
+	writeJava(t, root, "module-b/src/main/java/com/foo/Dupe.java", `
+package com.foo;
+public class Dupe {}
+`)
+	writeJava(t, root, "module-b/src/main/java/com/foo/LombokDto.java", `
+package com.foo;
+@Data
+public class LombokDto {
+    private String name;
+}
+`)
+	writeJava(t, root, "module-b/target/generated-sources/com/foo/Generated.java", `
+package com.foo;
+public class Generated {}
+`)
+	writeJava(t, root, "module-b/build/tmp/com/foo/Ignored.java", `
+package com.foo;
+public class Ignored {}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	diag := store.Diagnostics()
+	if len(diag.DuplicateClasses["com.foo.Dupe"]) != 2 {
+		t.Fatalf("duplicate diagnostics: %+v", diag.DuplicateClasses)
+	}
+	if diag.SkippedDirs["target"] == 0 || diag.SkippedDirs["build"] == 0 {
+		t.Fatalf("skipped dirs: %+v", diag.SkippedDirs)
+	}
+	if diag.ModuleRoots != 2 {
+		t.Fatalf("moduleRoots: got %d want 2", diag.ModuleRoots)
+	}
+	if !containsHint(diag.Hints, "duplicate Java FQNs") || !containsHint(diag.Hints, "lombok annotations") {
+		t.Fatalf("hints: %+v", diag.Hints)
 	}
 }
 
@@ -462,4 +762,13 @@ func fieldNames(fields []javamodel.Field) []string {
 		out = append(out, field.Name)
 	}
 	return out
+}
+
+func containsHint(hints []string, needle string) bool {
+	for _, hint := range hints {
+		if strings.Contains(hint, needle) {
+			return true
+		}
+	}
+	return false
 }

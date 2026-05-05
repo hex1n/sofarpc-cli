@@ -58,6 +58,113 @@ func TestResolveMethod_SingleOverloadReturnsDirectly(t *testing.T) {
 	}
 }
 
+func TestResolveMethod_IncludesInheritedInterfaceMethods(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.BaseFacade",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:        "com.foo.UserFacade",
+			Kind:       javamodel.KindInterface,
+			Interfaces: []string{"com.foo.BaseFacade"},
+		},
+	)
+
+	res, err := ResolveMethod(store, "com.foo.UserFacade", "query", nil)
+	if err != nil {
+		t.Fatalf("ResolveMethod: %v", err)
+	}
+	if res.Method.ReturnType != "java.lang.String" {
+		t.Fatalf("returnType: got %q", res.Method.ReturnType)
+	}
+}
+
+func TestResolveMethod_IncludesInheritedMethodsFromParameterizedInterface(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.BaseFacade",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"java.lang.Long"}, ReturnType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:        "com.foo.UserFacade",
+			Kind:       javamodel.KindInterface,
+			Interfaces: []string{"com.foo.BaseFacade<com.foo.UserDto>"},
+		},
+	)
+
+	res, err := ResolveMethod(store, "com.foo.UserFacade", "query", []string{"java.lang.Long"})
+	if err != nil {
+		t.Fatalf("ResolveMethod: %v", err)
+	}
+	if res.Method.ReturnType != "java.lang.String" {
+		t.Fatalf("returnType: got %q", res.Method.ReturnType)
+	}
+}
+
+func TestResolveMethod_IncludesInheritedMethodsFromParameterizedSuperclass(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.BaseFacade",
+			Kind: javamodel.KindClass,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"java.lang.Long"}, ReturnType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:        "com.foo.UserFacade",
+			Kind:       javamodel.KindClass,
+			Superclass: "com.foo.BaseFacade<com.foo.UserDto>",
+		},
+	)
+
+	res, err := ResolveMethod(store, "com.foo.UserFacade", "query", []string{"java.lang.Long"})
+	if err != nil {
+		t.Fatalf("ResolveMethod: %v", err)
+	}
+	if res.Method.ReturnType != "java.lang.String" {
+		t.Fatalf("returnType: got %q", res.Method.ReturnType)
+	}
+}
+
+func TestResolveMethod_DeduplicatesInheritedMethodSignatures(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Left",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.Right",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:        "com.foo.UserFacade",
+			Kind:       javamodel.KindInterface,
+			Interfaces: []string{"com.foo.Left", "com.foo.Right"},
+		},
+	)
+
+	res, err := ResolveMethod(store, "com.foo.UserFacade", "query", []string{"java.lang.String"})
+	if err != nil {
+		t.Fatalf("ResolveMethod: %v", err)
+	}
+	if len(res.Overloads) != 1 {
+		t.Fatalf("overloads should be deduplicated, got %+v", res.Overloads)
+	}
+}
+
 func TestResolveMethod_AmbiguousWithoutParamTypes(t *testing.T) {
 	store := NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Svc",

@@ -24,7 +24,7 @@ func BuildSuccessResponse(appResponse any) ([]byte, error) {
 }
 
 func decodeSofaResponse(content []byte) (DecodedResponse, error) {
-	decoder := hessianDecoder{data: content}
+	decoder := hessianDecoder{data: content, limits: defaultHessianDecoderLimits()}
 	value, err := decoder.readValue()
 	if err != nil {
 		return DecodedResponse{}, fmt.Errorf("decode SofaResponse: %w", err)

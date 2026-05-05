@@ -13,6 +13,7 @@ import (
 type declaration struct {
 	kind          string
 	simpleName    string
+	typeParams    map[string]string
 	superclass    string
 	interfaces    []string
 	fields        []parsedField
@@ -46,6 +47,7 @@ func parseJavaFile(path string) (parsedClass, bool) {
 		packageName:   pkg,
 		fqn:           fqn,
 		simpleName:    decl.simpleName,
+		typeParams:    cloneStringMap(decl.typeParams),
 		kind:          decl.kind,
 		superclass:    decl.superclass,
 		interfaces:    decl.interfaces,
@@ -156,8 +158,8 @@ func parseDeclarationHeader(kind, header string) declaration {
 	if name == "" {
 		return declaration{}
 	}
-	rest = strings.TrimSpace(skipTypeParameters(rest))
-	decl := declaration{kind: kind, simpleName: name}
+	typeParams, rest := readTypeParameterBounds(rest)
+	decl := declaration{kind: kind, simpleName: name, typeParams: typeParams}
 
 	if kind == javamodel.KindClass {
 		if clause, ok := readClause(rest, "extends"); ok {

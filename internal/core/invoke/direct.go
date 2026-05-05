@@ -3,6 +3,8 @@ package invoke
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -31,7 +33,10 @@ func nextRequestID() uint32 {
 	}
 }
 
-const DirectTransportName = "direct-bolt"
+const (
+	DirectTransportName = "direct-bolt"
+	envMaxResponseBytes = "SOFARPC_MAX_RESPONSE_BYTES"
+)
 
 type DirectExecution struct {
 	Handled     bool
@@ -57,6 +62,7 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
+	maxResponseBytes := maxResponseBytesFromEnv()
 
 	result, err := sofarpcwire.InvokeDirect(ctx, sofarpcwire.RequestSpec{
 		Service:       plan.Service,
@@ -67,10 +73,11 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		UniqueID:      plan.Target.UniqueID,
 		TargetAppName: plan.TargetAppName,
 	}, sofarpcwire.DirectInvokeOptions{
-		Addr:      addr,
-		Codec:     boltclient.CodecHessian2,
-		Timeout:   timeout,
-		RequestID: nextRequestID(),
+		Addr:             addr,
+		Codec:            boltclient.CodecHessian2,
+		Timeout:          timeout,
+		RequestID:        nextRequestID(),
+		MaxResponseBytes: maxResponseBytes,
 	})
 	if err != nil {
 		return DirectExecution{Handled: true}, classifyDirectInvokeError(phase, plan.Target.DirectURL, err)
@@ -88,6 +95,7 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		"responseClass":           result.Response.ResponseClass,
 		"responseCodec":           result.Response.Codec,
 		"responseContentLength":   len(result.Response.Content),
+		"maxResponseBytes":        maxResponseBytes,
 	}
 	if len(result.Response.Header) > 0 {
 		diagnostics["responseHeader"] = cloneStringMap(result.Response.Header)
@@ -124,6 +132,18 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		Result:      sofarpcwire.FormatValue(result.Decoded.AppResponse),
 		Diagnostics: diagnostics,
 	}, nil
+}
+
+func maxResponseBytesFromEnv() int64 {
+	raw := strings.TrimSpace(os.Getenv(envMaxResponseBytes))
+	if raw == "" {
+		return boltclient.DefaultMaxResponseBytes
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return boltclient.DefaultMaxResponseBytes
+	}
+	return value
 }
 
 func targetInvalidError(phase, message string) *errcode.Error {

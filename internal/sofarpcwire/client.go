@@ -8,10 +8,11 @@ import (
 )
 
 type DirectInvokeOptions struct {
-	Addr      string
-	Codec     byte
-	Timeout   time.Duration
-	RequestID uint32
+	Addr             string
+	Codec            byte
+	Timeout          time.Duration
+	RequestID        uint32
+	MaxResponseBytes int64
 }
 
 type DirectInvokeResult struct {
@@ -28,12 +29,13 @@ func InvokeDirect(ctx context.Context, spec RequestSpec, opts DirectInvokeOption
 		return DirectInvokeResult{}, err
 	}
 	resp, err := boltclient.Invoke(ctx, opts.Addr, boltclient.Request{
-		RequestID:    opts.RequestID,
-		RequestClass: encoded.Class,
-		Header:       encoded.Header,
-		Content:      encoded.Content,
-		Codec:        opts.Codec,
-		Timeout:      opts.Timeout,
+		RequestID:        opts.RequestID,
+		RequestClass:     encoded.Class,
+		Header:           encoded.Header,
+		Content:          encoded.Content,
+		Codec:            opts.Codec,
+		Timeout:          opts.Timeout,
+		MaxResponseBytes: opts.MaxResponseBytes,
 	})
 	if err != nil {
 		return DirectInvokeResult{}, err

@@ -15,6 +15,7 @@ type parsedClass struct {
 	packageName   string
 	fqn           string
 	simpleName    string
+	typeParams    map[string]string
 	kind          string
 	superclass    string
 	interfaces    []string
@@ -23,6 +24,7 @@ type parsedClass struct {
 	enumConstants []string
 	imports       importTable
 	localTypes    map[string]string
+	projectTypes  symbolTable
 }
 
 type parsedField struct {
@@ -44,18 +46,23 @@ type importTable struct {
 	wildcards []string
 }
 
-func materializeClass(src parsedClass) javamodel.Class {
+func materializeClass(src parsedClass) (javamodel.Class, []typeResolutionIssue) {
 	cls := javamodel.Class{
 		FQN:        src.fqn,
 		SimpleName: src.simpleName,
 		File:       src.path,
 		Kind:       src.kind,
 	}
+	var issues []typeResolutionIssue
 	resolver := typeResolver{
 		pkg:        src.packageName,
+		classFQN:   src.fqn,
 		explicit:   src.imports.explicit,
 		wildcards:  src.imports.wildcards,
 		localTypes: src.localTypes,
+		project:    src.projectTypes,
+		typeParams: src.typeParams,
+		issues:     &issues,
 	}
 	if src.superclass != "" {
 		cls.Superclass = resolver.resolve(src.superclass)
@@ -80,25 +87,28 @@ func materializeClass(src parsedClass) javamodel.Class {
 		cls.Methods = append(cls.Methods, m)
 	}
 	cls.EnumConstants = append(cls.EnumConstants, src.enumConstants...)
-	return cls
+	return cls, issues
 }
 
-func materializeClasses(path, pkg string, imports importTable, decl declaration) []javamodel.Class {
-	parsed := flattenDeclarations(path, pkg, imports, decl, nil, nil)
+func materializeClasses(path, pkg string, imports importTable, decl declaration, projectSymbols symbolTable) ([]javamodel.Class, []typeResolutionIssue) {
+	parsed := flattenDeclarations(path, pkg, imports, decl, nil, nil, nil, projectSymbols)
 	if len(parsed) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]javamodel.Class, 0, len(parsed))
+	var issues []typeResolutionIssue
 	for _, item := range parsed {
-		out = append(out, materializeClass(item))
+		cls, clsIssues := materializeClass(item)
+		out = append(out, cls)
+		issues = append(issues, clsIssues...)
 	}
-	return out
+	return out, issues
 }
 
 // flattenDeclarations walks the nested declaration tree and emits one
 // parsedClass per declaration, threading enclosing type names into the
 // FQN so inner classes render as Outer.Inner.
-func flattenDeclarations(path, pkg string, imports importTable, decl declaration, outers []string, visible map[string]string) []parsedClass {
+func flattenDeclarations(path, pkg string, imports importTable, decl declaration, outers []string, visible map[string]string, visibleTypeParams map[string]string, projectSymbols symbolTable) []parsedClass {
 	currentOuters := append(append([]string(nil), outers...), decl.simpleName)
 	currentFQN := joinFQN(pkg, currentOuters)
 	locals := cloneVisibleMap(visible)
@@ -106,12 +116,17 @@ func flattenDeclarations(path, pkg string, imports importTable, decl declaration
 	for _, child := range decl.nested {
 		locals[child.simpleName] = joinFQN(pkg, append(currentOuters, child.simpleName))
 	}
+	typeParams := cloneVisibleMap(visibleTypeParams)
+	for name, bound := range decl.typeParams {
+		typeParams[name] = bound
+	}
 
 	current := parsedClass{
 		path:          path,
 		packageName:   pkg,
 		fqn:           currentFQN,
 		simpleName:    decl.simpleName,
+		typeParams:    cloneVisibleMap(typeParams),
 		kind:          decl.kind,
 		superclass:    decl.superclass,
 		interfaces:    append([]string(nil), decl.interfaces...),
@@ -120,11 +135,12 @@ func flattenDeclarations(path, pkg string, imports importTable, decl declaration
 		enumConstants: append([]string(nil), decl.enumConstants...),
 		imports:       imports,
 		localTypes:    locals,
+		projectTypes:  projectSymbols,
 	}
 
 	out := []parsedClass{current}
 	for _, child := range decl.nested {
-		out = append(out, flattenDeclarations(path, pkg, imports, child, currentOuters, locals)...)
+		out = append(out, flattenDeclarations(path, pkg, imports, child, currentOuters, locals, typeParams, projectSymbols)...)
 	}
 	return out
 }
@@ -153,6 +169,28 @@ func cloneStringMap(input map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneStringSliceMap(input map[string][]string) map[string][]string {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(input))
+	for key, value := range input {
+		out[key] = append([]string(nil), value...)
+	}
+	return out
+}
+
+func cloneIntMap(input map[string]int) map[string]int {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(input))
 	for key, value := range input {
 		out[key] = value
 	}

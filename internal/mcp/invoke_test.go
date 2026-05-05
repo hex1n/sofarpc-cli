@@ -110,12 +110,16 @@ func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 	directURL, stop := fakeDirectServer(t, responseBytes)
 	defer stop()
 
-	out := callInvoke(t, Options{Contract: store}, map[string]any{
+	out := callInvoke(t, Options{
+		Contract: store,
+		TargetSources: target.Sources{
+			Env: target.Config{DirectURL: directURL},
+		},
+	}, map[string]any{
 		"service":       "com.example.demo.ExampleFacade",
 		"method":        "query",
 		"version":       "2.0",
 		"targetAppName": "demo-app",
-		"directUrl":     directURL,
 		"args": []any{
 			map[string]any{
 				"@type": "com.example.demo.ExampleRequest",

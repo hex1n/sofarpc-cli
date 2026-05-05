@@ -27,6 +27,11 @@ const (
 
 	requestHeaderLengthV1  = 22
 	responseHeaderLengthV1 = 20
+
+	// DefaultMaxResponseBytes caps the BOLT response body before allocating
+	// class/header/content buffers. It covers the variable-length body only;
+	// the fixed 20-byte response header is read separately.
+	DefaultMaxResponseBytes int64 = 16 << 20
 )
 
 type Request struct {
@@ -36,6 +41,10 @@ type Request struct {
 	Content      []byte
 	Codec        byte
 	Timeout      time.Duration
+
+	// MaxResponseBytes caps the variable-length response body. A value <= 0
+	// uses DefaultMaxResponseBytes.
+	MaxResponseBytes int64
 }
 
 type Response struct {
@@ -79,7 +88,7 @@ func Invoke(ctx context.Context, addr string, req Request) (Response, error) {
 		return Response{}, fmt.Errorf("write request frame: %w", err)
 	}
 
-	resp, err := ReadResponse(conn)
+	resp, err := ReadResponseWithLimit(conn, req.MaxResponseBytes)
 	if err != nil {
 		return Response{}, err
 	}
@@ -132,6 +141,14 @@ func EncodeRequest(req Request) ([]byte, error) {
 }
 
 func ReadResponse(r io.Reader) (Response, error) {
+	return ReadResponseWithLimit(r, DefaultMaxResponseBytes)
+}
+
+func ReadResponseWithLimit(r io.Reader, maxBodyBytes int64) (Response, error) {
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = DefaultMaxResponseBytes
+	}
+
 	fixed := make([]byte, responseHeaderLengthV1)
 	if _, err := io.ReadFull(r, fixed); err != nil {
 		return Response{}, fmt.Errorf("read response header: %w", err)
@@ -139,11 +156,27 @@ func ReadResponse(r io.Reader) (Response, error) {
 	if fixed[0] != ProtocolCodeV1 {
 		return Response{}, fmt.Errorf("unsupported protocol code %d", fixed[0])
 	}
+	if fixed[1] != ResponseType {
+		return Response{}, fmt.Errorf("unexpected response frame type %d", fixed[1])
+	}
+	if cmdCode := binary.BigEndian.Uint16(fixed[2:4]); cmdCode != CmdCodeRPCResponse {
+		return Response{}, fmt.Errorf("unexpected response command code %d", cmdCode)
+	}
+	if fixed[4] != CmdVersion {
+		return Response{}, fmt.Errorf("unexpected response command version %d", fixed[4])
+	}
+	if fixed[9] != CodecHessian2 {
+		return Response{}, fmt.Errorf("unexpected response codec %d", fixed[9])
+	}
 
 	classLen := binary.BigEndian.Uint16(fixed[12:14])
 	headerLen := binary.BigEndian.Uint16(fixed[14:16])
 	contentLen := binary.BigEndian.Uint32(fixed[16:20])
-	body := make([]byte, int(classLen)+int(headerLen)+int(contentLen))
+	bodyLen := uint64(classLen) + uint64(headerLen) + uint64(contentLen)
+	if bodyLen > uint64(maxBodyBytes) {
+		return Response{}, fmt.Errorf("response body length %d exceeds limit %d", bodyLen, maxBodyBytes)
+	}
+	body := make([]byte, int(bodyLen))
 	if _, err := io.ReadFull(r, body); err != nil {
 		return Response{}, fmt.Errorf("read response body: %w", err)
 	}

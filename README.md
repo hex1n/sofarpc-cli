@@ -136,24 +136,38 @@ export SOFARPC_ALLOW_INVOKE=true
 
 Use that only for development or test targets. For safer local setups,
 restrict callable services, bound `@file` inputs, and cap how much plan data
-sessions retain for `sessionId` replay:
+sessions retain for `sessionId` replay. Direct BOLT responses are also capped
+before the client allocates the response body:
 
 ```sh
 export SOFARPC_ALLOWED_SERVICES=com.foo.UserFacade,com.foo.OrderFacade
+export SOFARPC_ALLOWED_TARGET_HOSTS=127.0.0.1,dev-rpc.example.com:12200
 export SOFARPC_ARGS_FILE_ROOT=/abs/path/to/project
 export SOFARPC_ARGS_FILE_MAX_BYTES=1048576
 export SOFARPC_SESSION_PLAN_MAX_BYTES=1048576
+export SOFARPC_MAX_RESPONSE_BYTES=16777216
 ```
 
 `@file` arguments are resolved inside `SOFARPC_ARGS_FILE_ROOT` when set,
 otherwise inside `SOFARPC_PROJECT_ROOT`. Files outside that root are
 rejected after symlink resolution. The default file-size limit is 1 MiB.
 
+For non-dry-run direct calls, the default policy only executes the
+`SOFARPC_DIRECT_URL` configured on the MCP server env. Per-call `directUrl`
+overrides and literal replay payload targets require
+`SOFARPC_ALLOW_TARGET_OVERRIDE=true`. `SOFARPC_ALLOWED_TARGET_HOSTS`, when set,
+restricts real direct targets to a comma-separated list of host or host:port
+values; `*` allows all hosts.
+
 `SOFARPC_SESSION_PLAN_MAX_BYTES` controls only in-memory session capture for
 `sofarpc_replay` by `sessionId`. When a plan is larger than this limit,
 `sofarpc_invoke` still returns the full plan and can still be replayed by
 passing that plan as `payload`; the plan is just not retained in the session.
 Set it to `0` to disable the captured-plan byte bound.
+
+`SOFARPC_MAX_RESPONSE_BYTES` controls the maximum BOLT response body accepted
+by the direct transport. Invalid or non-positive values fall back to the
+default 16 MiB limit.
 
 On startup `sofarpc-mcp` scans `.java` files under `SOFARPC_PROJECT_ROOT`
 in a background goroutine so the first stdio response is not blocked
@@ -216,9 +230,14 @@ source.
 - `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later.
 - Real invocation requires `SOFARPC_ALLOW_INVOKE=true`; keep the default disabled
   when you only want planning, skeletons, and diagnostics.
+- Non-dry-run direct calls default to the MCP env `SOFARPC_DIRECT_URL`; per-call
+  target overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true` and can be
+  bounded with `SOFARPC_ALLOWED_TARGET_HOSTS`.
 - If `sessionId` is provided, the plan is retained for session replay only when
   its JSON size is at or below `SOFARPC_SESSION_PLAN_MAX_BYTES`; oversized plans
   are still returned and can be replayed as a literal payload.
+- Direct BOLT responses are capped by `SOFARPC_MAX_RESPONSE_BYTES` before the
+  response body is allocated and decoded.
 
 When contract information is attached, facade-backed invoke automatically
 normalizes common Java shapes before the wire step:
