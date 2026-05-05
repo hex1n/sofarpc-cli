@@ -153,6 +153,36 @@ func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 	}
 }
 
+func TestInvoke_ConfigErrorDiagnosticsUseSessionProject(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowTargetOverride, "false")
+	projectRoot := t.TempDir()
+	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.json", `{"mode":"registry","directUrl":"bolt://project-host:12200"}`)
+	sessions := NewSessionStore()
+	session := sessions.Create(Session{ProjectRoot: projectRoot})
+
+	out := callInvoke(t, Options{
+		Sessions: sessions,
+		TargetSources: target.Sources{
+			Env: target.Config{DirectURL: "bolt://env-host:12200"},
+		},
+	}, map[string]any{
+		"service":   "com.foo.Svc",
+		"method":    "doThing",
+		"types":     []string{"java.lang.String"},
+		"args":      []any{"x"},
+		"sessionId": session.ID,
+	})
+
+	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
+		t.Fatalf("expected invocation rejected, got %+v", out.Error)
+	}
+	if out.Error.Hint == nil || out.Error.Hint.NextArgs["project"] != projectRoot {
+		t.Fatalf("hint should preserve project context, got %+v", out.Error.Hint)
+	}
+	assertConfigDiagnostics(t, out.Diagnostics, projectRoot)
+}
+
 func TestInvoke_FacadeNilWithoutParamTypesSurfacesErrcode(t *testing.T) {
 	out := callInvoke(t, Options{}, map[string]any{
 		"service":   "com.foo.Svc",

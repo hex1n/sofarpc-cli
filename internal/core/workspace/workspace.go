@@ -1,7 +1,6 @@
 // Package workspace resolves the project root sofarpc-cli anchors to.
-// That's the only on-disk concern — sofarpc-cli no longer reads any
-// project-level config file. All non-flag configuration comes through
-// SOFARPC_* env supplied by the MCP host.
+// Target-specific project config is loaded by projecting the workspace into
+// target.Sources; root discovery itself stays isolated here.
 package workspace
 
 import (
@@ -43,10 +42,7 @@ func Resolve(in Input) (Workspace, error) {
 // expects. env is typically the MCP-env layer built by the entrypoint;
 // pass target.Config{} when there is none.
 func (w Workspace) Sources(env target.Config) target.Sources {
-	return target.Sources{
-		Env:         env,
-		ProjectRoot: w.ProjectRoot,
-	}
+	return target.ProjectSources(w.ProjectRoot, env)
 }
 
 func resolveRoot(in Input) (string, error) {

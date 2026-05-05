@@ -74,6 +74,18 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 // collapses the result into two checks: resolution and reachability.
 func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 	report := target.Resolve(target.Input{Service: in.Service}, sources)
+	if len(report.ConfigErrors) > 0 {
+		return DoctorCheck{
+			Name:   "target",
+			Ok:     false,
+			Detail: "project target config could not be loaded",
+			Data:   map[string]any{"configErrors": report.ConfigErrors},
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_target",
+				Args: map[string]any{"explain": true},
+			},
+		}
+	}
 	if report.Target.Mode == "" {
 		return DoctorCheck{
 			Name:   "target",

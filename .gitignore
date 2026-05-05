@@ -13,3 +13,4 @@ pytest_tmp/
 runtime-worker-java/target/
 spoon-indexer-java/target/
 internal/app/
+.sofarpc/config.local.json

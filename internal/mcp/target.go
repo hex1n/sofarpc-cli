@@ -5,12 +5,15 @@ import (
 	"fmt"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
+	"github.com/hex1n/sofarpc-cli/internal/core/workspace"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // TargetInput mirrors architecture.md §3.3. Fields are optional; omitted
 // values fall through to env / defaults.
 type TargetInput struct {
+	Cwd              string `json:"cwd,omitempty"`
+	Project          string `json:"project,omitempty"`
 	Service          string `json:"service,omitempty"`
 	DirectURL        string `json:"directUrl,omitempty"`
 	RegistryAddress  string `json:"registryAddress,omitempty"`
@@ -26,11 +29,13 @@ type TargetInput struct {
 // the resolver's layered report with the probe result so a single call
 // tells the agent both "what target was picked" and "is it reachable".
 type TargetOutput struct {
-	Target       target.Config      `json:"target"`
-	Service      string             `json:"service,omitempty"`
-	Layers       []target.Layer     `json:"layers,omitempty"`
-	Reachability target.ProbeResult `json:"reachability"`
-	Explain      []string           `json:"explain,omitempty"`
+	ProjectRoot  string               `json:"projectRoot,omitempty"`
+	Target       target.Config        `json:"target"`
+	Service      string               `json:"service,omitempty"`
+	Layers       []target.Layer       `json:"layers,omitempty"`
+	ConfigErrors []target.ConfigError `json:"configErrors,omitempty"`
+	Reachability target.ProbeResult   `json:"reachability"`
+	Explain      []string             `json:"explain,omitempty"`
 	// Trace is a per-field record of which layer won and which lower
 	// layers carried a shadowed value. Populated only when explain=true
 	// — agents can branch on it without parsing Explain strings.
@@ -39,10 +44,22 @@ type TargetOutput struct {
 
 func registerTarget(server *sdkmcp.Server, opts Options) {
 	sources := opts.TargetSources
+	envCfg := opts.TargetSources.Env
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_target",
 		Description: "Resolve the invocation target without executing a request. Returns the merged target, the config layers that produced it, and a reachability probe.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in TargetInput) (*sdkmcp.CallToolResult, TargetOutput, error) {
+		toolSources := sources
+		if in.Cwd != "" || in.Project != "" {
+			ws, err := workspace.Resolve(workspace.Input{Cwd: in.Cwd, Project: in.Project})
+			if err != nil {
+				return &sdkmcp.CallToolResult{
+					IsError: true,
+					Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: err.Error()}},
+				}, TargetOutput{}, nil
+			}
+			toolSources = ws.Sources(envCfg)
+		}
 		input := target.Input{
 			Service:          in.Service,
 			DirectURL:        in.DirectURL,
@@ -54,13 +71,15 @@ func registerTarget(server *sdkmcp.Server, opts Options) {
 			ConnectTimeoutMS: in.ConnectTimeoutMS,
 			Explain:          in.Explain,
 		}
-		report := target.Resolve(input, sources)
+		report := target.Resolve(input, toolSources)
 		probe := target.Probe(report.Target)
 
 		out := TargetOutput{
+			ProjectRoot:  toolSources.ProjectRoot,
 			Target:       report.Target,
 			Service:      report.Service,
 			Layers:       report.Layers,
+			ConfigErrors: report.ConfigErrors,
 			Reachability: probe,
 			Explain:      report.Explain,
 			Trace:        report.Trace,
@@ -71,7 +90,7 @@ func registerTarget(server *sdkmcp.Server, opts Options) {
 				&sdkmcp.TextContent{Text: summarizeTarget(out)},
 			},
 		}
-		if report.Target.Mode == "" {
+		if report.Target.Mode == "" || len(report.ConfigErrors) > 0 {
 			result.IsError = true
 		}
 		return result, out, nil
@@ -82,6 +101,9 @@ func registerTarget(server *sdkmcp.Server, opts Options) {
 // complements the structured payload. When resolution fails, the text
 // points at the next tool the agent should call.
 func summarizeTarget(out TargetOutput) string {
+	if len(out.ConfigErrors) > 0 {
+		return "target config error: " + formatConfigErrors(out.ConfigErrors)
+	}
 	if out.Target.Mode == "" {
 		return "target mode unresolved — call sofarpc_doctor or provide directUrl/registryAddress"
 	}

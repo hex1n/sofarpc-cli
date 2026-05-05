@@ -117,12 +117,13 @@ func TestResolve_RelativeProjectWithoutCwdUsesProcessCWD(t *testing.T) {
 }
 
 func TestSources_PropagatesEnvAndProjectRoot(t *testing.T) {
-	ws := Workspace{ProjectRoot: "/tmp/proj"}
+	root := t.TempDir()
+	ws := Workspace{ProjectRoot: root}
 	src := ws.Sources(target.Config{Serialization: "fastjson2"})
 	if src.Env.Serialization != "fastjson2" {
 		t.Fatal("env serialization should propagate")
 	}
-	if src.ProjectRoot != "/tmp/proj" {
+	if src.ProjectRoot != root {
 		t.Fatalf("projectRoot: got %q", src.ProjectRoot)
 	}
 }

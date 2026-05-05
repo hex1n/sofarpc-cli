@@ -56,6 +56,31 @@ func TestOpen_SessionIsStoredAndRetrievable(t *testing.T) {
 	}
 }
 
+func TestOpen_LoadsProjectTargetConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeOpenFile(t, dir, ".sofarpc/config.json", `{
+  "directUrl": "bolt://project-host:12200",
+  "timeoutMs": 4000
+}`)
+	writeOpenFile(t, dir, ".sofarpc/config.local.json", `{
+  "directUrl": "bolt://local-host:12200"
+}`)
+
+	out := callOpen(t, Options{
+		TargetSources: target.Sources{Env: target.Config{Serialization: "fastjson2"}},
+	}, map[string]any{"cwd": dir})
+
+	if out.Target.DirectURL != "bolt://local-host:12200" {
+		t.Fatalf("directUrl: got %q", out.Target.DirectURL)
+	}
+	if out.Target.TimeoutMS != 4000 {
+		t.Fatalf("timeoutMs: got %d", out.Target.TimeoutMS)
+	}
+	if out.Target.Serialization != "fastjson2" {
+		t.Fatalf("serialization: got %q", out.Target.Serialization)
+	}
+}
+
 func TestOpen_DescribeCapabilityTracksFacadeStore(t *testing.T) {
 	dir := t.TempDir()
 
@@ -166,6 +191,11 @@ func callOpen(t *testing.T, opts Options, args map[string]any) OpenOutput {
 }
 
 func writeOpenJava(t *testing.T, root, relative, body string) {
+	t.Helper()
+	writeOpenFile(t, root, relative, body)
+}
+
+func writeOpenFile(t *testing.T, root, relative, body string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(relative))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

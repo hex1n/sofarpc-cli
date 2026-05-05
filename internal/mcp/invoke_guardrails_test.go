@@ -97,6 +97,52 @@ func TestValidateExecutionPolicyAllowsEnvDirectTargetByDefault(t *testing.T) {
 	}
 }
 
+func TestValidateExecutionPolicyAllowsProjectDirectTargetByDefault(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+	t.Setenv(envAllowTargetOverride, "false")
+
+	err := validateExecutionPolicy(invoke.Plan{
+		Service: "com.foo.Svc",
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://project.example:12200",
+		},
+	}, "invoke", target.Sources{
+		ProjectLocal: target.Config{DirectURL: "bolt://project.example:12200"},
+	})
+	if err != nil {
+		t.Fatalf("project direct target should be allowed: %v", err)
+	}
+}
+
+func TestValidateExecutionPolicyRejectsProjectConfigErrors(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+	t.Setenv(envAllowTargetOverride, "false")
+
+	err := validateExecutionPolicy(invoke.Plan{
+		Service: "com.foo.Svc",
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://project.example:12200",
+		},
+	}, "invoke", target.Sources{
+		ProjectLocal: target.Config{DirectURL: "bolt://project.example:12200"},
+		ConfigErrors: []target.ConfigError{{Path: ".sofarpc/config.json", Error: "bad json"}},
+	})
+	if err == nil {
+		t.Fatal("expected project config errors to reject real invoke")
+	}
+	ecerr, ok := err.(*errcode.Error)
+	if !ok {
+		t.Fatalf("error type = %T", err)
+	}
+	if ecerr.Code != errcode.InvocationRejected {
+		t.Fatalf("code = %s, want %s", ecerr.Code, errcode.InvocationRejected)
+	}
+}
+
 func TestValidateExecutionPolicyRespectsAllowedTargetHosts(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
 	t.Setenv(envAllowedServices, "")

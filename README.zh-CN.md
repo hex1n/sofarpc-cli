@@ -94,6 +94,31 @@ export SOFARPC_TIMEOUT_MS=3000
 export SOFARPC_CONNECT_TIMEOUT_MS=1000
 ```
 
+项目级 target 配置可以放在 Java 项目目录里。可提交的共享默认值放在
+`.sofarpc/config.json`；个人机器或环境相关的 `directUrl` 建议放在
+`.sofarpc/config.local.json`：
+
+```json
+{
+  "directUrl": "bolt://dev-rpc.example.com:12200",
+  "protocol": "bolt",
+  "serialization": "hessian2",
+  "timeoutMs": 3000,
+  "connectTimeoutMs": 1000,
+  "uniqueId": "dev"
+}
+```
+
+项目配置里不要写 `mode`。mode 会按优先级从第一个 endpoint 原子推导：
+`directUrl` 表示 direct，`registryAddress` 表示 registry，并且低优先级
+layer 的另一个 endpoint 会被忽略。
+
+target 解析优先级是：
+
+```text
+单次 input > .sofarpc/config.local.json > .sofarpc/config.json > MCP env > defaults
+```
+
 启动时，`sofarpc-mcp` 会在后台 goroutine 里扫描 `SOFARPC_PROJECT_ROOT`
 下的 `.java` 源码，所以第一条 stdio 响应不会被扫描阻塞。隐藏目录、
 测试目录和常见构建产物目录会被跳过。
@@ -121,7 +146,7 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
 ## 典型调用链
 
 1. `sofarpc_open`
-2. `sofarpc_target`
+2. `sofarpc_target`（可带 `project` 或 `cwd` 检查另一个项目）
 3. 如果存在 contract information，则 `sofarpc_describe`
 4. `sofarpc_invoke`
 5. `sofarpc_replay`
@@ -147,14 +172,15 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
 
 - `version` 会覆盖本次调用的 SOFA service version。
 - `targetAppName` 会设置 direct transport 的 target app header。
-- `directUrl` / `registryAddress` 是单次覆盖；否则以 MCP env 为准。
+- `directUrl` / `registryAddress` 是单次覆盖；否则先使用项目配置，再使用 MCP env。
 - `dryRun=true` 返回的 plan 可以直接交给 `sofarpc_replay`。
 - 真实 `sofarpc_invoke` 和 `sofarpc_replay` 都需要 `SOFARPC_ALLOW_INVOKE=true`；
   可用 `SOFARPC_ALLOWED_SERVICES` 限制允许调用的 service FQN。
-- 非 dry-run direct 调用默认只执行 MCP env 中的 `SOFARPC_DIRECT_URL`；如果要允许
+- 非 dry-run direct 调用默认只执行项目配置或 MCP env 解析出的 direct target；如果要允许
   单次 `directUrl` 覆盖或 literal replay payload 里的 target，需要显式设置
   `SOFARPC_ALLOW_TARGET_OVERRIDE=true`。可用 `SOFARPC_ALLOWED_TARGET_HOSTS` 继续限制
-  允许访问的 host 或 host:port。
+  允许访问的 host 或 host:port。项目 target 配置无效时，`sofarpc_target` /
+  `sofarpc_doctor` 会报告错误，真实 invoke 会被拒绝直到配置修好。
 - direct BOLT response body 在分配和解码前会受
   `SOFARPC_MAX_RESPONSE_BYTES` 限制，默认 16 MiB。
 
