@@ -119,9 +119,9 @@ target 解析优先级是：
 单次 input > .sofarpc/config.local.json > .sofarpc/config.json > MCP env > defaults
 ```
 
-启动时，`sofarpc-mcp` 会在后台 goroutine 里扫描 `SOFARPC_PROJECT_ROOT`
-下的 `.java` 源码，所以第一条 stdio 响应不会被扫描阻塞。隐藏目录、
-测试目录和常见构建产物目录会被跳过。
+`sofarpc-mcp` 启动和注册 tools 时不会扫描 `.java` 源码。source-contract
+信息会在第一次有 tool 需要 contract store 时惰性加载，所以大项目不会拖慢
+MCP startup。隐藏目录、测试目录和常见构建产物目录会被跳过。
 
 ### 手写客户端配置
 

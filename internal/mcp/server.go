@@ -30,11 +30,11 @@ const (
 // sofarpc_open / sofarpc_doctor so agents see the reason without
 // having to scrape the server's stderr.
 //
-// ContractLoader, when non-nil, is called in a background goroutine
-// after construction. A store (and any error) it returns replaces any
-// synchronously-supplied Contract / ContractLoadError, so large Java
-// trees no longer delay the server's first stdio response. When nil,
-// the sync Contract fields are used as-is.
+// ContractLoader, when non-nil, is called lazily on the first tool path
+// that asks for the contract store. A store (and any error) it returns
+// replaces any synchronously-supplied Contract / ContractLoadError, so
+// large Java trees do not delay MCP server startup or tool registration.
+// When nil, the sync Contract fields are used as-is.
 type Options struct {
 	TargetSources     target.Sources
 	ServerVersion     string
@@ -49,17 +49,11 @@ func New(opts Options) *sdkmcp.Server {
 	if opts.Sessions == nil {
 		opts.Sessions = NewSessionStore()
 	}
-	holder := newContractHolder(opts.Contract, loadErrorMessage(opts.ContractLoadError))
+	holder := newContractHolder(opts.Contract, loadErrorMessage(opts.ContractLoadError), opts.ContractLoader)
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{
 		Name:    serverName,
 		Version: normalizeServerVersion(opts.ServerVersion),
 	}, nil)
-	if opts.ContractLoader != nil {
-		go func() {
-			store, err := opts.ContractLoader()
-			holder.Set(store, loadErrorMessage(err))
-		}()
-	}
 	registerOpen(server, opts, holder)
 	registerDescribe(server, opts, holder)
 	registerTarget(server, opts)

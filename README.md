@@ -197,10 +197,10 @@ Set it to `0` to disable the captured-plan byte bound.
 by the direct transport. Invalid or non-positive values fall back to the
 default 16 MiB limit.
 
-On startup `sofarpc-mcp` scans `.java` files under `SOFARPC_PROJECT_ROOT`
-in a background goroutine so the first stdio response is not blocked
-by the scan. Hidden directories, test trees, and common build-output
-directories are skipped.
+`sofarpc-mcp` does not scan `.java` files during MCP startup. It loads
+source-contract information lazily when a tool first needs the contract
+store, so tool registration stays fast even for large workspaces. Hidden
+directories, test trees, and common build-output directories are skipped.
 
 ### Hand-written client config
 

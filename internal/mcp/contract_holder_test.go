@@ -22,7 +22,7 @@ func TestContractHolder_NilReceiverIsSafe(t *testing.T) {
 func TestContractHolder_SetAtomicallyReplacesStoreAndError(t *testing.T) {
 	// Start with a load error and no store — the shape the entrypoint
 	// hands the holder when the sync path failed.
-	h := newContractHolder(nil, "initial failure")
+	h := newContractHolder(nil, "initial failure", nil)
 	if h.Get() != nil {
 		t.Fatalf("Get before Set: want nil")
 	}
@@ -38,5 +38,32 @@ func TestContractHolder_SetAtomicallyReplacesStoreAndError(t *testing.T) {
 	}
 	if h.LoadError() != "" {
 		t.Fatalf("LoadError after Set: got %q want empty", h.LoadError())
+	}
+}
+
+func TestContractHolder_LazyLoaderRunsOnce(t *testing.T) {
+	calls := 0
+	store := contract.NewInMemoryStore(javamodel.Class{FQN: "com.foo.Lazy"})
+	h := newContractHolder(nil, "", func() (contract.Store, error) {
+		calls++
+		return store, nil
+	})
+	if calls != 0 {
+		t.Fatalf("loader should not run at construction, calls=%d", calls)
+	}
+	if got := h.Get(); got == nil {
+		t.Fatal("Get should return loaded store")
+	}
+	if calls != 1 {
+		t.Fatalf("loader calls after first Get: got %d want 1", calls)
+	}
+	if h.LoadError() != "" {
+		t.Fatalf("LoadError after successful load: got %q", h.LoadError())
+	}
+	if calls != 1 {
+		t.Fatalf("loader should not rerun, calls=%d", calls)
+	}
+	if _, ok := h.Get().Class("com.foo.Lazy"); !ok {
+		t.Fatal("loaded store should contain com.foo.Lazy")
 	}
 }
