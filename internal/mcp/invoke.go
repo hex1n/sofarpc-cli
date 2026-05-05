@@ -57,7 +57,8 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		if err != nil {
 			return invokeToolResult(InvokeOutput{Error: asErrcodeError(err)}, errorText("invoke failed", err), true), nil
 		}
-		args, err = normalizeArgs(decoded.Service, decoded.Method, args, sources.ProjectRoot)
+		toolSources := sourcesForSession(sources, sessions, decoded.SessionID)
+		args, err = normalizeArgs(decoded.Service, decoded.Method, args, toolSources.ProjectRoot)
 		if err != nil {
 			return invokeToolResult(InvokeOutput{Error: asErrcodeError(err)}, errorText("invoke failed", err), true), nil
 		}
@@ -76,7 +77,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 				RegistryProtocol: decoded.RegistryProtocol,
 				TimeoutMS:        decoded.TimeoutMS,
 			},
-		}, store, sources)
+		}, store, toolSources)
 		if err != nil {
 			out := InvokeOutput{Error: asErrcodeError(err)}
 			return invokeToolResult(out, errorText("invoke failed", err), true), nil
@@ -89,8 +90,8 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			return invokeToolResult(out, summarizeInvokePlan(plan, true), false), nil
 		}
 
-		if err := validateExecutionPolicy(plan, "invoke", sources); err != nil {
-			out := InvokeOutput{Plan: &plan, Diagnostics: diagnosticsWithCapture(nil, capture), Error: asErrcodeError(err)}
+		if err := validateExecutionPolicy(plan, "invoke", toolSources); err != nil {
+			out := InvokeOutput{Plan: &plan, Diagnostics: diagnosticsWithCapture(targetConfigDiagnostics(toolSources), capture), Error: asErrcodeError(err)}
 			return invokeToolResult(out, errorText("invoke rejected", err), true), nil
 		}
 
@@ -336,30 +337,37 @@ func validateRealInvokeForPhase(service, phase string) error {
 }
 
 func validateTargetPolicy(plan invoke.Plan, phase string, sources target.Sources) error {
+	if len(sources.ConfigErrors) > 0 {
+		return errcode.New(errcode.InvocationRejected, phase,
+			"project target config has errors: "+formatConfigErrors(sources.ConfigErrors)).
+			WithHint("sofarpc_target", targetHintArgs(sources),
+				"inspect project config errors and resolved target layers")
+	}
+
 	cfg := target.Normalize(plan.Target)
 	if cfg.Mode != target.ModeDirect || cfg.DirectURL == "" {
 		return nil
 	}
 
-	envCfg := target.Normalize(sources.Env)
+	ambientCfg := target.Normalize(target.Resolve(target.Input{}, sources).Target)
 	if !envBool(envAllowTargetOverride) {
 		switch {
-		case envCfg.DirectURL == "":
+		case ambientCfg.DirectURL == "":
 			return errcode.New(errcode.InvocationRejected, phase,
-				fmt.Sprintf("direct target %q is not allowed; set SOFARPC_DIRECT_URL on the MCP server env or set SOFARPC_ALLOW_TARGET_OVERRIDE=true", cfg.DirectURL)).
-				WithHint("sofarpc_target", map[string]any{"explain": true},
+				fmt.Sprintf("direct target %q is not allowed; configure .sofarpc/config.local.json, .sofarpc/config.json, SOFARPC_DIRECT_URL, or set SOFARPC_ALLOW_TARGET_OVERRIDE=true", cfg.DirectURL)).
+				WithHint("sofarpc_target", targetHintArgs(sources),
 					"inspect the resolved target before enabling real invoke")
 		default:
-			same, err := sameDirectTarget(cfg.DirectURL, envCfg.DirectURL)
+			same, err := sameDirectTarget(cfg.DirectURL, ambientCfg.DirectURL)
 			if err != nil {
 				return errcode.New(errcode.TargetInvalid, phase, err.Error()).
-					WithHint("sofarpc_target", map[string]any{"explain": true},
+					WithHint("sofarpc_target", targetHintArgs(sources),
 						"inspect the resolved direct target address")
 			}
 			if !same {
 				return errcode.New(errcode.InvocationRejected, phase,
-					fmt.Sprintf("direct target %q does not match SOFARPC_DIRECT_URL; set SOFARPC_ALLOW_TARGET_OVERRIDE=true to allow per-call target overrides", cfg.DirectURL)).
-					WithHint("sofarpc_target", map[string]any{"explain": true},
+					fmt.Sprintf("direct target %q does not match the resolved project/env target; set SOFARPC_ALLOW_TARGET_OVERRIDE=true to allow per-call target overrides", cfg.DirectURL)).
+					WithHint("sofarpc_target", targetHintArgs(sources),
 						"inspect the resolved target layers")
 			}
 		}
@@ -368,7 +376,7 @@ func validateTargetPolicy(plan invoke.Plan, phase string, sources target.Sources
 	allowed, host, err := directTargetHostAllowed(cfg.DirectURL)
 	if err != nil {
 		return errcode.New(errcode.TargetInvalid, phase, err.Error()).
-			WithHint("sofarpc_target", map[string]any{"explain": true},
+			WithHint("sofarpc_target", targetHintArgs(sources),
 				"inspect the resolved direct target address")
 	}
 	if !allowed {
@@ -449,6 +457,17 @@ func capturePlanForSession(sessions *SessionStore, sessionID string, plan invoke
 	}
 	capture := sessions.CapturePlan(sessionID, plan)
 	return &capture
+}
+
+func sourcesForSession(base target.Sources, sessions *SessionStore, sessionID string) target.Sources {
+	if sessions == nil || strings.TrimSpace(sessionID) == "" {
+		return base
+	}
+	session, ok := sessions.Get(sessionID)
+	if !ok || strings.TrimSpace(session.ProjectRoot) == "" {
+		return base
+	}
+	return target.ProjectSources(session.ProjectRoot, base.Env)
 }
 
 func diagnosticsWithCapture(base map[string]any, capture *PlanCaptureResult) map[string]any {

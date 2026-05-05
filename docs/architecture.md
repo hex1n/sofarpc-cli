@@ -174,8 +174,11 @@ Per-project defaults belong on the MCP server entry for that project.
 }
 ```
 
-With a project-level MCP env, normal `sofarpc_invoke` requests do not need to
-repeat `directUrl`. Per-call target fields exist only for explicit override.
+With a project-level MCP env or `.sofarpc/config*.json`, normal
+`sofarpc_invoke` requests do not need to repeat `directUrl`. Per-call target
+fields exist only for explicit override. Project config does not accept a
+literal `mode`; the mode is derived from the first endpoint selected by
+priority (`directUrl` for direct, `registryAddress` for registry).
 
 ### 5.3 `sofarpc_target`
 
@@ -183,9 +186,13 @@ repeat `directUrl`. Per-call target fields exist only for explicit override.
 
 - resolved `target`
 - contributing `layers`
+- project `configErrors`, if `.sofarpc/config*.json` could not be parsed
 - optional `trace`
 - optional `explain`
 - a cheap TCP `probe`
+
+It accepts optional `project` or `cwd` fields so diagnostics can inspect the
+same project context that produced an invoke/replay failure.
 
 The probe only checks whether a TCP connection can be opened within
 `connectTimeoutMs`. It does not perform a SOFA handshake.

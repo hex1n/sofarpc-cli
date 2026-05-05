@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
@@ -107,6 +109,43 @@ func TestTargetHandler_ReportsLayers(t *testing.T) {
 	}
 	if len(out.Explain) == 0 {
 		t.Fatal("explain should be populated when explain=true")
+	}
+}
+
+func TestTargetHandler_UsesProjectContextForConfigErrors(t *testing.T) {
+	serverRoot := t.TempDir()
+	sessionRoot := t.TempDir()
+	writeMCPProjectFile(t, sessionRoot, ".sofarpc/config.json", `{"mode":"registry","directUrl":"bolt://project-host:12200"}`)
+
+	server := New(Options{
+		TargetSources: target.ProjectSources(serverRoot, target.Config{DirectURL: "bolt://server-host:12200"}),
+	})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	result, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
+		Name: "sofarpc_target",
+		Arguments: map[string]any{
+			"project": sessionRoot,
+			"explain": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call target: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("target should be an error when project config is invalid")
+	}
+	out := decodeTargetOutput(t, result)
+	if out.ProjectRoot != sessionRoot {
+		t.Fatalf("projectRoot: got %q want %q", out.ProjectRoot, sessionRoot)
+	}
+	if len(out.ConfigErrors) != 1 {
+		t.Fatalf("configErrors: got %+v", out.ConfigErrors)
+	}
+	if !filepath.IsAbs(out.ConfigErrors[0].Path) || !strings.Contains(out.ConfigErrors[0].Path, sessionRoot) {
+		t.Fatalf("config error path should point at session project, got %+v", out.ConfigErrors[0])
 	}
 }
 

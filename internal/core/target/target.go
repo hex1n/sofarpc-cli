@@ -1,7 +1,12 @@
 package target
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -46,11 +51,33 @@ type Config struct {
 	ConnectTimeoutMS int    `json:"connectTimeoutMs,omitempty"`
 }
 
+type projectConfig struct {
+	DirectURL        string `json:"directUrl,omitempty"`
+	RegistryAddress  string `json:"registryAddress,omitempty"`
+	RegistryProtocol string `json:"registryProtocol,omitempty"`
+	Protocol         string `json:"protocol,omitempty"`
+	Serialization    string `json:"serialization,omitempty"`
+	UniqueID         string `json:"uniqueId,omitempty"`
+	TimeoutMS        int    `json:"timeoutMs,omitempty"`
+	ConnectTimeoutMS int    `json:"connectTimeoutMs,omitempty"`
+}
+
 // Sources is the ambient, already-materialised config surface available
-// to resolution. Today the only non-input layer is the MCP env.
+// to resolution. ProjectLocal and Project are loaded from
+// .sofarpc/config.local.json and .sofarpc/config.json respectively.
 type Sources struct {
-	Env         Config
-	ProjectRoot string
+	Env          Config
+	Project      Config
+	ProjectLocal Config
+	ProjectRoot  string
+	ConfigErrors []ConfigError
+}
+
+// ConfigError records a project config file that existed but could not be
+// parsed. Missing config files are not errors.
+type ConfigError struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
 }
 
 // Layer records which output fields a resolution layer contributed.
@@ -76,11 +103,12 @@ type FieldTrace struct {
 
 // Report is the full diagnostic payload produced by Resolve.
 type Report struct {
-	Target  Config       `json:"target"`
-	Service string       `json:"service,omitempty"`
-	Layers  []Layer      `json:"layers,omitempty"`
-	Explain []string     `json:"explain,omitempty"`
-	Trace   []FieldTrace `json:"trace,omitempty"`
+	Target       Config        `json:"target"`
+	Service      string        `json:"service,omitempty"`
+	Layers       []Layer       `json:"layers,omitempty"`
+	ConfigErrors []ConfigError `json:"configErrors,omitempty"`
+	Explain      []string      `json:"explain,omitempty"`
+	Trace        []FieldTrace  `json:"trace,omitempty"`
 }
 
 type fieldSpec struct {
@@ -97,16 +125,6 @@ type layerConfig struct {
 }
 
 var configFieldSpecs = []fieldSpec{
-	{
-		name: "directUrl",
-		get:  func(c Config) string { return c.DirectURL },
-		set:  func(c *Config, v string) { c.DirectURL = v },
-	},
-	{
-		name: "registryAddress",
-		get:  func(c Config) string { return c.RegistryAddress },
-		set:  func(c *Config, v string) { c.RegistryAddress = v },
-	},
 	{
 		name: "registryProtocol",
 		get:  func(c Config) string { return c.RegistryProtocol },
@@ -140,16 +158,33 @@ var configFieldSpecs = []fieldSpec{
 }
 
 // Resolve merges the target layers in descending priority:
-// input > MCP env > built-in defaults.
+// input > project-local config > project shared config > MCP env > built-in
+// defaults.
 func Resolve(input Input, sources Sources) Report {
 	layers := []layerConfig{
 		{name: "input", cfg: configFromInput(input)},
+		{name: "project-local", cfg: normalizeConfig(sources.ProjectLocal)},
+		{name: "project", cfg: normalizeConfig(sources.Project)},
 		{name: "mcp-env", cfg: normalizeConfig(sources.Env)},
 		{name: "defaults", cfg: defaultConfig()},
 	}
 
-	report := Report{Service: strings.TrimSpace(input.Service)}
+	report := Report{
+		Service:      strings.TrimSpace(input.Service),
+		ConfigErrors: append([]ConfigError(nil), sources.ConfigErrors...),
+	}
 	layerFields := make(map[string][]string, len(layers))
+
+	endpoint, endpointTraces, endpointFields := resolveEndpoint(layers)
+	report.Target.Mode = endpoint.Mode
+	report.Target.DirectURL = endpoint.DirectURL
+	report.Target.RegistryAddress = endpoint.RegistryAddress
+	if input.Explain {
+		report.Trace = append(report.Trace, endpointTraces...)
+	}
+	for layerName, fields := range endpointFields {
+		layerFields[layerName] = append(layerFields[layerName], fields...)
+	}
 
 	for _, spec := range configFieldSpecs {
 		winner, trace, ok := resolveField(spec, layers)
@@ -168,11 +203,159 @@ func Resolve(input Input, sources Sources) Report {
 	}
 
 	report.Target = normalizeResolvedTarget(report.Target)
+	if report.Target.Mode != ModeRegistry {
+		report.Target.RegistryProtocol = ""
+	}
 	report.Layers = buildLayers(layers, layerFields)
 	if input.Explain {
 		report.Explain = buildExplain(report.Trace)
 	}
 	return report
+}
+
+// ProjectSources builds a Sources value for projectRoot by reading the optional
+// project-level target config files. Config load errors are carried in the
+// returned Sources so callers can surface them in target/open/doctor output
+// without making missing files fatal.
+func ProjectSources(projectRoot string, env Config) Sources {
+	projectRoot = strings.TrimSpace(projectRoot)
+	src := Sources{
+		Env:         env,
+		ProjectRoot: projectRoot,
+	}
+	if projectRoot == "" {
+		return src
+	}
+	project, ok, err := loadProjectConfigFile(filepath.Join(projectRoot, ".sofarpc", "config.json"))
+	if err != nil {
+		src.ConfigErrors = append(src.ConfigErrors, ConfigError{Path: filepath.Join(projectRoot, ".sofarpc", "config.json"), Error: err.Error()})
+	} else if ok {
+		src.Project = project
+	}
+	local, ok, err := loadProjectConfigFile(filepath.Join(projectRoot, ".sofarpc", "config.local.json"))
+	if err != nil {
+		src.ConfigErrors = append(src.ConfigErrors, ConfigError{Path: filepath.Join(projectRoot, ".sofarpc", "config.local.json"), Error: err.Error()})
+	} else if ok {
+		src.ProjectLocal = local
+	}
+	return src
+}
+
+func loadProjectConfigFile(path string) (Config, bool, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Config{}, false, nil
+		}
+		return Config{}, false, err
+	}
+	var cfg projectConfig
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		return Config{}, true, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("contains multiple JSON values")
+		}
+		return Config{}, true, err
+	}
+	if strings.TrimSpace(cfg.DirectURL) != "" && strings.TrimSpace(cfg.RegistryAddress) != "" {
+		return Config{}, true, fmt.Errorf("directUrl and registryAddress are mutually exclusive")
+	}
+	return normalizeConfig(configFromProjectConfig(cfg)), true, nil
+}
+
+func resolveEndpoint(layers []layerConfig) (Config, []FieldTrace, map[string][]string) {
+	var winner layerConfig
+	var endpoint Config
+	for _, layer := range layers {
+		cfg := normalizeConfig(layer.cfg)
+		switch {
+		case cfg.DirectURL != "":
+			winner = layerConfig{name: layer.name, cfg: cfg}
+			endpoint = Config{Mode: ModeDirect, DirectURL: cfg.DirectURL}
+		case cfg.RegistryAddress != "":
+			winner = layerConfig{name: layer.name, cfg: cfg}
+			endpoint = Config{Mode: ModeRegistry, RegistryAddress: cfg.RegistryAddress}
+		}
+		if endpoint.Mode != "" {
+			break
+		}
+	}
+	if endpoint.Mode == "" {
+		return Config{}, nil, nil
+	}
+
+	fields := map[string][]string{winner.name: endpointFieldNames(endpoint.Mode)}
+	traces := endpointFieldTraces(winner, endpoint, layers)
+	return endpoint, traces, fields
+}
+
+func endpointFieldNames(mode string) []string {
+	switch mode {
+	case ModeDirect:
+		return []string{"directUrl"}
+	case ModeRegistry:
+		return []string{"registryAddress"}
+	default:
+		return nil
+	}
+}
+
+func endpointFieldTraces(winner layerConfig, endpoint Config, layers []layerConfig) []FieldTrace {
+	var traces []FieldTrace
+	switch endpoint.Mode {
+	case ModeDirect:
+		traces = append(traces, FieldTrace{
+			Field:    "directUrl",
+			Winner:   TraceValue{Layer: winner.name, Value: endpoint.DirectURL},
+			Shadowed: shadowedEndpointValues(winner.name, layers),
+		})
+	case ModeRegistry:
+		traces = append(traces, FieldTrace{
+			Field:    "registryAddress",
+			Winner:   TraceValue{Layer: winner.name, Value: endpoint.RegistryAddress},
+			Shadowed: shadowedEndpointValues(winner.name, layers),
+		})
+	}
+	return traces
+}
+
+func shadowedEndpointValues(winnerName string, layers []layerConfig) []TraceValue {
+	var out []TraceValue
+	seenWinner := false
+	for _, layer := range layers {
+		if layer.name == winnerName {
+			seenWinner = true
+			continue
+		}
+		if !seenWinner {
+			continue
+		}
+		cfg := normalizeConfig(layer.cfg)
+		if cfg.DirectURL != "" {
+			out = append(out, TraceValue{Layer: layer.name, Value: "directUrl=" + cfg.DirectURL})
+		}
+		if cfg.RegistryAddress != "" {
+			out = append(out, TraceValue{Layer: layer.name, Value: "registryAddress=" + cfg.RegistryAddress})
+		}
+	}
+	return out
+}
+
+func configFromProjectConfig(cfg projectConfig) Config {
+	return Config{
+		DirectURL:        cfg.DirectURL,
+		RegistryAddress:  cfg.RegistryAddress,
+		RegistryProtocol: cfg.RegistryProtocol,
+		Protocol:         cfg.Protocol,
+		Serialization:    cfg.Serialization,
+		UniqueID:         cfg.UniqueID,
+		TimeoutMS:        cfg.TimeoutMS,
+		ConnectTimeoutMS: cfg.ConnectTimeoutMS,
+	}
 }
 
 func configFromInput(in Input) Config {

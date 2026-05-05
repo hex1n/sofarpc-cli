@@ -14,12 +14,13 @@ import (
 // resolved workspace, the ambient target, and a capability banner the
 // agent can branch on before its first invoke.
 type OpenOutput struct {
-	SessionID    string         `json:"sessionId"`
-	ProjectRoot  string         `json:"projectRoot"`
-	Target       target.Config  `json:"target,omitempty"`
-	Layers       []target.Layer `json:"layers,omitempty"`
-	Capabilities Capabilities   `json:"capabilities"`
-	Contract     ContractBanner `json:"contract"`
+	SessionID    string               `json:"sessionId"`
+	ProjectRoot  string               `json:"projectRoot"`
+	Target       target.Config        `json:"target,omitempty"`
+	Layers       []target.Layer       `json:"layers,omitempty"`
+	ConfigErrors []target.ConfigError `json:"configErrors,omitempty"`
+	Capabilities Capabilities         `json:"capabilities"`
+	Contract     ContractBanner       `json:"contract"`
 }
 
 // Capabilities is an up-front capability banner so agents know which
@@ -75,10 +76,11 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 		})
 
 		out := OpenOutput{
-			SessionID:   session.ID,
-			ProjectRoot: ws.ProjectRoot,
-			Target:      report.Target,
-			Layers:      report.Layers,
+			SessionID:    session.ID,
+			ProjectRoot:  ws.ProjectRoot,
+			Target:       report.Target,
+			Layers:       report.Layers,
+			ConfigErrors: report.ConfigErrors,
 			Capabilities: Capabilities{
 				DirectInvoke: true,
 				Describe:     store != nil,

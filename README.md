@@ -127,6 +127,32 @@ export SOFARPC_TIMEOUT_MS=3000
 export SOFARPC_CONNECT_TIMEOUT_MS=1000
 ```
 
+Project-level target config can live with the Java project. Shared defaults go
+in `.sofarpc/config.json`; machine-local values such as `directUrl` should go
+in `.sofarpc/config.local.json`:
+
+```json
+{
+  "directUrl": "bolt://dev-rpc.example.com:12200",
+  "protocol": "bolt",
+  "serialization": "hessian2",
+  "timeoutMs": 3000,
+  "connectTimeoutMs": 1000,
+  "uniqueId": "dev"
+}
+```
+
+Do not set `mode` in project config. It is derived atomically from the first
+configured endpoint in priority order: `directUrl` selects direct mode,
+`registryAddress` selects registry mode, and the other endpoint fields from
+lower-priority layers are ignored.
+
+Target resolution order is:
+
+```text
+per-call input > .sofarpc/config.local.json > .sofarpc/config.json > MCP env > defaults
+```
+
 Real network calls are disabled by default. `dryRun=true` always works,
 but non-dry-run `sofarpc_invoke` requires an explicit opt-in:
 
@@ -152,12 +178,14 @@ export SOFARPC_MAX_RESPONSE_BYTES=16777216
 otherwise inside `SOFARPC_PROJECT_ROOT`. Files outside that root are
 rejected after symlink resolution. The default file-size limit is 1 MiB.
 
-For non-dry-run direct calls, the default policy only executes the
-`SOFARPC_DIRECT_URL` configured on the MCP server env. Per-call `directUrl`
-overrides and literal replay payload targets require
-`SOFARPC_ALLOW_TARGET_OVERRIDE=true`. `SOFARPC_ALLOWED_TARGET_HOSTS`, when set,
-restricts real direct targets to a comma-separated list of host or host:port
-values; `*` allows all hosts.
+For non-dry-run direct calls, the default policy only executes the resolved
+project/env target from `.sofarpc/config.local.json`, `.sofarpc/config.json`, or
+`SOFARPC_DIRECT_URL`. Per-call `directUrl` overrides and literal replay payload
+targets require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`. `SOFARPC_ALLOWED_TARGET_HOSTS`,
+when set, restricts real direct targets to a comma-separated list of host or
+host:port values; `*` allows all hosts. Invalid project target config is
+reported by `sofarpc_target` / `sofarpc_doctor` and blocks real invoke until
+fixed.
 
 `SOFARPC_SESSION_PLAN_MAX_BYTES` controls only in-memory session capture for
 `sofarpc_replay` by `sessionId`. When a plan is larger than this limit,
@@ -197,7 +225,7 @@ Codex: `~/.codex/config.toml` under `[mcp_servers.sofarpc]`):
 ## Typical flow
 
 1. `sofarpc_open`
-2. `sofarpc_target`
+2. `sofarpc_target` (optionally with `project` or `cwd` to inspect another project)
 3. `sofarpc_describe` if contract information is available
 4. `sofarpc_invoke`
 5. `sofarpc_replay`
@@ -225,14 +253,14 @@ source.
 
 - `version` overrides the SOFA service version for this call.
 - `targetAppName` sets the direct-transport target app header.
-- `directUrl` and `registryAddress` are per-call overrides; otherwise MCP env
-  wins.
+- `directUrl` and `registryAddress` are per-call overrides; otherwise project
+  config wins, then MCP env.
 - `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later.
 - Real invocation requires `SOFARPC_ALLOW_INVOKE=true`; keep the default disabled
   when you only want planning, skeletons, and diagnostics.
-- Non-dry-run direct calls default to the MCP env `SOFARPC_DIRECT_URL`; per-call
-  target overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true` and can be
-  bounded with `SOFARPC_ALLOWED_TARGET_HOSTS`.
+- Non-dry-run direct calls default to the resolved project/env direct target;
+  per-call target overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true` and can
+  be bounded with `SOFARPC_ALLOWED_TARGET_HOSTS`.
 - If `sessionId` is provided, the plan is retained for session replay only when
   its JSON size is at or below `SOFARPC_SESSION_PLAN_MAX_BYTES`; oversized plans
   are still returned and can be replayed as a literal payload.

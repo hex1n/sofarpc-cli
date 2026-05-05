@@ -51,7 +51,7 @@ func main() {
 func run(ctx context.Context) error {
 	projectRoot := projectRootFromEnv()
 	server := mcpserver.New(mcpserver.Options{
-		TargetSources: target.Sources{Env: envConfig(), ProjectRoot: projectRoot},
+		TargetSources: target.ProjectSources(projectRoot, envConfig()),
 		ServerVersion: buildVersion(),
 		// Guard against the typed-nil-in-interface pitfall: when
 		// loadContractStore returns a nil *sourcecontract.Store, wrap it

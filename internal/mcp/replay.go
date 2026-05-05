@@ -53,8 +53,9 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 			return invokeToolResult(out, summarizeReplay(plan, source, true), false), nil
 		}
 
-		if err := validateExecutionPolicy(*plan, "replay", sources); err != nil {
-			out := ReplayOutput{Plan: plan, Source: source, Error: asErrcodeError(err)}
+		toolSources := sourcesForSession(sources, sessions, in.SessionID)
+		if err := validateExecutionPolicy(*plan, "replay", toolSources); err != nil {
+			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: targetConfigDiagnostics(toolSources), Error: asErrcodeError(err)}
 			return invokeToolResult(out, errorText("replay rejected", err), true), nil
 		}
 
