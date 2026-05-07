@@ -336,6 +336,46 @@ func TestInvoke_DryRunNormalizesFacadeBackedArgs(t *testing.T) {
 	}
 }
 
+func TestInvoke_StringifiedInlineJSONObjectForDTOIsDecoded(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"com.foo.Req"}},
+			},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.Req",
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "id", JavaType: "java.lang.Long"},
+			},
+		},
+	)
+
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
+		"service":   "com.foo.Svc",
+		"method":    "doThing",
+		"directUrl": "bolt://h:1",
+		"args":      `{"id":7}`,
+		"dryRun":    true,
+	})
+	if !out.Ok {
+		t.Fatalf("dry-run should succeed; got error=%+v", out.Error)
+	}
+	arg, ok := out.Plan.Args[0].(map[string]any)
+	if !ok {
+		t.Fatalf("arg type: %T", out.Plan.Args[0])
+	}
+	if got := arg["@type"]; got != "com.foo.Req" {
+		t.Fatalf("@type: got %#v", got)
+	}
+	if got := arg["id"]; got != json.Number("7") {
+		t.Fatalf("id: got %#v want 7", got)
+	}
+}
+
 func TestInvoke_MultiArgBareValueIsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(
 		javamodel.Class{
