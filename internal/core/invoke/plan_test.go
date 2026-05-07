@@ -1,6 +1,7 @@
 package invoke
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -125,6 +126,81 @@ func TestBuildPlan_SingleArgBareValuePassThrough(t *testing.T) {
 	}
 	if got := plan.Args[0]; got != "hello" {
 		t.Fatalf("user args should pass through, got %v", got)
+	}
+}
+
+func TestBuildPlan_JSONLookingStringArgStaysString(t *testing.T) {
+	facade := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"java.lang.String"}},
+			},
+		},
+	)
+	plan, err := BuildPlan(
+		Input{
+			Service: "com.foo.Svc",
+			Method:  "doThing",
+			Args:    `{"id":7}`,
+			Target:  target.Input{DirectURL: "bolt://h:1"},
+		},
+		facade,
+		target.Sources{},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if got := plan.Args[0]; got != `{"id":7}` {
+		t.Fatalf("string arg should remain literal JSON text, got %#v", got)
+	}
+}
+
+func TestBuildPlan_StringifiedInlineJSONArrayForSingleListArgIsDecodedAsValue(t *testing.T) {
+	facade := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"java.util.List<com.foo.Item>"}},
+			},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.Item",
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "id", JavaType: "java.lang.Long"},
+			},
+		},
+	)
+	plan, err := BuildPlan(
+		Input{
+			Service: "com.foo.Svc",
+			Method:  "doThing",
+			Args:    `[{"id":7},{"id":8}]`,
+			Target:  target.Input{DirectURL: "bolt://h:1"},
+		},
+		facade,
+		target.Sources{},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	items, ok := plan.Args[0].([]any)
+	if !ok {
+		t.Fatalf("args[0] type: %T", plan.Args[0])
+	}
+	if len(items) != 2 {
+		t.Fatalf("items length: got %d want 2", len(items))
+	}
+	first := items[0].(map[string]any)
+	if first["@type"] != "com.foo.Item" || first["id"] != int64(7) {
+		t.Fatalf("first item: %#v", first)
+	}
+	second := items[1].(map[string]any)
+	if second["@type"] != "com.foo.Item" || second["id"] != int64(8) {
+		t.Fatalf("second item: %#v", second)
 	}
 }
 
@@ -294,6 +370,33 @@ func TestBuildPlan_TrustedMode_SingleArgBareValue(t *testing.T) {
 	}
 	if got := plan.Args[0]; got != "hello" {
 		t.Fatalf("args[0]: got %v want hello", got)
+	}
+}
+
+func TestBuildPlan_TrustedMode_StringifiedJSONObjectArgDecoded(t *testing.T) {
+	plan, err := BuildPlan(
+		Input{
+			Service:    "com.foo.Svc",
+			Method:     "doThing",
+			ParamTypes: []string{"com.foo.Req"},
+			Args:       `{"@type":"com.foo.Req","id":7}`,
+			Target:     target.Input{DirectURL: "bolt://h:1"},
+		},
+		nil,
+		target.Sources{},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	arg, ok := plan.Args[0].(map[string]any)
+	if !ok {
+		t.Fatalf("args[0] type: %T", plan.Args[0])
+	}
+	if got := arg["@type"]; got != "com.foo.Req" {
+		t.Fatalf("@type: got %#v", got)
+	}
+	if got := arg["id"]; got != json.Number("7") {
+		t.Fatalf("id: got %#v want 7", got)
 	}
 }
 

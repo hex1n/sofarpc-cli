@@ -7,12 +7,14 @@ package invoke
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
+	"github.com/hex1n/sofarpc-cli/internal/javatype"
 )
 
 const PlanSchemaVersion = "sofarpc.invoke.plan/v1"
@@ -157,7 +159,15 @@ func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
 			WithHint("sofarpc_doctor", nil,
 				"doctor reports whether this workspace can describe methods or must use trusted-mode invoke")
 	}
-	args, err := coerceArgsVector(in.Args, len(in.ParamTypes))
+	expandedArgs, err := expandStringifiedJSONArgs(in.Args, in.ParamTypes)
+	if err != nil {
+		return Plan{}, errcode.New(errcode.ArgsInvalid, "invoke",
+			fmt.Sprintf("trusted mode expects %d arg(s): %v", len(in.ParamTypes), err)).
+			WithHint("sofarpc_describe",
+				describeHintArgs(in.Service, in.Method),
+				"align args shape with paramTypes")
+	}
+	args, err := coerceArgsVector(expandedArgs, len(in.ParamTypes))
 	if err != nil {
 		return Plan{}, errcode.New(errcode.ArgsInvalid, "invoke",
 			fmt.Sprintf("trusted mode expects %d arg(s): %v", len(in.ParamTypes), err)).
@@ -190,6 +200,7 @@ func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
 // resolveArgs chooses the arg vector that will go on the wire.
 //
 //   - user args == nil          → render skeleton from paramTypes.
+//   - stringified JSON + structured paramType → decode before shaping.
 //   - len(user) == len(types)   → pass through verbatim (user retains @type duty).
 //   - len(user) != len(types)   → input.args-invalid with an explicit message.
 //
@@ -205,7 +216,15 @@ func resolveArgs(service, method string, userArgs any, paramTypes []string, faca
 		skeleton := contract.BuildSkeleton(paramTypes, facade)
 		return decodeSkeleton(skeleton), "skeleton", nil
 	}
-	vector, err := coerceArgsVector(userArgs, len(paramTypes))
+	expandedArgs, err := expandStringifiedJSONArgs(userArgs, paramTypes)
+	if err != nil {
+		return nil, "", errcode.New(errcode.ArgsInvalid, "invoke",
+			fmt.Sprintf("parse args: %v", err)).
+			WithHint("sofarpc_describe",
+				describeHintArgs(service, method),
+				"describe the method to see its paramTypes")
+	}
+	vector, err := coerceArgsVector(expandedArgs, len(paramTypes))
 	if err != nil {
 		return nil, "", errcode.New(errcode.ArgsInvalid, "invoke",
 			fmt.Sprintf("method takes %d arg(s): %v", len(paramTypes), err)).
@@ -229,6 +248,75 @@ func resolveArgs(service, method string, userArgs any, paramTypes []string, faca
 				"describe the method to inspect field types or pass a canonical payload")
 	}
 	return normalized, "user", nil
+}
+
+func expandStringifiedJSONArgs(raw any, paramTypes []string) (any, error) {
+	text, ok := raw.(string)
+	if !ok {
+		return raw, nil
+	}
+	trimmed := strings.TrimSpace(text)
+	if !shouldExpandStringifiedJSON(trimmed, paramTypes) {
+		return raw, nil
+	}
+	parsed, err := decodeStringifiedJSONValue(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("stringified JSON: %w", err)
+	}
+	if trimmed[0] == '[' && len(paramTypes) == 1 && expectsStructuredJSONParam(paramTypes[0]) {
+		return []any{parsed}, nil
+	}
+	return parsed, nil
+}
+
+func shouldExpandStringifiedJSON(trimmed string, paramTypes []string) bool {
+	if trimmed == "" || len(paramTypes) == 0 {
+		return false
+	}
+	switch trimmed[0] {
+	case '[':
+		if len(paramTypes) > 1 {
+			return true
+		}
+		return expectsStructuredJSONParam(paramTypes[0])
+	case '{':
+		return len(paramTypes) == 1 && expectsStructuredJSONParam(paramTypes[0])
+	default:
+		return false
+	}
+}
+
+func expectsStructuredJSONParam(paramType string) bool {
+	spec := contract.ParseTypeSpec(paramType)
+	if spec.Wildcard != contract.WildcardNone {
+		spec = spec.Effective()
+	}
+	if spec.ArrayDepth > 0 {
+		return true
+	}
+	switch javatype.Placeholder(spec.Base) {
+	case javatype.PlaceholderObject, javatype.PlaceholderCollection, javatype.PlaceholderMap:
+		return true
+	default:
+		return false
+	}
+}
+
+func decodeStringifiedJSONValue(text string) (any, error) {
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	var parsed any
+	if err := dec.Decode(&parsed); err != nil {
+		return nil, err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("multiple JSON values")
+		}
+		return nil, err
+	}
+	return parsed, nil
 }
 
 func coerceArgsVector(raw any, arity int) ([]any, error) {
