@@ -339,14 +339,21 @@ The current e2e smoke starts a local fake BOLT server and exercises the real
 an external SOFARPC service. The GitHub Actions `e2e` workflow is manual
 (`workflow_dispatch`) so default CI remains fast.
 
+SOFARPC/Hessian wire compatibility is guarded by committed fixtures under
+`internal/sofarpcwire/testdata/golden`. Default Go tests consume those fixtures
+without Java. Before release, run the manual GitHub Actions `wire-fixtures`
+workflow; it regenerates the baseline Java fixtures and verifies the declared
+SOFARPC version matrix.
+
 ## Release checklist
 
 1. Confirm CI is green on `main`.
-2. Update `CHANGELOG.md`.
-3. Create a version tag such as `v0.1.0`.
-4. Build with version metadata injected through `-ldflags`.
-5. Verify `sofarpc-mcp version` and `sofarpc-mcp version -json`.
-6. Install from the tag with `go install ...@v0.1.0`.
+2. Run the manual `wire-fixtures` workflow.
+3. Update `CHANGELOG.md`.
+4. Create a version tag such as `v0.1.0`.
+5. Build with version metadata injected through `-ldflags`.
+6. Verify `sofarpc-mcp version` and `sofarpc-mcp version -json`.
+7. Install from the tag with `go install ...@v0.1.0`.
 
 ## Repo layout
 

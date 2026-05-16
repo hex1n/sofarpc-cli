@@ -1,0 +1,66 @@
+{
+  "contentHex" : "4fbe636f6d2e616c697061792e736f66612e7270632e636f72652e726573706f6e73652e536f6661526573706f6e7365940769734572726f72086572726f724d73670b617070526573706f6e73650d726573706f6e736550726f70736f90464e4fa9636f6d2e6578616d706c652e46697874757265526573756c74970773756363657373076d657373616765077072696d617279056974656d730a6974656d4279436f646505636f756e74067374617475736f9154026f6b4fa7636f6d2e6578616d706c652e466978747572654974656d9304636f64650673746174757306616d6f756e746f92077072696d617279064143544956454fa46a6176612e6d6174682e426967446563696d616c910576616c75656f9307313030302e3530566e014a027a4d7400176a6176612e7574696c2e4c696e6b6564486173684d6170077072696d6172794a027a4fa46a6176612e6d6174682e426967496e746567657296067369676e756d08626974436f756e74096269744c656e6774680c6c6f776573745365744269741266697273744e6f6e7a65726f496e744e756d036d61676f949190909090567400045b696e746e01ba7a4fa9636f6d2e6578616d706c652e4669787475726553746174757391046e616d656f95064143544956454d07747261636549640d666978747572652d74726163657a",
+  "kind" : "response-content",
+  "name" : "Java-encoded success response with DTO, enum, BigDecimal, list and map",
+  "want" : {
+    "appResponseJson" : {
+      "fields" : {
+        "count" : {
+          "type" : "java.math.BigInteger"
+        },
+        "itemByCode" : {
+          "map" : {
+            "primary" : {
+              "fields" : {
+                "amount" : {
+                  "type" : "java.math.BigDecimal",
+                  "value" : "1000.50"
+                },
+                "code" : "primary",
+                "status" : "ACTIVE"
+              },
+              "type" : "com.example.FixtureItem"
+            }
+          },
+          "type" : "java.util.LinkedHashMap"
+        },
+        "items" : [ {
+          "fields" : {
+            "amount" : {
+              "type" : "java.math.BigDecimal",
+              "value" : "1000.50"
+            },
+            "code" : "primary",
+            "status" : "ACTIVE"
+          },
+          "type" : "com.example.FixtureItem"
+        } ],
+        "message" : "ok",
+        "primary" : {
+          "fields" : {
+            "amount" : {
+              "type" : "java.math.BigDecimal",
+              "value" : "1000.50"
+            },
+            "code" : "primary",
+            "status" : "ACTIVE"
+          },
+          "type" : "com.example.FixtureItem"
+        },
+        "status" : {
+          "fields" : {
+            "name" : "ACTIVE"
+          },
+          "type" : "com.example.FixtureStatus"
+        },
+        "success" : true
+      },
+      "type" : "com.example.FixtureResult"
+    },
+    "appResponseType" : "com.example.FixtureResult",
+    "isError" : false,
+    "responseProps" : {
+      "traceId" : "fixture-trace"
+    }
+  }
+}

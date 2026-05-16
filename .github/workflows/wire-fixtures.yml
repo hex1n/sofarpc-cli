@@ -1,0 +1,82 @@
+name: wire-fixtures
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+          cache: maven
+
+      - name: Regenerate baseline fixtures
+        run: |
+          go run ./internal/sofarpcwire/testdata/go-fixtures
+          cd internal/sofarpcwire/testdata/java-fixtures
+          mvn -q package
+          mvn -q dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
+          java -cp "target/classes:$(cat target/classpath.txt)" com.example.WireFixtureGenerator ../golden
+          java -cp "target/classes:$(cat target/classpath.txt)" com.example.WireFixtureVerifier ../golden
+
+      - name: Check generated fixture drift
+        run: git diff --exit-code -- internal/sofarpcwire/testdata/golden/*.json
+
+      - name: Run Go wire fixture gate
+        run: go test ./internal/sofarpcwire
+
+  compatibility-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        sofarpc-version:
+          - 5.4.0
+          - 5.7.6
+          - 5.8.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+          cache: maven
+
+      - name: Generate and verify fixtures
+        run: |
+          golden_dir="$(mktemp -d)"
+          go run ./internal/sofarpcwire/testdata/go-fixtures "$golden_dir"
+
+          cd internal/sofarpcwire/testdata/java-fixtures
+          mvn -q -Dsofarpc.version=${{ matrix.sofarpc-version }} package
+          mvn -q -Dsofarpc.version=${{ matrix.sofarpc-version }} dependency:build-classpath -Dmdep.outputFile=target/classpath-${{ matrix.sofarpc-version }}.txt
+          java -cp "target/classes:$(cat target/classpath-${{ matrix.sofarpc-version }}.txt)" com.example.WireFixtureGenerator "$golden_dir"
+          java -cp "target/classes:$(cat target/classpath-${{ matrix.sofarpc-version }}.txt)" com.example.WireFixtureVerifier "$golden_dir"
+
+          cd "$GITHUB_WORKSPACE"
+          SOFARPCWIRE_GOLDEN_DIR="$golden_dir" go test ./internal/sofarpcwire

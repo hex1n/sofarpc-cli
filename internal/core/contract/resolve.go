@@ -27,11 +27,11 @@ type Result struct {
 //   - no method with name → contract.method-not-found.
 //   - one overload → returned directly, Selected=0.
 //   - many overloads + no paramTypes → contract.method-ambiguous.
-//   - many overloads + paramTypes → exact match (arity + element equality)
-//     or contract.method-ambiguous if the types don't uniquely pick one.
+//   - many overloads + paramTypes → exact match first, then assignable match
+//     (caller type can be passed to declared type) if exact did not match.
+//     Non-unique matches return contract.method-ambiguous.
 //
-// paramTypes are matched case-sensitively against Method.ParamTypes. The
-// caller is expected to pass fully qualified names (e.g. "java.lang.String").
+// paramTypes are expected to be fully qualified names (e.g. "java.lang.String").
 func ResolveMethod(store Store, service, method string, paramTypes []string) (Result, error) {
 	if strings.TrimSpace(service) == "" {
 		return Result{}, errcode.New(errcode.ServiceMissing, "contract", "service is required").
@@ -55,7 +55,7 @@ func ResolveMethod(store Store, service, method string, paramTypes []string) (Re
 			WithHint("sofarpc_describe", map[string]any{"service": service}, "list available methods")
 	}
 
-	selected, err := pickOverload(service, method, overloads, paramTypes)
+	selected, err := pickOverload(store, service, method, overloads, paramTypes)
 	if err != nil {
 		return Result{}, err
 	}
@@ -72,13 +72,15 @@ func collectOverloads(store Store, cls javamodel.Class, name string) []javamodel
 	seen := map[string]bool{}
 	seenSignatures := map[string]bool{}
 
-	var walk func(javamodel.Class)
-	walk = func(current javamodel.Class) {
-		if current.FQN == "" || seen[current.FQN] {
+	var walk func(javamodel.Class, map[string]string)
+	walk = func(current javamodel.Class, bindings map[string]string) {
+		seenKey := typeBindingKey(current.FQN, bindings)
+		if current.FQN == "" || seen[seenKey] {
 			return
 		}
-		seen[current.FQN] = true
+		seen[seenKey] = true
 		for _, m := range current.Methods {
+			m = substituteMethodTypeParams(m, bindings)
 			if m.Name == name {
 				signature := methodSignature(m)
 				if seenSignatures[signature] {
@@ -89,18 +91,20 @@ func collectOverloads(store Store, cls javamodel.Class, name string) []javamodel
 			}
 		}
 		for _, ifaceName := range current.Interfaces {
-			if iface, ok := store.Class(rawJavaTypeName(ifaceName)); ok {
-				walk(iface)
+			ifaceRef := substituteTypeParams(ifaceName, bindings)
+			if iface, ok := store.Class(rawJavaTypeName(ifaceRef)); ok {
+				walk(iface, typeArgBindings(ifaceRef, iface))
 			}
 		}
 		if current.Superclass != "" {
-			if super, ok := store.Class(rawJavaTypeName(current.Superclass)); ok {
-				walk(super)
+			superRef := substituteTypeParams(current.Superclass, bindings)
+			if super, ok := store.Class(rawJavaTypeName(superRef)); ok {
+				walk(super, typeArgBindings(superRef, super))
 			}
 		}
 	}
 
-	walk(cls)
+	walk(cls, nil)
 	return out
 }
 
@@ -108,7 +112,7 @@ func methodSignature(m javamodel.Method) string {
 	return m.Name + "(" + strings.Join(m.ParamTypes, ",") + ")"
 }
 
-func pickOverload(service, method string, overloads []javamodel.Method, paramTypes []string) (int, error) {
+func pickOverload(store Store, service, method string, overloads []javamodel.Method, paramTypes []string) (int, error) {
 	if len(overloads) == 1 {
 		return 0, nil
 	}
@@ -121,15 +125,22 @@ func pickOverload(service, method string, overloads []javamodel.Method, paramTyp
 			matches = append(matches, i)
 		}
 	}
+	if len(matches) == 0 {
+		for i, m := range overloads {
+			if paramTypesAssignable(store, paramTypes, m.ParamTypes) {
+				matches = append(matches, i)
+			}
+		}
+	}
 	switch len(matches) {
 	case 1:
 		return matches[0], nil
 	case 0:
 		return 0, errcode.New(errcode.MethodNotFound, "contract",
-			fmt.Sprintf("no overload of %s.%s matches paramTypes %v", service, method, paramTypes)).
+			fmt.Sprintf("no overload of %s.%s matches or accepts paramTypes %v", service, method, paramTypes)).
 			WithHint("sofarpc_describe", map[string]any{"service": service, "method": method}, "inspect declared overloads")
 	default:
-		return 0, ambiguousErr(service, method, overloads, "paramTypes matched more than one overload")
+		return 0, ambiguousErr(service, method, overloads, "paramTypes matched or were assignable to more than one overload")
 	}
 }
 
@@ -149,4 +160,34 @@ func paramTypesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func paramTypesAssignable(store Store, actual, declared []string) bool {
+	if len(actual) != len(declared) {
+		return false
+	}
+	for i := range actual {
+		if !paramTypeAssignable(store, actual[i], declared[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func paramTypeAssignable(store Store, actual, declared string) bool {
+	actualSpec := ParseTypeSpec(actual)
+	declaredSpec := ParseTypeSpec(declared)
+	if actualSpec.IsZero() || declaredSpec.IsZero() {
+		return false
+	}
+	if actualSpec.ArrayDepth != declaredSpec.ArrayDepth {
+		return false
+	}
+	if actualSpec.Base == declaredSpec.Base {
+		return true
+	}
+	if declaredSpec.Base == "java.lang.Object" {
+		return true
+	}
+	return typeAssignable(store, actualSpec.Base, declaredSpec.Base)
 }

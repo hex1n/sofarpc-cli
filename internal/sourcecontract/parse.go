@@ -13,13 +13,18 @@ import (
 type declaration struct {
 	kind          string
 	simpleName    string
-	typeParams    map[string]string
+	typeParams    []parsedTypeParam
 	superclass    string
 	interfaces    []string
 	fields        []parsedField
 	methods       []parsedMethod
 	enumConstants []string
 	nested        []declaration
+}
+
+type parsedTypeParam struct {
+	name  string
+	bound string
 }
 
 // parseJavaFile returns the top-level declaration of path as a
@@ -43,18 +48,19 @@ func parseJavaFile(path string) (parsedClass, bool) {
 		fqn = pkg + "." + decl.simpleName
 	}
 	return parsedClass{
-		path:          path,
-		packageName:   pkg,
-		fqn:           fqn,
-		simpleName:    decl.simpleName,
-		typeParams:    cloneStringMap(decl.typeParams),
-		kind:          decl.kind,
-		superclass:    decl.superclass,
-		interfaces:    decl.interfaces,
-		fields:        decl.fields,
-		methods:       decl.methods,
-		enumConstants: decl.enumConstants,
-		imports:       imports,
+		path:           path,
+		packageName:    pkg,
+		fqn:            fqn,
+		simpleName:     decl.simpleName,
+		typeParams:     cloneParsedTypeParams(decl.typeParams),
+		resolverParams: parsedTypeParamMap(decl.typeParams),
+		kind:           decl.kind,
+		superclass:     decl.superclass,
+		interfaces:     decl.interfaces,
+		fields:         decl.fields,
+		methods:        decl.methods,
+		enumConstants:  decl.enumConstants,
+		imports:        imports,
 	}, true
 }
 
@@ -312,7 +318,8 @@ func parseMethodSegment(segment, simpleName string) (parsedMethod, bool) {
 	}
 	prefix := strings.TrimSpace(trimmed[:open])
 	prefix = stripLeadingModifiers(prefix)
-	prefix = strings.TrimSpace(skipTypeParameters(prefix))
+	typeParams, prefix := readTypeParameterBounds(prefix)
+	prefix = strings.TrimSpace(prefix)
 	tokens := splitWhitespace(prefix)
 	if len(tokens) < 2 {
 		return parsedMethod{}, false
@@ -325,6 +332,7 @@ func parseMethodSegment(segment, simpleName string) (parsedMethod, bool) {
 	params := parseParams(trimmed[open+1 : close])
 	return parsedMethod{
 		name:       name,
+		typeParams: cloneParsedTypeParams(typeParams),
 		paramTypes: params,
 		returnType: returnType,
 	}, true

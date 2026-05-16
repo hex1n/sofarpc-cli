@@ -232,6 +232,22 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
 自动做类型归一化或生成 skeleton。远端如果需要 `@type`、`BigDecimal` 等
 Java 特定形状，调用方需要自己显式传入。
 
+## 测试与发布
+
+默认验证仍然保持 Go-only：
+
+```sh
+go vet ./...
+go test -race ./...
+go build ./...
+```
+
+SOFARPC/Hessian wire 兼容性由
+`internal/sofarpcwire/testdata/golden` 下提交的 fixture 兜底。默认 Go 测试
+直接消费这些 fixture，不要求本机 Java。发布前需要手动运行 GitHub Actions
+里的 `wire-fixtures` workflow；它会重新生成基线 Java fixture，并验证声明的
+SOFARPC 版本矩阵。
+
 ## 仓库结构
 
 ```text
