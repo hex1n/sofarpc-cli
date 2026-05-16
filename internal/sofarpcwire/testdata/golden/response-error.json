@@ -1,0 +1,12 @@
+{
+  "contentHex" : "4fbe636f6d2e616c697061792e736f66612e7270632e636f72652e726573706f6e73652e536f6661526573706f6e7365940769734572726f72086572726f724d73670b617070526573706f6e73650d726573706f6e736550726f70736f90540d66697874757265206572726f724e4d077472616365496413666978747572652d6572726f722d74726163657a",
+  "kind" : "response-content",
+  "name" : "Java-encoded SofaResponse error",
+  "want" : {
+    "errorMsg" : "fixture error",
+    "isError" : true,
+    "responseProps" : {
+      "traceId" : "fixture-error-trace"
+    }
+  }
+}

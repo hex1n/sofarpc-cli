@@ -214,7 +214,7 @@ func skipTypeParameters(s string) string {
 	return s
 }
 
-func readTypeParameterBounds(s string) (map[string]string, string) {
+func readTypeParameterBounds(s string) ([]parsedTypeParam, string) {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "<") {
 		return nil, s
@@ -236,7 +236,7 @@ func readTypeParameterBounds(s string) (map[string]string, string) {
 	if end < 0 {
 		return nil, s
 	}
-	bounds := map[string]string{}
+	var params []parsedTypeParam
 	for _, part := range splitTopLevel(s[1:end], ',') {
 		name, rest := readIdentifier(part)
 		if name == "" {
@@ -249,9 +249,9 @@ func readTypeParameterBounds(s string) (map[string]string, string) {
 				bound = strings.TrimSpace(pieces[0])
 			}
 		}
-		bounds[name] = bound
+		params = append(params, parsedTypeParam{name: name, bound: bound})
 	}
-	return bounds, strings.TrimSpace(s[end+1:])
+	return params, strings.TrimSpace(s[end+1:])
 }
 
 func readIdentifier(s string) (string, string) {

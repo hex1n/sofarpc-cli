@@ -525,6 +525,48 @@ func TestBuildPlan_IncludesLayersAndOverloads(t *testing.T) {
 	}
 }
 
+func TestBuildPlan_AssignableParamTypeUsesDeclaredWireSignature(t *testing.T) {
+	facade := contract.NewInMemoryStore(
+		javamodel.Class{FQN: "com.foo.BaseRequest", Kind: javamodel.KindClass},
+		javamodel.Class{
+			FQN:        "com.foo.UserRequest",
+			Kind:       javamodel.KindClass,
+			Superclass: "com.foo.BaseRequest",
+			Fields:     []javamodel.Field{{Name: "id", JavaType: "java.lang.Long"}},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"com.foo.BaseRequest"}},
+			},
+		},
+	)
+	plan, err := BuildPlan(
+		Input{
+			Service:    "com.foo.Svc",
+			Method:     "query",
+			ParamTypes: []string{"com.foo.UserRequest"},
+			Args: []any{
+				map[string]any{"@type": "com.foo.UserRequest", "id": "9"},
+			},
+			Target: target.Input{DirectURL: "bolt://h:1"},
+		},
+		facade,
+		target.Sources{},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if got := plan.ParamTypes; len(got) != 1 || got[0] != "com.foo.BaseRequest" {
+		t.Fatalf("wire paramTypes should use declared signature, got %v", got)
+	}
+	arg := plan.Args[0].(map[string]any)
+	if arg["@type"] != "com.foo.UserRequest" || arg["id"] != int64(9) {
+		t.Fatalf("arg should keep explicit subtype payload, got %#v", arg)
+	}
+}
+
 func assertCode(t *testing.T, err error, want errcode.Code) {
 	t.Helper()
 	var ecerr *errcode.Error

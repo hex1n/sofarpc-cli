@@ -285,7 +285,44 @@ The source scan is best-effort:
 If a workspace has no Java sources, `describe` is unavailable and invoke falls
 back to trusted mode.
 
-### 7.2 Trusted mode
+### 7.2 Generic Type Resolution
+
+The source-derived contract store keeps both resolved Java types and generic
+type templates. This matters for common facade patterns such as:
+
+```java
+interface BaseFacade<T> {
+    Result<T> query(T request);
+}
+
+interface UserFacade extends BaseFacade<UserRequest> {}
+```
+
+The parser resolves the inherited `query` method on `UserFacade` as:
+
+- parameter type: `com.foo.UserRequest`
+- return type: `com.foo.Result<com.foo.UserRequest>`
+
+Class-level and method-level generic bounds are also resolved conservatively.
+For a method such as `<T extends BaseRequest> Result<T> query(T request)`,
+`describe` renders a `BaseRequest` skeleton while preserving the template
+metadata needed for later substitutions.
+
+### 7.3 Overload Selection
+
+Overload resolution is intentionally conservative:
+
+1. exact `paramTypes` match wins
+2. if no exact match exists, assignable match is allowed
+3. if assignable matching selects more than one overload, resolution stays
+   ambiguous
+
+Assignable matching is only used to pick the overload. The invoke plan still
+uses the selected method's declared `paramTypes` as the wire signature. If the
+caller passes an explicit subtype payload with `@type`, argument normalization
+keeps that subtype payload while sending the declared method signature.
+
+### 7.4 Trusted mode
 
 If contract information is unavailable, invoke still works as long as the
 caller provides:

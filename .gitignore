@@ -12,5 +12,6 @@ __pycache__/
 pytest_tmp/
 runtime-worker-java/target/
 spoon-indexer-java/target/
+internal/sofarpcwire/testdata/java-fixtures/target/
 internal/app/
 .sofarpc/config.local.json

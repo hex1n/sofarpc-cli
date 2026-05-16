@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
@@ -435,6 +436,127 @@ public class Box<T extends Comparable<T>> {
 	}
 }
 
+func TestLoad_SubstitutesGenericInterfaceArgumentsForInheritedFacadeMethods(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/BaseFacade.java", `
+package com.foo;
+
+public interface BaseFacade<T> {
+    Result<T> query(T request);
+}
+`)
+	writeJava(t, root, "src/main/java/com/foo/UserFacade.java", `
+package com.foo;
+
+public interface UserFacade extends BaseFacade<UserRequest> {
+}
+`)
+	writeJava(t, root, "src/main/java/com/foo/Result.java", `
+package com.foo;
+
+public class Result<T> {
+    private T data;
+}
+`)
+	writeJava(t, root, "src/main/java/com/foo/UserRequest.java", `
+package com.foo;
+
+public class UserRequest {
+    private Long id;
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	res, err := contract.ResolveMethod(store, "com.foo.UserFacade", "query", []string{"com.foo.UserRequest"})
+	if err != nil {
+		t.Fatalf("ResolveMethod: %v", err)
+	}
+	if got := res.Method.ParamTypes; !reflect.DeepEqual(got, []string{"com.foo.UserRequest"}) {
+		t.Fatalf("param types: got %v", got)
+	}
+	if got := res.Method.ReturnType; got != "com.foo.Result<com.foo.UserRequest>" {
+		t.Fatalf("return type: got %q", got)
+	}
+
+	skeleton := contract.BuildSkeleton(res.Method.ParamTypes, store)
+	if !strings.Contains(string(skeleton[0]), `"@type":"com.foo.UserRequest"`) {
+		t.Fatalf("skeleton should target concrete request type: %s", skeleton[0])
+	}
+	if !strings.Contains(string(skeleton[0]), `"id":"0"`) {
+		t.Fatalf("skeleton should include UserRequest fields: %s", skeleton[0])
+	}
+}
+
+func TestLoad_ResolvesMethodLevelGenericBoundsWithAnnotatedParams(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/GenericFacade.java", `
+package com.foo;
+
+public interface GenericFacade {
+    <T extends BaseRequest>
+    Result<T> query(
+        @Valid
+        @NotNull(message = "request required")
+        T request
+    );
+}
+`)
+	writeJava(t, root, "src/main/java/com/foo/BaseRequest.java", `
+package com.foo;
+
+public class BaseRequest {
+    private Long id;
+}
+`)
+	writeJava(t, root, "src/main/java/com/foo/Result.java", `
+package com.foo;
+
+public class Result<T> {
+    private T data;
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cls, ok := store.Class("com.foo.GenericFacade")
+	if !ok {
+		t.Fatal("GenericFacade not found")
+	}
+	if len(cls.Methods) != 1 {
+		t.Fatalf("methods: %+v", cls.Methods)
+	}
+	method := cls.Methods[0]
+	if got := method.ParamTypes; !reflect.DeepEqual(got, []string{"com.foo.BaseRequest"}) {
+		t.Fatalf("param types: got %v", got)
+	}
+	if got := method.ParamTypeTemplates; !reflect.DeepEqual(got, []string{"T"}) {
+		t.Fatalf("param templates: got %v", got)
+	}
+	if got := method.ReturnType; got != "com.foo.Result<com.foo.BaseRequest>" {
+		t.Fatalf("return type: got %q", got)
+	}
+	if got := method.ReturnTypeTemplate; got != "com.foo.Result<T>" {
+		t.Fatalf("return template: got %q", got)
+	}
+
+	res, err := contract.ResolveMethod(store, "com.foo.GenericFacade", "query", nil)
+	if err != nil {
+		t.Fatalf("ResolveMethod: %v", err)
+	}
+	skeleton := contract.BuildSkeleton(res.Method.ParamTypes, store)
+	if !strings.Contains(string(skeleton[0]), `"@type":"com.foo.BaseRequest"`) {
+		t.Fatalf("skeleton should target generic bound: %s", skeleton[0])
+	}
+	if !strings.Contains(string(skeleton[0]), `"id":"0"`) {
+		t.Fatalf("skeleton should include BaseRequest fields: %s", skeleton[0])
+	}
+}
+
 func TestLoad_ResolvesCommonImplicitJavaLangTypes(t *testing.T) {
 	root := t.TempDir()
 	writeJava(t, root, "src/main/java/com/foo/CommonLang.java", `
@@ -464,7 +586,7 @@ public class CommonLang<T extends CharSequence> implements Runnable, Cloneable, 
 	}
 	wantFields := []javamodel.Field{
 		{Name: "builder", JavaType: "java.lang.StringBuilder"},
-		{Name: "value", JavaType: "java.lang.CharSequence"},
+		{Name: "value", JavaType: "java.lang.CharSequence", TypeTemplate: "T"},
 		{Name: "thread", JavaType: "java.lang.Thread"},
 		{Name: "frame", JavaType: "java.lang.StackTraceElement"},
 	}

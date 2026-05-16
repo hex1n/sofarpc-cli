@@ -3,6 +3,7 @@ package contract
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -108,6 +109,39 @@ func TestResolveMethod_IncludesInheritedMethodsFromParameterizedInterface(t *tes
 	}
 }
 
+func TestResolveMethod_SubstitutesParameterizedInterfaceMethods(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:        "com.foo.BaseFacade",
+			Kind:       javamodel.KindInterface,
+			TypeParams: []javamodel.TypeParam{{Name: "T", Bound: "java.lang.Object"}},
+			Methods: []javamodel.Method{{
+				Name:               "query",
+				ParamTypes:         []string{"java.lang.Object"},
+				ParamTypeTemplates: []string{"T"},
+				ReturnType:         "com.foo.Result<java.lang.Object>",
+				ReturnTypeTemplate: "com.foo.Result<T>",
+			}},
+		},
+		javamodel.Class{
+			FQN:        "com.foo.UserFacade",
+			Kind:       javamodel.KindInterface,
+			Interfaces: []string{"com.foo.BaseFacade<com.foo.UserRequest>"},
+		},
+	)
+
+	res, err := ResolveMethod(store, "com.foo.UserFacade", "query", []string{"com.foo.UserRequest"})
+	if err != nil {
+		t.Fatalf("ResolveMethod: %v", err)
+	}
+	if got := res.Method.ParamTypes; !reflect.DeepEqual(got, []string{"com.foo.UserRequest"}) {
+		t.Fatalf("param types: got %v", got)
+	}
+	if got := res.Method.ReturnType; got != "com.foo.Result<com.foo.UserRequest>" {
+		t.Fatalf("return type: got %q", got)
+	}
+}
+
 func TestResolveMethod_IncludesInheritedMethodsFromParameterizedSuperclass(t *testing.T) {
 	store := NewInMemoryStore(
 		javamodel.Class{
@@ -207,6 +241,84 @@ func TestResolveMethod_ParamTypesDoNotMatch(t *testing.T) {
 	})
 	_, err := ResolveMethod(store, "com.foo.Svc", "doThing", []string{"java.lang.Integer"})
 	assertCode(t, err, errcode.MethodNotFound)
+}
+
+func TestResolveMethod_AssignableParamTypesFallback(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{FQN: "com.foo.BaseRequest", Kind: javamodel.KindClass},
+		javamodel.Class{
+			FQN:        "com.foo.UserRequest",
+			Kind:       javamodel.KindClass,
+			Superclass: "com.foo.BaseRequest",
+		},
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"java.lang.String"}},
+				{Name: "query", ParamTypes: []string{"com.foo.BaseRequest"}},
+			},
+		},
+	)
+
+	res, err := ResolveMethod(store, "com.foo.Svc", "query", []string{"com.foo.UserRequest"})
+	if err != nil {
+		t.Fatalf("ResolveMethod: %v", err)
+	}
+	if got := res.Method.ParamTypes; !reflect.DeepEqual(got, []string{"com.foo.BaseRequest"}) {
+		t.Fatalf("param types: got %v", got)
+	}
+}
+
+func TestResolveMethod_ExactMatchWinsOverAssignable(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{FQN: "com.foo.BaseRequest", Kind: javamodel.KindClass},
+		javamodel.Class{
+			FQN:        "com.foo.UserRequest",
+			Kind:       javamodel.KindClass,
+			Superclass: "com.foo.BaseRequest",
+		},
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"com.foo.BaseRequest"}},
+				{Name: "query", ParamTypes: []string{"com.foo.UserRequest"}},
+			},
+		},
+	)
+
+	res, err := ResolveMethod(store, "com.foo.Svc", "query", []string{"com.foo.UserRequest"})
+	if err != nil {
+		t.Fatalf("ResolveMethod: %v", err)
+	}
+	if got := res.Method.ParamTypes; !reflect.DeepEqual(got, []string{"com.foo.UserRequest"}) {
+		t.Fatalf("param types: got %v", got)
+	}
+}
+
+func TestResolveMethod_AssignableParamTypesCanStillBeAmbiguous(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{FQN: "com.foo.BaseRequest", Kind: javamodel.KindClass},
+		javamodel.Class{FQN: "com.foo.Marker", Kind: javamodel.KindInterface},
+		javamodel.Class{
+			FQN:        "com.foo.UserRequest",
+			Kind:       javamodel.KindClass,
+			Superclass: "com.foo.BaseRequest",
+			Interfaces: []string{"com.foo.Marker"},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"com.foo.BaseRequest"}},
+				{Name: "query", ParamTypes: []string{"com.foo.Marker"}},
+			},
+		},
+	)
+
+	_, err := ResolveMethod(store, "com.foo.Svc", "query", []string{"com.foo.UserRequest"})
+	assertCode(t, err, errcode.MethodAmbiguous)
 }
 
 func TestBuildSkeleton_PrimitivesAndStrings(t *testing.T) {

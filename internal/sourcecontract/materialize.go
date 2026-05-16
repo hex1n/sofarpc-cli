@@ -11,20 +11,21 @@ import (
 // superclass, ...) together with the resolution tables needed to turn
 // those strings into FQNs.
 type parsedClass struct {
-	path          string
-	packageName   string
-	fqn           string
-	simpleName    string
-	typeParams    map[string]string
-	kind          string
-	superclass    string
-	interfaces    []string
-	fields        []parsedField
-	methods       []parsedMethod
-	enumConstants []string
-	imports       importTable
-	localTypes    map[string]string
-	projectTypes  symbolTable
+	path           string
+	packageName    string
+	fqn            string
+	simpleName     string
+	typeParams     []parsedTypeParam
+	resolverParams map[string]string
+	kind           string
+	superclass     string
+	interfaces     []string
+	fields         []parsedField
+	methods        []parsedMethod
+	enumConstants  []string
+	imports        importTable
+	localTypes     map[string]string
+	projectTypes   symbolTable
 }
 
 type parsedField struct {
@@ -34,6 +35,7 @@ type parsedField struct {
 
 type parsedMethod struct {
 	name       string
+	typeParams []parsedTypeParam
 	paramTypes []string
 	returnType string
 }
@@ -61,8 +63,14 @@ func materializeClass(src parsedClass) (javamodel.Class, []typeResolutionIssue) 
 		wildcards:  src.imports.wildcards,
 		localTypes: src.localTypes,
 		project:    src.projectTypes,
-		typeParams: src.typeParams,
+		typeParams: src.resolverParams,
 		issues:     &issues,
+	}
+	for _, param := range src.typeParams {
+		cls.TypeParams = append(cls.TypeParams, javamodel.TypeParam{
+			Name:  param.name,
+			Bound: resolver.resolve(param.bound),
+		})
 	}
 	if src.superclass != "" {
 		cls.Superclass = resolver.resolve(src.superclass)
@@ -71,19 +79,26 @@ func materializeClass(src parsedClass) (javamodel.Class, []typeResolutionIssue) 
 		cls.Interfaces = append(cls.Interfaces, resolver.resolve(iface))
 	}
 	for _, field := range src.fields {
+		resolved := resolver.resolve(field.javaType)
 		cls.Fields = append(cls.Fields, javamodel.Field{
-			Name:     field.name,
-			JavaType: resolver.resolve(field.javaType),
+			Name:         field.name,
+			JavaType:     resolved,
+			TypeTemplate: typeTemplate(resolver, field.javaType, resolved),
 		})
 	}
 	for _, method := range src.methods {
+		methodResolver := resolver.withTypeParams(method.typeParams)
 		m := javamodel.Method{
 			Name:       method.name,
-			ReturnType: resolver.resolve(method.returnType),
+			ReturnType: methodResolver.resolve(method.returnType),
 		}
+		m.ReturnTypeTemplate = typeTemplate(methodResolver, method.returnType, m.ReturnType)
 		for _, pt := range method.paramTypes {
-			m.ParamTypes = append(m.ParamTypes, resolver.resolve(pt))
+			resolved := methodResolver.resolve(pt)
+			m.ParamTypes = append(m.ParamTypes, resolved)
+			m.ParamTypeTemplates = append(m.ParamTypeTemplates, typeTemplate(methodResolver, pt, resolved))
 		}
+		m.ParamTypeTemplates = nilIfAllEmpty(m.ParamTypeTemplates)
 		cls.Methods = append(cls.Methods, m)
 	}
 	cls.EnumConstants = append(cls.EnumConstants, src.enumConstants...)
@@ -117,25 +132,26 @@ func flattenDeclarations(path, pkg string, imports importTable, decl declaration
 		locals[child.simpleName] = joinFQN(pkg, append(currentOuters, child.simpleName))
 	}
 	typeParams := cloneVisibleMap(visibleTypeParams)
-	for name, bound := range decl.typeParams {
-		typeParams[name] = bound
+	for _, param := range decl.typeParams {
+		typeParams[param.name] = param.bound
 	}
 
 	current := parsedClass{
-		path:          path,
-		packageName:   pkg,
-		fqn:           currentFQN,
-		simpleName:    decl.simpleName,
-		typeParams:    cloneVisibleMap(typeParams),
-		kind:          decl.kind,
-		superclass:    decl.superclass,
-		interfaces:    append([]string(nil), decl.interfaces...),
-		fields:        append([]parsedField(nil), decl.fields...),
-		methods:       append([]parsedMethod(nil), decl.methods...),
-		enumConstants: append([]string(nil), decl.enumConstants...),
-		imports:       imports,
-		localTypes:    locals,
-		projectTypes:  projectSymbols,
+		path:           path,
+		packageName:    pkg,
+		fqn:            currentFQN,
+		simpleName:     decl.simpleName,
+		typeParams:     cloneParsedTypeParams(decl.typeParams),
+		resolverParams: cloneVisibleMap(typeParams),
+		kind:           decl.kind,
+		superclass:     decl.superclass,
+		interfaces:     append([]string(nil), decl.interfaces...),
+		fields:         append([]parsedField(nil), decl.fields...),
+		methods:        append([]parsedMethod(nil), decl.methods...),
+		enumConstants:  append([]string(nil), decl.enumConstants...),
+		imports:        imports,
+		localTypes:     locals,
+		projectTypes:   projectSymbols,
 	}
 
 	out := []parsedClass{current}
@@ -143,6 +159,41 @@ func flattenDeclarations(path, pkg string, imports importTable, decl declaration
 		out = append(out, flattenDeclarations(path, pkg, imports, child, currentOuters, locals, typeParams, projectSymbols)...)
 	}
 	return out
+}
+
+func typeTemplate(resolver typeResolver, expr, resolved string) string {
+	template := resolver.resolveTemplate(expr)
+	if template == resolved {
+		return ""
+	}
+	return template
+}
+
+func nilIfAllEmpty(values []string) []string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return values
+		}
+	}
+	return nil
+}
+
+func parsedTypeParamMap(params []parsedTypeParam) map[string]string {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(params))
+	for _, param := range params {
+		out[param.name] = param.bound
+	}
+	return out
+}
+
+func cloneParsedTypeParams(input []parsedTypeParam) []parsedTypeParam {
+	if len(input) == 0 {
+		return nil
+	}
+	return append([]parsedTypeParam(nil), input...)
 }
 
 func joinFQN(pkg string, names []string) string {

@@ -8,14 +8,15 @@ import "strings"
 // explicit imports, same-package source symbols, implicit java.lang, and
 // explicit on-demand imports.
 type typeResolver struct {
-	pkg        string
-	classFQN   string
-	explicit   map[string]string
-	wildcards  []string
-	localTypes map[string]string
-	project    symbolTable
-	typeParams map[string]string
-	issues     *[]typeResolutionIssue
+	pkg                string
+	classFQN           string
+	explicit           map[string]string
+	wildcards          []string
+	localTypes         map[string]string
+	project            symbolTable
+	typeParams         map[string]string
+	issues             *[]typeResolutionIssue
+	preserveTypeParams bool
 }
 
 type typeResolutionIssue struct {
@@ -34,6 +35,23 @@ func (i typeResolutionIssue) message() string {
 }
 
 func (r typeResolver) resolve(expr string) string {
+	return r.resolveWithSeen(expr, nil)
+}
+
+func (r typeResolver) withTypeParams(params []parsedTypeParam) typeResolver {
+	if len(params) == 0 {
+		return r
+	}
+	next := r
+	next.typeParams = cloneVisibleMap(r.typeParams)
+	for _, param := range params {
+		next.typeParams[param.name] = param.bound
+	}
+	return next
+}
+
+func (r typeResolver) resolveTemplate(expr string) string {
+	r.preserveTypeParams = true
 	return r.resolveWithSeen(expr, nil)
 }
 
@@ -81,6 +99,9 @@ func (r typeResolver) resolveBaseWithSeen(base string, seenTypeParams map[string
 		return base
 	}
 	if bound, ok := r.typeParams[base]; ok {
+		if r.preserveTypeParams {
+			return base
+		}
 		if strings.TrimSpace(bound) == "" {
 			return "java.lang.Object"
 		}

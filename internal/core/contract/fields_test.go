@@ -54,6 +54,34 @@ func TestResolvedFields_IncludesParameterizedSuperclassFields(t *testing.T) {
 	}
 }
 
+func TestResolvedFields_SubstitutesParameterizedSuperclassFields(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:        "com.foo.Base",
+			Kind:       javamodel.KindClass,
+			TypeParams: []javamodel.TypeParam{{Name: "T", Bound: "java.lang.Object"}},
+			Fields: []javamodel.Field{{
+				Name:         "value",
+				JavaType:     "java.lang.Object",
+				TypeTemplate: "T",
+			}},
+		},
+		javamodel.Class{
+			FQN:        "com.foo.Child",
+			Kind:       javamodel.KindClass,
+			Superclass: "com.foo.Base<com.foo.UserDto>",
+		},
+	)
+
+	fields := ResolvedFields(store, "com.foo.Child")
+	if len(fields) != 1 {
+		t.Fatalf("len(fields): got %d want 1", len(fields))
+	}
+	if fields[0].JavaType != "com.foo.UserDto" {
+		t.Fatalf("field type: got %q", fields[0].JavaType)
+	}
+}
+
 func TestResolvedFields_ChildOverridesParentField(t *testing.T) {
 	store := NewInMemoryStore(
 		javamodel.Class{
