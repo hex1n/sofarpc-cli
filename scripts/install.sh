@@ -17,15 +17,14 @@ else
 fi
 
 echo
-echo "Set project-level MCP env:"
-echo "  SOFARPC_PROJECT_ROOT=/abs/path/to/project"
-echo "  SOFARPC_DIRECT_URL=bolt://host:12200"
-echo "  SOFARPC_PROTOCOL=bolt"
-echo "  SOFARPC_SERIALIZATION=hessian2"
+echo "Register the MCP server for this user:"
+echo "  sofarpc-mcp setup --scope=user"
+echo
+echo "Write project-level target config from a Java project checkout:"
+echo "  sofarpc-mcp setup --scope=project --project-root . --local --direct-url=bolt://host:12200"
+echo "  sofarpc-mcp setup --scope=project --project-root . --shared --registry-address=zookeeper://host:2181"
 echo
 echo "Real invoke is disabled by default. Enable it only for dev/test targets:"
-echo "  SOFARPC_ALLOW_INVOKE=true"
-echo "  SOFARPC_ALLOWED_SERVICES=com.foo.UserFacade,com.foo.OrderFacade"
+echo "  sofarpc-mcp setup --scope=user --allow-invoke --allowed-services=com.foo.UserFacade,com.foo.OrderFacade"
 echo
-echo "On startup, sofarpc-mcp will scan .java files under SOFARPC_PROJECT_ROOT"
-echo "to populate describe-time contract information."
+echo "Source-contract information is loaded lazily from the project root when a tool needs it."

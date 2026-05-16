@@ -18,12 +18,14 @@ All notable changes to this project are recorded here.
 - Added doctor visibility into session count, capacity, and session plan capture limit.
 - Added optional `e2e` build-tagged direct BOLT/Hessian2 smoke test covering the real `invoke.Execute -> sofarpcwire -> boltclient` path.
 - Added a manual GitHub Actions `e2e` workflow for optional smoke validation.
+- Added `sofarpc-mcp setup --scope=user|project`, including project config writing for `.sofarpc/config.json` and `.sofarpc/config.local.json`.
 
 ### Changed
 
 - Recommended tag-based installs for repeatable environments while keeping `@latest` available for development snapshots.
 - `sofarpc_replay` now requires captured plans to use the current `sofarpc.invoke.plan/v1` schema.
 - Oversized plans are still returned by `sofarpc_invoke`, but are no longer retained in session memory for `sessionId` replay.
+- `sofarpc-mcp setup` now merges existing sofarpc env by default; use `--replace-env` for the previous replacement behavior.
 
 ## v0.1.0 - planned
 

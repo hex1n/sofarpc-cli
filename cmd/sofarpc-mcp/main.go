@@ -19,11 +19,10 @@ import (
 )
 
 func main() {
-	// One subcommand, "setup", registers this binary in Claude Code and
-	// Codex config so a freshly-installed sofarpc-mcp is reachable from
-	// both clients without hand-editing JSON/TOML. "version" / --version
-	// are side-effect-free inspection paths. Everything else falls through
-	// to the MCP stdio server — that is the binary's job.
+	// "setup" handles user-level MCP registration and project-level
+	// .sofarpc target config. "version" / --version are side-effect-free
+	// inspection paths. Everything else falls through to the MCP stdio
+	// server — that is the binary's job.
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case "setup":

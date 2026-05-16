@@ -80,6 +80,7 @@ func main() {
 	}
 
 	plan := coreinvoke.Plan{
+		SchemaVersion: coreinvoke.PlanSchemaVersion,
 		Service:       serviceName,
 		Method:        methodName,
 		ParamTypes:    paramTypes,

@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -20,13 +18,10 @@ import (
 )
 
 const (
-	envAllowInvoke         = "SOFARPC_ALLOW_INVOKE"
-	envAllowedServices     = "SOFARPC_ALLOWED_SERVICES"
-	envAllowTargetOverride = "SOFARPC_ALLOW_TARGET_OVERRIDE"
-	envAllowedTargetHosts  = "SOFARPC_ALLOWED_TARGET_HOSTS"
-	envArgsFileRoot        = "SOFARPC_ARGS_FILE_ROOT"
-	envArgsFileMaxBytes    = "SOFARPC_ARGS_FILE_MAX_BYTES"
-	defaultArgsFileMax     = int64(1 << 20)
+	envAllowInvoke         = invoke.EnvAllowInvoke
+	envAllowedServices     = invoke.EnvAllowedServices
+	envAllowTargetOverride = invoke.EnvAllowTargetOverride
+	envAllowedTargetHosts  = invoke.EnvAllowedTargetHosts
 )
 
 // InvokeOutput is the structured payload for sofarpc_invoke. Ok=true
@@ -158,274 +153,22 @@ func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
 	}, args, nil
 }
 
-func decodeJSONValue(raw json.RawMessage) (any, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, nil
-	}
-	var parsed any
-	dec := json.NewDecoder(bytes.NewReader(trimmed))
-	dec.UseNumber()
-	if err := dec.Decode(&parsed); err != nil {
-		return nil, err
-	}
-	return parsed, nil
-}
-
-// normalizeArgs normalizes the loosely-typed args field:
-//   - nil              → nil (plan renders a skeleton).
-//   - "@<path>" string → read the file, parse as JSON with UseNumber.
-//   - anything else    → pass through verbatim for BuildPlan to shape-check.
-//
-// Relative @file paths are resolved against SOFARPC_ARGS_FILE_ROOT when set,
-// otherwise against the MCP project root. Absolute paths must still remain
-// inside that root after symlink resolution.
-//
-// service/method are threaded in only to pre-fill the describe hint on
-// failure — empty values are dropped so the agent never sees a hint it
-// can't follow verbatim.
-func normalizeArgs(service, method string, raw any, projectRoot string) (any, error) {
-	switch v := raw.(type) {
-	case nil:
-		return nil, nil
-	case string:
-		if !strings.HasPrefix(v, "@") {
-			return v, nil
-		}
-		path := strings.TrimPrefix(v, "@")
-		if path == "" {
-			return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-				"args '@' prefix requires a file path").
-				WithHint("sofarpc_describe", describeHintArgs(service, method),
-					"use @<path> rooted at SOFARPC_ARGS_FILE_ROOT or the project root")
-		}
-		return readArgsFile(service, method, path, projectRoot)
-	default:
-		return raw, nil
-	}
-}
-
-// readArgsFile loads path and decodes it as JSON with UseNumber. Errors are
-// wrapped into input.args-invalid so the agent sees one shape regardless
-// of whether args came inline or from disk.
-func readArgsFile(service, method, path, projectRoot string) (any, error) {
-	resolved, err := resolveArgsFilePath(path, projectRoot)
-	if err != nil {
-		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("resolve args file %q: %v", path, err)).
-			WithHint("sofarpc_doctor", nil, "check SOFARPC_ARGS_FILE_ROOT and the file path")
-	}
-	maxBytes := argsFileMaxBytes()
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("stat args file %q: %v", resolved, err)).
-			WithHint("sofarpc_doctor", nil, "check that the mcp process can read the file")
-	}
-	if info.IsDir() {
-		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("args file %q is a directory", resolved)).
-			WithHint("sofarpc_describe", describeHintArgs(service, method), "use a JSON file")
-	}
-	if info.Size() > maxBytes {
-		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("args file %q is %d bytes, over limit %d", resolved, info.Size(), maxBytes)).
-			WithHint("sofarpc_describe", describeHintArgs(service, method), "use a smaller JSON file or raise SOFARPC_ARGS_FILE_MAX_BYTES")
-	}
-	body, err := os.ReadFile(resolved)
-	if err != nil {
-		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("read args file %q: %v", resolved, err)).
-			WithHint("sofarpc_doctor", nil, "check that the mcp process can read the file")
-	}
-	if int64(len(body)) > maxBytes {
-		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("args file %q grew over limit %d", resolved, maxBytes)).
-			WithHint("sofarpc_describe", describeHintArgs(service, method), "use a smaller JSON file or raise SOFARPC_ARGS_FILE_MAX_BYTES")
-	}
-	parsed, err := decodeJSONValue(body)
-	if err != nil {
-		return nil, errcode.New(errcode.ArgsInvalid, "invoke",
-			fmt.Sprintf("parse args file %q as JSON: %v", resolved, err)).
-			WithHint("sofarpc_describe", describeHintArgs(service, method),
-				"the file must contain valid JSON matching paramTypes")
-	}
-	return parsed, nil
-}
-
-func resolveArgsFilePath(path, projectRoot string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", fmt.Errorf("empty file path")
-	}
-	root := strings.TrimSpace(os.Getenv(envArgsFileRoot))
-	if root == "" {
-		root = strings.TrimSpace(projectRoot)
-	}
-	if root == "" {
-		return "", fmt.Errorf("args file root is not configured")
-	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	absRoot, err = filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		return "", fmt.Errorf("resolve args file root: %w", err)
-	}
-
-	candidate := path
-	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(absRoot, candidate)
-	}
-	absCandidate, err := filepath.Abs(candidate)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(absCandidate)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(absRoot, resolved)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("path escapes args file root %q", absRoot)
-	}
-	return resolved, nil
-}
-
-func argsFileMaxBytes() int64 {
-	raw := strings.TrimSpace(os.Getenv(envArgsFileMaxBytes))
-	if raw == "" {
-		return defaultArgsFileMax
-	}
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value <= 0 {
-		return defaultArgsFileMax
-	}
-	return value
-}
-
 func validateExecutionPolicy(plan invoke.Plan, phase string, sources target.Sources) error {
-	if err := validateRealInvokeForPhase(plan.Service, phase); err != nil {
-		return err
-	}
-	return validateTargetPolicy(plan, phase, sources)
+	return executionPolicyFromEnv(sources).Validate(plan, phase)
 }
 
 func validateRealInvoke(service string) error {
-	return validateRealInvokeForPhase(service, "invoke")
+	return executionPolicyFromEnv(target.Sources{}).ValidateRealInvoke(service, "invoke")
 }
 
-func validateRealInvokeForPhase(service, phase string) error {
-	if strings.TrimSpace(phase) == "" {
-		phase = "invoke"
+func executionPolicyFromEnv(sources target.Sources) invoke.ExecutionPolicy {
+	return invoke.ExecutionPolicy{
+		AllowInvoke:         envBool(envAllowInvoke),
+		AllowedServices:     envCSV(envAllowedServices),
+		AllowTargetOverride: envBool(envAllowTargetOverride),
+		AllowedTargetHosts:  envCSV(envAllowedTargetHosts),
+		Sources:             sources,
 	}
-	if !envBool(envAllowInvoke) {
-		return errcode.New(errcode.InvocationRejected, phase,
-			"real invoke is disabled; set SOFARPC_ALLOW_INVOKE=true to enable non-dry-run calls").
-			WithHint("sofarpc_invoke", map[string]any{"dryRun": true}, "inspect the plan safely first")
-	}
-	if !serviceAllowed(service) {
-		return errcode.New(errcode.InvocationRejected, phase,
-			fmt.Sprintf("service %q is not allowed by SOFARPC_ALLOWED_SERVICES", service)).
-			WithHint("sofarpc_doctor", nil, "inspect invoke safety configuration")
-	}
-	return nil
-}
-
-func validateTargetPolicy(plan invoke.Plan, phase string, sources target.Sources) error {
-	if len(sources.ConfigErrors) > 0 {
-		return errcode.New(errcode.InvocationRejected, phase,
-			"project target config has errors: "+formatConfigErrors(sources.ConfigErrors)).
-			WithHint("sofarpc_target", targetHintArgs(sources),
-				"inspect project config errors and resolved target layers")
-	}
-
-	cfg := target.Normalize(plan.Target)
-	if cfg.Mode != target.ModeDirect || cfg.DirectURL == "" {
-		return nil
-	}
-
-	ambientCfg := target.Normalize(target.Resolve(target.Input{}, sources).Target)
-	if !envBool(envAllowTargetOverride) {
-		switch {
-		case ambientCfg.DirectURL == "":
-			return errcode.New(errcode.InvocationRejected, phase,
-				fmt.Sprintf("direct target %q is not allowed; configure .sofarpc/config.local.json, .sofarpc/config.json, SOFARPC_DIRECT_URL, or set SOFARPC_ALLOW_TARGET_OVERRIDE=true", cfg.DirectURL)).
-				WithHint("sofarpc_target", targetHintArgs(sources),
-					"inspect the resolved target before enabling real invoke")
-		default:
-			same, err := sameDirectTarget(cfg.DirectURL, ambientCfg.DirectURL)
-			if err != nil {
-				return errcode.New(errcode.TargetInvalid, phase, err.Error()).
-					WithHint("sofarpc_target", targetHintArgs(sources),
-						"inspect the resolved direct target address")
-			}
-			if !same {
-				return errcode.New(errcode.InvocationRejected, phase,
-					fmt.Sprintf("direct target %q does not match the resolved project/env target; set SOFARPC_ALLOW_TARGET_OVERRIDE=true to allow per-call target overrides", cfg.DirectURL)).
-					WithHint("sofarpc_target", targetHintArgs(sources),
-						"inspect the resolved target layers")
-			}
-		}
-	}
-
-	allowed, host, err := directTargetHostAllowed(cfg.DirectURL)
-	if err != nil {
-		return errcode.New(errcode.TargetInvalid, phase, err.Error()).
-			WithHint("sofarpc_target", targetHintArgs(sources),
-				"inspect the resolved direct target address")
-	}
-	if !allowed {
-		return errcode.New(errcode.InvocationRejected, phase,
-			fmt.Sprintf("direct target host %q is not allowed by SOFARPC_ALLOWED_TARGET_HOSTS", host)).
-			WithHint("sofarpc_doctor", nil, "inspect invoke safety configuration")
-	}
-	return nil
-}
-
-func sameDirectTarget(left, right string) (bool, error) {
-	leftDial, err := target.ParseDirectDialAddress(left)
-	if err != nil {
-		return false, err
-	}
-	rightDial, err := target.ParseDirectDialAddress(right)
-	if err != nil {
-		return false, err
-	}
-	return strings.EqualFold(leftDial, rightDial), nil
-}
-
-func directTargetHostAllowed(directURL string) (bool, string, error) {
-	raw := strings.TrimSpace(os.Getenv(envAllowedTargetHosts))
-	if raw == "" {
-		return true, "", nil
-	}
-	dialTarget, err := target.ParseDirectDialAddress(directURL)
-	if err != nil {
-		return false, "", err
-	}
-	host, port, err := net.SplitHostPort(dialTarget)
-	if err != nil {
-		return false, "", fmt.Errorf("parse direct target host: %w", err)
-	}
-	normalizedDial := net.JoinHostPort(host, port)
-	for _, item := range strings.Split(raw, ",") {
-		allowed := strings.TrimSpace(item)
-		if allowed == "" {
-			continue
-		}
-		if allowed == "*" ||
-			strings.EqualFold(allowed, host) ||
-			strings.EqualFold(allowed, dialTarget) ||
-			strings.EqualFold(allowed, normalizedDial) {
-			return true, host, nil
-		}
-	}
-	return false, host, nil
 }
 
 func envBool(name string) bool {
@@ -437,18 +180,19 @@ func envBool(name string) bool {
 	return err == nil && value
 }
 
-func serviceAllowed(service string) bool {
-	raw := strings.TrimSpace(os.Getenv(envAllowedServices))
+func envCSV(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
-		return true
+		return nil
 	}
+	var out []string
 	for _, item := range strings.Split(raw, ",") {
-		allowed := strings.TrimSpace(item)
-		if allowed == "*" || allowed == service {
-			return true
+		value := strings.TrimSpace(item)
+		if value != "" {
+			out = append(out, value)
 		}
 	}
-	return false
+	return out
 }
 
 func capturePlanForSession(sessions *SessionStore, sessionID string, plan invoke.Plan) *PlanCaptureResult {

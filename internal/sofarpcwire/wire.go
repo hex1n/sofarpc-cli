@@ -145,6 +145,9 @@ func LoadArgsFile(path string) ([]any, error) {
 	return raw, nil
 }
 
+// NormalizeArgs prepares canonical JSON-like args for the Hessian writer by
+// replacing maps/slices with Java class adapters. Contract-aware semantic
+// normalization happens earlier in internal/core/contract.
 func NormalizeArgs(args []any) []any {
 	out := make([]any, len(args))
 	for i, arg := range args {

@@ -36,6 +36,45 @@ func TestReplay_PayloadDryRunReturnsPlan(t *testing.T) {
 	}
 }
 
+func TestReplay_InvokeOutputPayloadDryRunReturnsPlan(t *testing.T) {
+	plan := samplePlan()
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": InvokeOutput{
+			Ok:   true,
+			Plan: &plan,
+		},
+		"dryRun": true,
+	})
+	if !out.Ok {
+		t.Fatalf("dry-run replay should accept invoke output envelope; got error=%+v", out.Error)
+	}
+	if out.Source != "payload" {
+		t.Fatalf("source: got %q want payload", out.Source)
+	}
+	if out.Plan == nil || out.Plan.Service != plan.Service || out.Plan.Method != plan.Method {
+		t.Fatalf("plan round-trip mismatch: %+v", out.Plan)
+	}
+}
+
+func TestReplay_SDKStructuredContentPayloadDryRunReturnsPlan(t *testing.T) {
+	plan := samplePlan()
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": map[string]any{
+			"structuredContent": InvokeOutput{
+				Ok:   true,
+				Plan: &plan,
+			},
+		},
+		"dryRun": true,
+	})
+	if !out.Ok {
+		t.Fatalf("dry-run replay should accept SDK structuredContent envelope; got error=%+v", out.Error)
+	}
+	if out.Plan == nil || out.Plan.Service != plan.Service || out.Plan.Method != plan.Method {
+		t.Fatalf("plan round-trip mismatch: %+v", out.Plan)
+	}
+}
+
 func TestReplay_NonDryRunRequiresAllowInvokeEnv(t *testing.T) {
 	t.Setenv(envAllowInvoke, "false")
 
@@ -323,6 +362,21 @@ func TestReplay_PayloadMissingServiceIsArgsInvalid(t *testing.T) {
 	}
 }
 
+func TestReplay_PayloadArityMismatchIsArgsInvalid(t *testing.T) {
+	plan := samplePlan()
+	plan.Args = nil
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": plan,
+		"dryRun":  true,
+	})
+	if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
+		t.Fatalf("expected ArgsInvalid, got %+v", out.Error)
+	}
+	if !strings.Contains(out.Error.Message, "arity mismatch") {
+		t.Fatalf("error message should explain arity mismatch: %q", out.Error.Message)
+	}
+}
+
 func TestReplay_PayloadMissingTargetModeIsTargetMissing(t *testing.T) {
 	plan := samplePlan()
 	plan.Target.Mode = ""
@@ -332,6 +386,16 @@ func TestReplay_PayloadMissingTargetModeIsTargetMissing(t *testing.T) {
 	})
 	if out.Error == nil || out.Error.Code != errcode.TargetMissing {
 		t.Fatalf("expected TargetMissing, got %+v", out.Error)
+	}
+}
+
+func TestReplay_PayloadEnvelopeWithNullPlanIsArgsInvalid(t *testing.T) {
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": map[string]any{"plan": nil},
+		"dryRun":  true,
+	})
+	if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
+		t.Fatalf("expected ArgsInvalid, got %+v", out.Error)
 	}
 }
 

@@ -12,6 +12,9 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/javatype"
 )
 
+// NormalizeArgs performs contract-aware semantic normalization. Its output is
+// still replayable JSON-like data; sofarpcwire owns the later Hessian adapter
+// preparation step.
 func NormalizeArgs(paramTypes []string, args []any, store Store) ([]any, error) {
 	if len(paramTypes) != len(args) {
 		return nil, fmt.Errorf("arity mismatch: got %d args for %d paramTypes", len(args), len(paramTypes))

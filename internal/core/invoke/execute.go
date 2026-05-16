@@ -15,6 +15,9 @@ type Outcome struct {
 // Execute runs a plan through the pure-Go direct transport. Plans that
 // don't match the supported direct shape fail with a structured error.
 func Execute(ctx context.Context, plan Plan, phase string) (Outcome, error) {
+	if err := ValidateExecutablePlan(plan, phase); err != nil {
+		return Outcome{}, err
+	}
 	if direct, err := ExecuteDirectIfPossible(ctx, plan, phase); direct.Handled {
 		return Outcome{
 			Result:      direct.Result,

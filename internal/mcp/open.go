@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/core/workspace"
-	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -118,9 +118,7 @@ func buildContractBanner(store any, loadErr string) ContractBanner {
 	if sized, ok := store.(interface{ Size() int }); ok {
 		banner.ParsedClasses = sized.Size()
 	}
-	if diagProvider, ok := store.(interface {
-		Diagnostics() sourcecontract.Diagnostics
-	}); ok {
+	if diagProvider, ok := store.(contract.DiagnosticStore); ok {
 		diag := diagProvider.Diagnostics()
 		banner.Source = "sourcecontract"
 		banner.IndexedClasses = diag.IndexedClasses
