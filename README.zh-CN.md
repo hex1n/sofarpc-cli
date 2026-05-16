@@ -38,22 +38,42 @@ go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@latest
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
-一条命令把二进制注册进 Claude Code 和 Codex。入口是幂等的 —
-再次执行只会替换 sofarpc 那一项，其它 MCP 条目和配置顶层字段都会保留。
-默认同时把 `sofarpc-invoke` 这个 skill 装好，让 Claude Code 和 Codex
-不需要读 README 就能直接驱动这些工具：
+Setup 分成两层：
+
+- 用户级：把 MCP server 注册进 Claude Code 和 Codex，并给当前用户安装
+  `sofarpc-invoke` skill。
+- 项目级：把 target 默认值写进 Java 项目的 `.sofarpc/` 目录。
+
+用户级是默认 scope。它是幂等的，并且默认会合并已有 sofarpc env；再次执行
+只传一个新参数时，不会把手工加过的 guardrail env 丢掉：
 
 ```sh
-sofarpc-mcp setup                                         # 两个客户端 + skill
-sofarpc-mcp setup --claude-code                           # 只注册 Claude Code
-sofarpc-mcp setup --codex                                 # 只注册 Codex
-sofarpc-mcp setup --install-skill=false                   # 只写 MCP 配置
-sofarpc-mcp setup --dry-run --direct-url=bolt://host:12200  # 预览
+sofarpc-mcp setup --scope=user                                      # 两个客户端 + skill
+sofarpc-mcp setup --claude-code                                     # 只注册 Claude Code
+sofarpc-mcp setup --codex                                           # 只注册 Codex
+sofarpc-mcp setup --install-skill=false                             # 只写 MCP 配置
+sofarpc-mcp setup --replace-env --direct-url=bolt://host:12200      # 替换 sofarpc env
+sofarpc-mcp setup --dry-run --allow-invoke --allowed-services='*'   # 预览
 ```
 
-可选项（`--project-root`、`--direct-url`、`--registry-address`）会把
-每台机器的默认值固化到 server 条目里；如果打算调用时再传 `directUrl`，
-这些参数就不需要。
+如果用 `go run` 直接跑源码，请传 `--command /abs/path/to/sofarpc-mcp`，
+或者先 build/install；setup 会拒绝把 Go 临时 build-cache 里的二进制路径写进
+客户端配置。
+
+项目级 setup 写入可以跟仓库走、或者只留在本地 checkout 的 target 配置：
+
+```sh
+sofarpc-mcp setup --scope=project --project-root . --local \
+  --direct-url=bolt://dev-rpc.example.com:12200 --timeout-ms=3000
+
+sofarpc-mcp setup --scope=project --project-root . --shared \
+  --registry-address=zookeeper://zk.example.com:2181 --protocol=bolt
+```
+
+`--local` 写 `.sofarpc/config.local.json`，并确保这个路径出现在项目
+`.gitignore` 里。`--shared` 写 `.sofarpc/config.json`。已有项目配置不会被覆盖，
+除非显式传 `--force`。`--allow-invoke` 这类真实调用 guardrail 属于用户级 env，
+项目级 setup 会拒绝写入。
 
 Skill 是通过 `//go:embed` 烤进二进制的，所以一个全新的 `go install`
 就自带它 —— 不需要 clone 仓库。canonical 源文件位于
@@ -63,7 +83,7 @@ checkout 里用 Claude Code 也能直接被自动发现。
 
 ## 快速开始
 
-大多数用户只需要上面这两步。下面的章节覆盖手动路径 —— 源码构建、
+大多数用户只需要上面的 setup 流程。下面的章节覆盖手动路径 —— 源码构建、
 不依赖 `setup` 直接跑 server、或者手工编辑客户端配置。
 
 ### 源码构建
@@ -173,7 +193,8 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
 - `version` 会覆盖本次调用的 SOFA service version。
 - `targetAppName` 会设置 direct transport 的 target app header。
 - `directUrl` / `registryAddress` 是单次覆盖；否则先使用项目配置，再使用 MCP env。
-- `dryRun=true` 返回的 plan 可以直接交给 `sofarpc_replay`。
+- `dryRun=true` 返回的 plan 可以直接交给 `sofarpc_replay`；replay 也接受包含
+  `plan` 字段的 dry-run 输出对象。
 - 真实 `sofarpc_invoke` 和 `sofarpc_replay` 都需要 `SOFARPC_ALLOW_INVOKE=true`；
   可用 `SOFARPC_ALLOWED_SERVICES` 限制允许调用的 service FQN。
 - 非 dry-run direct 调用默认只执行项目配置或 MCP env 解析出的 direct target；如果要允许
@@ -183,6 +204,7 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
   `sofarpc_doctor` 会报告错误，真实 invoke 会被拒绝直到配置修好。
 - direct BOLT response body 在分配和解码前会受
   `SOFARPC_MAX_RESPONSE_BYTES` 限制，默认 16 MiB。
+- `sofarpc_doctor` 会通过 `invoke-policy` 检查报告真实调用 guardrail。
 
 当 contract information 存在时，facade-backed invoke 会在进入 wire 之前自动
 归一化常见 Java 形状：

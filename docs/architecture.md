@@ -31,8 +31,9 @@ Everything else exists only to make that loop reliable for agents.
 4. **Source-first contract guidance, mandatory execution.** `describe`
    should work from local Java sources when they exist, but invoke must remain
    usable in trusted mode without any local contract cache requirement.
-5. **Project defaults live in MCP env.** Target defaults are attached to the
-   MCP server entry for a project, not to a repo-local manifest.
+5. **Project defaults are layered target config.** Target defaults can live in
+   project-local `.sofarpc/config.local.json`, shared `.sofarpc/config.json`,
+   or user-level MCP env; per-call input still wins.
 6. **Structured recovery.** Errors return stable codes and next-step hints so
    agents can recover by calling another tool, not by parsing prose.
 
@@ -118,11 +119,12 @@ Example:
 
 ## 5. Configuration and target model
 
-`sofarpc-cli` has no project manifest and no repo-local target file. Target
+`sofarpc-cli` has no required project manifest. Target defaults can come from
+optional project files, user-level MCP env, or built-in defaults. Target
 resolution is:
 
 ```text
-per-call MCP input > MCP server env > built-in defaults
+per-call MCP input > .sofarpc/config.local.json > .sofarpc/config.json > MCP server env > built-in defaults
 ```
 
 This is implemented by `internal/core/target.Resolve`.
@@ -154,9 +156,19 @@ Built-in defaults:
 - `registryAddress != ""` -> `registry`
 - neither -> unresolved target
 
-### 5.2 Project-scoped MCP env
+### 5.2 Setup scopes and project defaults
 
-Per-project defaults belong on the MCP server entry for that project.
+`sofarpc-mcp setup` has two scopes:
+
+- `--scope=user` registers the MCP server in user-level Claude Code / Codex
+  config and installs the embedded `sofarpc-invoke` skill. Existing sofarpc env
+  keys are merged by default; `--replace-env` restores full replacement.
+- `--scope=project` writes `.sofarpc/config.local.json` or
+  `.sofarpc/config.json` in a Java project. Local config is added to the
+  project's `.gitignore`; shared config never accepts real-invoke guardrails.
+
+Per-project defaults can also live on a user-level MCP server entry when that is
+the desired deployment model.
 
 ```json
 {
@@ -202,7 +214,7 @@ The probe only checks whether a TCP connection can be opened within
 `sofarpc_open` establishes the working context for a project:
 
 - resolve project root from `cwd` or `project`
-- resolve the ambient target from MCP env
+- resolve the ambient target from project config, MCP env, and defaults
 - return capabilities and a new session id
 
 Representative output:
@@ -374,9 +386,15 @@ execution:
 - common numeric Java types such as `BigDecimal` and `BigInteger` are wrapped
   into typed-object form
 
-Trusted mode deliberately skips this step. In trusted mode the caller owns the
-exact Java payload shape.
-- session capture
+This is semantic normalization: it produces replayable JSON-like canonical
+payloads. Wire preparation is a separate `internal/sofarpcwire` step that turns
+those canonical payloads into Hessian-ready Java collection/object adapters.
+
+Trusted mode deliberately skips semantic normalization. In trusted mode the
+caller owns the exact Java payload shape.
+
+Session capture is an MCP-layer retention step after plan building; it does not
+change the plan itself.
 
 Key plan fields:
 
@@ -405,7 +423,24 @@ The pure-Go mainline supports one concrete invoke shape:
 If a call does not fit that shape, it is outside the mainline architecture
 described here.
 
-### 8.3 Sequence
+`Execute` validates the plan schema, service/method identity, target mode,
+argument arity, and supported transport shape before touching the wire layer.
+
+### 8.3 Execution policy
+
+Non-dry-run invoke and replay share one execution policy owned by
+`internal/core/invoke`. MCP reads the `SOFARPC_*` environment and adapts it into
+that policy; the guardrail decisions are not implemented in the tool handlers.
+
+The policy controls:
+
+- real invoke opt-in via `SOFARPC_ALLOW_INVOKE`
+- service allowlisting via `SOFARPC_ALLOWED_SERVICES`
+- direct target override rules via `SOFARPC_ALLOW_TARGET_OVERRIDE`
+- direct host allowlisting via `SOFARPC_ALLOWED_TARGET_HOSTS`
+- rejection of invalid project target config before execution
+
+### 8.4 Sequence
 
 ```mermaid
 sequenceDiagram
@@ -432,7 +467,7 @@ sequenceDiagram
     M-->>A: ok/result/diagnostics or errcode
 ```
 
-### 8.4 Transport responsibilities
+### 8.5 Transport responsibilities
 
 `internal/boltclient` owns:
 
@@ -477,8 +512,13 @@ Input is exactly one of:
 - `sessionId`
 - `payload`
 
-`payload` is a serialized invoke plan. Replay is not a separate protocol; it is
-the same execution path as invoke after plan building is skipped.
+`payload` is either a serialized invoke plan or a structured dry-run output
+object containing `plan`. Replay is not a separate protocol; it is the same
+execution path as invoke after plan building is skipped.
+
+Replay validates the captured plan schema, service/method identity, target
+mode, and `paramTypes` / `args` arity before any execution policy or transport
+step runs.
 
 `dryRun=true` makes replay a safe inspection mechanism for captured plans.
 
@@ -511,6 +551,8 @@ The important property is not only stable codes, but stable recovery hints.
 - is the target reachable
 - is the current workspace sufficiently specified for describe or trusted-mode invoke
 - is the current workspace/session state usable for invoke or replay
+- is real invoke allowed by execution policy and compatible with the resolved
+  direct transport shape
 
 Each check returns:
 
@@ -547,7 +589,7 @@ docs/
 
 The pure-Go mainline deliberately does not include:
 
-- a repo-local target manifest
+- a required repo-local project manifest beyond optional `.sofarpc/` target defaults
 - a local contract persistence format as an architectural prerequisite
 - a larger MCP tool surface for every sub-step
 - non-generic invoke modes

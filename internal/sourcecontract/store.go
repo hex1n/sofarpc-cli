@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 )
 
@@ -44,22 +45,7 @@ type Store struct {
 // Diagnostics surfaces the store's current health so sofarpc_open and
 // sofarpc_doctor can report how many files were scanned, how many
 // parsed successfully, and where the failures clustered.
-type Diagnostics struct {
-	IndexedClasses       int                 `json:"indexedClasses"`
-	IndexedFiles         int                 `json:"indexedFiles"`
-	ParsedClasses        int                 `json:"parsedClasses"`
-	IndexFailureCount    int                 `json:"indexFailureCount,omitempty"`
-	ParseFailureCount    int                 `json:"parseFailureCount,omitempty"`
-	ResolutionIssueCount int                 `json:"resolutionIssueCount,omitempty"`
-	IndexFailures        map[string]string   `json:"indexFailures,omitempty"`
-	ParseFailures        map[string]string   `json:"parseFailures,omitempty"`
-	ResolutionIssues     map[string][]string `json:"resolutionIssues,omitempty"`
-	DuplicateClasses     map[string][]string `json:"duplicateClasses,omitempty"`
-	SkippedDirs          map[string]int      `json:"skippedDirs,omitempty"`
-	GeneratedSourceFiles int                 `json:"generatedSourceFiles,omitempty"`
-	ModuleRoots          int                 `json:"moduleRoots,omitempty"`
-	Hints                []string            `json:"hints,omitempty"`
-}
+type Diagnostics = contract.Diagnostics
 
 // Load scans projectRoot for Java source files and returns a Store when at
 // least one top-level type can be indexed. Hidden and build-output directories

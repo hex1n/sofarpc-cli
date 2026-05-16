@@ -70,6 +70,46 @@ func ValidatePlanSchema(plan Plan, phase string) error {
 			"produce a fresh replayable plan with invoke dryRun")
 }
 
+// ValidateReplayPlan rejects captured or literal plans that cannot be safely
+// replayed. It owns the stable plan invariants so MCP session replay and
+// literal payload replay fail with the same structured errors.
+func ValidateReplayPlan(plan Plan, phase string) error {
+	if err := ValidatePlanSchema(plan, phase); err != nil {
+		return err
+	}
+	if strings.TrimSpace(plan.Service) == "" || strings.TrimSpace(plan.Method) == "" {
+		return errcode.New(errcode.ArgsInvalid, phase,
+			"plan is missing service or method").
+			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
+				"use invoke dryRun to get a valid plan shape")
+	}
+	if len(plan.Args) != len(plan.ParamTypes) {
+		return errcode.New(errcode.ArgsInvalid, phase,
+			fmt.Sprintf("plan arity mismatch: got %d args, paramTypes has %d", len(plan.Args), len(plan.ParamTypes))).
+			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
+				"use invoke dryRun to get a validated plan")
+	}
+	if strings.TrimSpace(plan.Target.Mode) == "" {
+		return errcode.New(errcode.TargetMissing, phase,
+			"plan has no target mode").
+			WithHint("sofarpc_target", map[string]any{"explain": true},
+				"resolve the target and re-plan")
+	}
+	return nil
+}
+
+// ValidateExecutablePlan applies replay-safe plan invariants plus the current
+// pure-Go transport rule. Execute calls this before touching the wire layer.
+func ValidateExecutablePlan(plan Plan, phase string) error {
+	if err := ValidateReplayPlan(plan, phase); err != nil {
+		return err
+	}
+	if !target.SupportsDirectBolt(plan.Target) {
+		return unsupportedTargetError(phase, plan)
+	}
+	return nil
+}
+
 // BuildPlan resolves target + contract + args and returns a Plan.
 // It never performs I/O — callers have already materialised target.Sources
 // and plugged a contract.Store.

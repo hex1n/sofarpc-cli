@@ -116,6 +116,29 @@ func TestExecuteDirectIfPossible_InvalidTargetReturnsErrcode(t *testing.T) {
 	}
 }
 
+func TestExecuteRejectsInvalidPlanBeforeTransport(t *testing.T) {
+	_, err := Execute(context.Background(), Plan{
+		Service:    "com.foo.Svc",
+		Method:     "doThing",
+		ParamTypes: []string{"java.lang.String"},
+		Args:       []any{"hello"},
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://127.0.0.1:1",
+		},
+	}, "invoke")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	ecerr, ok := err.(*errcode.Error)
+	if !ok {
+		t.Fatalf("error type = %T", err)
+	}
+	if ecerr.Code != errcode.PlanVersionUnsupported {
+		t.Fatalf("code: got %q want %q", ecerr.Code, errcode.PlanVersionUnsupported)
+	}
+}
+
 func TestMaxResponseBytesFromEnv(t *testing.T) {
 	t.Setenv(envMaxResponseBytes, "4096")
 	if got := maxResponseBytesFromEnv(); got != 4096 {

@@ -31,6 +31,9 @@ func TestDoctor_UnresolvedTargetFails(t *testing.T) {
 }
 
 func TestDoctor_ReachableTargetPasses(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+	t.Setenv(envAllowedTargetHosts, "")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -130,10 +133,43 @@ public interface Svc {
 
 func TestDoctor_SummaryListsEachCheck(t *testing.T) {
 	out := callDoctor(t, Options{}, nil)
-	for _, name := range []string{"target", "contract", "sessions"} {
+	for _, name := range []string{"target", "contract", "sessions", "invoke-policy"} {
 		if !strings.Contains(out.Summary, name+"=") {
 			t.Fatalf("summary %q missing %s entry", out.Summary, name)
 		}
+	}
+}
+
+func TestDoctor_InvokePolicyReportsDisabledRealInvoke(t *testing.T) {
+	t.Setenv(envAllowInvoke, "false")
+	out := callDoctor(t, Options{}, nil)
+	check := findCheck(t, out, "invoke-policy")
+	if check.Ok {
+		t.Fatalf("invoke-policy should fail when %s is unset, got %+v", envAllowInvoke, check)
+	}
+	if !strings.Contains(check.Detail, envAllowInvoke) {
+		t.Fatalf("detail should mention %s, got %q", envAllowInvoke, check.Detail)
+	}
+	if check.NextStep == nil || check.NextStep.Tool != "sofarpc_invoke" {
+		t.Fatalf("check should point at dry-run invoke, got %+v", check.NextStep)
+	}
+}
+
+func TestDoctor_InvokePolicyChecksAllowedServiceWhenProvided(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "com.foo.AllowedFacade")
+
+	out := callDoctor(t, Options{
+		TargetSources: target.Sources{
+			Env: target.Config{DirectURL: "bolt://127.0.0.1:1"},
+		},
+	}, map[string]any{"service": "com.foo.BlockedFacade"})
+	check := findCheck(t, out, "invoke-policy")
+	if check.Ok {
+		t.Fatalf("invoke-policy should fail for disallowed service, got %+v", check)
+	}
+	if !strings.Contains(check.Detail, envAllowedServices) {
+		t.Fatalf("detail should mention %s, got %q", envAllowedServices, check.Detail)
 	}
 }
 

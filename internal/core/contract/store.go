@@ -21,6 +21,28 @@ type Store interface {
 	Class(fqn string) (javamodel.Class, bool)
 }
 
+type Diagnostics struct {
+	IndexedClasses       int                 `json:"indexedClasses"`
+	IndexedFiles         int                 `json:"indexedFiles"`
+	ParsedClasses        int                 `json:"parsedClasses"`
+	IndexFailureCount    int                 `json:"indexFailureCount,omitempty"`
+	ParseFailureCount    int                 `json:"parseFailureCount,omitempty"`
+	ResolutionIssueCount int                 `json:"resolutionIssueCount,omitempty"`
+	IndexFailures        map[string]string   `json:"indexFailures,omitempty"`
+	ParseFailures        map[string]string   `json:"parseFailures,omitempty"`
+	ResolutionIssues     map[string][]string `json:"resolutionIssues,omitempty"`
+	DuplicateClasses     map[string][]string `json:"duplicateClasses,omitempty"`
+	SkippedDirs          map[string]int      `json:"skippedDirs,omitempty"`
+	GeneratedSourceFiles int                 `json:"generatedSourceFiles,omitempty"`
+	ModuleRoots          int                 `json:"moduleRoots,omitempty"`
+	Hints                []string            `json:"hints,omitempty"`
+}
+
+type DiagnosticStore interface {
+	Store
+	Diagnostics() Diagnostics
+}
+
 // InMemoryStore is the test / scaffolding implementation.
 type InMemoryStore struct {
 	classes map[string]javamodel.Class

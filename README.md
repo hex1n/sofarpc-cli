@@ -48,23 +48,46 @@ Repo-local helper scripts:
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
-Register the binary with Claude Code and Codex in one shot. The entry
-is idempotent — re-running replaces only the sofarpc server, leaving
-unrelated MCP entries and top-level config keys untouched. By default
-it also installs the `sofarpc-invoke` agent skill so Claude Code and
-Codex drive the tools without having to read this README:
+Setup is split into two scopes:
+
+- User scope registers the MCP server with Claude Code and Codex and installs
+  the `sofarpc-invoke` skill for the current user.
+- Project scope writes target defaults into the Java project under
+  `.sofarpc/`.
+
+User setup is the default. It is idempotent and merges the existing sofarpc env
+block by default, so re-running with one new flag does not drop manually added
+guardrails:
 
 ```sh
-sofarpc-mcp setup                                         # both clients + skill
-sofarpc-mcp setup --claude-code                           # Claude Code only
-sofarpc-mcp setup --codex                                 # Codex only
-sofarpc-mcp setup --install-skill=false                   # MCP config only
-sofarpc-mcp setup --dry-run --direct-url=bolt://host:12200  # preview
+sofarpc-mcp setup --scope=user                                      # both clients + skill
+sofarpc-mcp setup --claude-code                                     # Claude Code only
+sofarpc-mcp setup --codex                                           # Codex only
+sofarpc-mcp setup --install-skill=false                             # MCP config only
+sofarpc-mcp setup --replace-env --direct-url=bolt://host:12200      # replace sofarpc env
+sofarpc-mcp setup --dry-run --allow-invoke --allowed-services='*'   # preview
 ```
 
-Optional flags (`--project-root`, `--direct-url`, `--registry-address`)
-bake per-machine defaults into the server entry; leave them off if you
-plan to pass `directUrl` at call time instead.
+When running from source with `go run`, use `--command /abs/path/to/sofarpc-mcp`
+or build/install first; setup refuses to register Go's temporary build-cache
+binary.
+
+Project setup writes the target config that travels with a repository or stays
+local to a checkout:
+
+```sh
+sofarpc-mcp setup --scope=project --project-root . --local \
+  --direct-url=bolt://dev-rpc.example.com:12200 --timeout-ms=3000
+
+sofarpc-mcp setup --scope=project --project-root . --shared \
+  --registry-address=zookeeper://zk.example.com:2181 --protocol=bolt
+```
+
+`--local` writes `.sofarpc/config.local.json` and ensures that path is ignored
+by the project's `.gitignore`. `--shared` writes `.sofarpc/config.json`.
+Existing project config files are not overwritten unless `--force` is passed.
+Real-invoke guardrails such as `--allow-invoke` are user-scope env settings and
+are rejected in project setup.
 
 The skill is baked into the binary via `//go:embed`, so a fresh
 `go install` carries it — no repo checkout required. Canonical source
@@ -74,7 +97,7 @@ Code auto-discovery works when running inside this checkout too.
 
 ## Quick start
 
-For most users the two-step flow above is enough. The sections below
+For most users the setup flow above is enough. The sections below
 cover the manual paths — building from source, driving the server
 without `setup`, and editing client config by hand.
 
@@ -192,6 +215,7 @@ fixed.
 `sofarpc_invoke` still returns the full plan and can still be replayed by
 passing that plan as `payload`; the plan is just not retained in the session.
 Set it to `0` to disable the captured-plan byte bound.
+`sofarpc_doctor` reports real-invoke guardrails in its `invoke-policy` check.
 
 `SOFARPC_MAX_RESPONSE_BYTES` controls the maximum BOLT response body accepted
 by the direct transport. Invalid or non-positive values fall back to the
@@ -255,7 +279,8 @@ source.
 - `targetAppName` sets the direct-transport target app header.
 - `directUrl` and `registryAddress` are per-call overrides; otherwise project
   config wins, then MCP env.
-- `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later.
+- `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later;
+  replay accepts either that plan or a dry-run output object containing `plan`.
 - Real invocation requires `SOFARPC_ALLOW_INVOKE=true`; keep the default disabled
   when you only want planning, skeletons, and diagnostics.
 - Non-dry-run direct calls default to the resolved project/env direct target;

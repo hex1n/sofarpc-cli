@@ -139,15 +139,19 @@ func planFromSession(id string, sessions *SessionStore) (*invoke.Plan, string, e
 			WithHint("sofarpc_invoke", map[string]any{"sessionId": id, "dryRun": true},
 				"run invoke with this sessionId to capture a plan")
 	}
-	if err := validateReplayPlan(*session.LastPlan); err != nil {
+	if err := invoke.ValidateReplayPlan(*session.LastPlan, "replay"); err != nil {
 		return nil, "", err
 	}
 	return session.LastPlan, "session", nil
 }
 
 func planFromPayload(payload json.RawMessage) (*invoke.Plan, error) {
+	planPayload, err := replayPlanPayload(payload)
+	if err != nil {
+		return nil, err
+	}
 	var plan invoke.Plan
-	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec := json.NewDecoder(bytes.NewReader(planPayload))
 	dec.UseNumber()
 	if err := dec.Decode(&plan); err != nil {
 		return nil, errcode.New(errcode.ArgsInvalid, "replay",
@@ -155,29 +159,43 @@ func planFromPayload(payload json.RawMessage) (*invoke.Plan, error) {
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
 				"produce a plan with invoke dryRun and pass it verbatim")
 	}
-	if err := validateReplayPlan(plan); err != nil {
+	if err := invoke.ValidateReplayPlan(plan, "replay"); err != nil {
 		return nil, err
 	}
 	return &plan, nil
 }
 
-func validateReplayPlan(plan invoke.Plan) error {
-	if err := invoke.ValidatePlanSchema(plan, "replay"); err != nil {
-		return err
+func replayPlanPayload(payload json.RawMessage) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(payload)
+	var envelope struct {
+		Plan              json.RawMessage `json:"plan,omitempty"`
+		StructuredContent struct {
+			Plan json.RawMessage `json:"plan,omitempty"`
+		} `json:"structuredContent,omitempty"`
 	}
-	if plan.Service == "" || plan.Method == "" {
-		return errcode.New(errcode.ArgsInvalid, "replay",
-			"payload is missing service or method").
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.UseNumber()
+	if err := dec.Decode(&envelope); err != nil {
+		return payload, nil
+	}
+	switch {
+	case len(envelope.Plan) > 0:
+		return nonNullReplayPlanPayload(envelope.Plan)
+	case len(envelope.StructuredContent.Plan) > 0:
+		return nonNullReplayPlanPayload(envelope.StructuredContent.Plan)
+	default:
+		return payload, nil
+	}
+}
+
+func nonNullReplayPlanPayload(payload json.RawMessage) (json.RawMessage, error) {
+	if bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
+		return nil, errcode.New(errcode.ArgsInvalid, "replay",
+			"payload envelope contains a null plan").
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
-				"use invoke dryRun to get a valid plan shape")
+				"pass the plan from invoke dryRun output")
 	}
-	if plan.Target.Mode == "" {
-		return errcode.New(errcode.TargetMissing, "replay",
-			"payload has no target mode").
-			WithHint("sofarpc_target", map[string]any{"explain": true},
-				"resolve the target and re-plan")
-	}
-	return nil
+	return payload, nil
 }
 
 func summarizeReplay(plan *invoke.Plan, source string, dryRun bool) string {

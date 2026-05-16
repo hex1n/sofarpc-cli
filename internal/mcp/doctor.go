@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
-	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -47,12 +47,13 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DoctorInput) (*sdkmcp.CallToolResult, DoctorOutput, error) {
 		store := holder.Get()
 		loadErr := holder.LoadError()
-		checks := make([]DoctorCheck, 3)
+		checks := make([]DoctorCheck, 4)
 		var wg sync.WaitGroup
-		wg.Add(3)
+		wg.Add(4)
 		go func() { defer wg.Done(); checks[0] = checkTarget(in, sources) }()
 		go func() { defer wg.Done(); checks[1] = checkContract(store, loadErr) }()
 		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
+		go func() { defer wg.Done(); checks[3] = checkInvokePolicy(in, sources) }()
 		wg.Wait()
 		out := DoctorOutput{Checks: checks}
 		out.Ok = allOk(out.Checks)
@@ -116,6 +117,100 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 	}
 }
 
+func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
+	policy := executionPolicyFromEnv(sources)
+	report := target.Resolve(target.Input{Service: in.Service}, sources)
+	data := map[string]any{
+		"policy":             policy.Diagnostics(),
+		"supportsDirectBolt": target.SupportsDirectBolt(report.Target),
+	}
+	if report.Target.Mode != "" {
+		data["target"] = report.Target
+	}
+
+	if !policy.AllowInvoke {
+		return DoctorCheck{
+			Name:   "invoke-policy",
+			Ok:     false,
+			Detail: invoke.EnvAllowInvoke + " is not enabled; real invoke and replay are blocked",
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_invoke",
+				Args: map[string]any{"dryRun": true},
+			},
+		}
+	}
+	if strings.TrimSpace(in.Service) != "" && !policy.ServiceAllowed(in.Service) {
+		return DoctorCheck{
+			Name:   "invoke-policy",
+			Ok:     false,
+			Detail: fmt.Sprintf("service %q is not allowed by %s", in.Service, invoke.EnvAllowedServices),
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_doctor",
+			},
+		}
+	}
+	if len(report.ConfigErrors) > 0 {
+		return DoctorCheck{
+			Name:   "invoke-policy",
+			Ok:     false,
+			Detail: "project target config errors block real invoke",
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_target",
+				Args: targetHintArgs(sources),
+			},
+		}
+	}
+	if report.Target.Mode == "" {
+		return DoctorCheck{
+			Name:   "invoke-policy",
+			Ok:     false,
+			Detail: "real invoke policy is enabled, but no executable target is resolved",
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_target",
+				Args: map[string]any{"explain": true},
+			},
+		}
+	}
+	if !target.SupportsDirectBolt(report.Target) {
+		return DoctorCheck{
+			Name:   "invoke-policy",
+			Ok:     false,
+			Detail: fmt.Sprintf("pure-Go invoke supports only direct+bolt+hessian2; got mode=%s protocol=%s serialization=%s", report.Target.Mode, report.Target.Protocol, report.Target.Serialization),
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_target",
+				Args: targetHintArgs(sources),
+			},
+		}
+	}
+	if err := policy.ValidateTarget(invoke.Plan{Target: report.Target}, "doctor"); err != nil {
+		return DoctorCheck{
+			Name:   "invoke-policy",
+			Ok:     false,
+			Detail: err.Error(),
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_target",
+				Args: targetHintArgs(sources),
+			},
+		}
+	}
+	detail := "real invoke policy allows the resolved direct target"
+	if len(policy.AllowedServices) > 0 && strings.TrimSpace(in.Service) == "" {
+		detail += "; pass service to doctor to verify service allowlisting"
+	}
+	return DoctorCheck{
+		Name:   "invoke-policy",
+		Ok:     true,
+		Detail: detail,
+		Data:   data,
+	}
+}
+
 func checkContract(store contract.Store, loadErr string) DoctorCheck {
 	if store == nil {
 		if loadErr != "" {
@@ -144,9 +239,7 @@ func checkContract(store contract.Store, loadErr string) DoctorCheck {
 		}
 	}
 	size := banner.Size()
-	diagProvider, hasDiagnostics := store.(interface {
-		Diagnostics() sourcecontract.Diagnostics
-	})
+	diagProvider, hasDiagnostics := store.(contract.DiagnosticStore)
 	if hasDiagnostics {
 		diag := diagProvider.Diagnostics()
 		data := map[string]any{
