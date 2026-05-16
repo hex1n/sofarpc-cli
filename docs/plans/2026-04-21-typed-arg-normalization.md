@@ -235,7 +235,7 @@ func NormalizeArgs(paramTypes []string, args []any, store Store) ([]any, error)
 - `Map<String, DTO>`:
   - value 递归补 `@type`
 - enum:
-  - 字符串保持为 enum constant
+  - 字符串包装成 `{"@type":"com.foo.Status","name":"ACTIVE"}` 这类 SOFA enum object
 - `BigDecimal` / `BigInteger`:
   - number 或 string 自动包装成 typed object
 
@@ -301,7 +301,7 @@ func NormalizeArgs(paramTypes []string, args []any, store Store) ([]any, error)
 4. `Map<String, DTO>` 的 value 自动补 `@type`
 5. `BigDecimal` number 自动包装
 6. `BigInteger` string 自动包装
-7. enum string 保持常量
+7. enum string 包装成 SOFA enum object
 8. 继承 DTO 能识别父类字段
 9. trusted-unknown field 保留原值
 10. 结构错误返回 `input.args-invalid`

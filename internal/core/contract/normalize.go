@@ -61,8 +61,8 @@ func normalizeForType(spec TypeSpec, raw any, store Store, lookup javatype.Class
 		return out, nil
 	}
 
-	if cls, ok := store.Class(spec.Base); ok && cls.Kind == javamodel.KindEnum {
-		return normalizeEnum(raw), nil
+	if isEnumType(spec.Base, store, lookup) {
+		return normalizeEnum(spec.Base, raw), nil
 	}
 
 	role := javatype.Classify(spec.Base, lookup)
@@ -75,10 +75,50 @@ func normalizeForType(spec TypeSpec, raw any, store Store, lookup javatype.Class
 	case javatype.RolePassthrough:
 		return normalizeScalar(spec.Base, raw)
 	case javatype.RoleUserType:
+		if _, known := classFor(store, spec.Base); !known {
+			if value, ok := raw.(string); ok {
+				return enumObject(spec.Base, value), nil
+			}
+		}
 		return normalizeObject(spec, raw, store, lookup)
 	default:
 		return normalizeLoose(raw, store, lookup)
 	}
+}
+
+func classFor(store Store, fqn string) (javamodel.Class, bool) {
+	if store == nil {
+		return javamodel.Class{}, false
+	}
+	return store.Class(fqn)
+}
+
+func isEnumType(base string, store Store, lookup javatype.ClassLookup) bool {
+	base = strings.TrimSpace(base)
+	if base == "" || base == "java.lang.Enum" {
+		return false
+	}
+	if cls, ok := classFor(store, base); ok && cls.Kind == javamodel.KindEnum {
+		return true
+	}
+	if lookup == nil {
+		return false
+	}
+	seen := map[string]bool{}
+	current := base
+	for current != "" && !seen[current] {
+		seen[current] = true
+		super, ok := lookup.Superclass(current)
+		if !ok || strings.TrimSpace(super) == "" {
+			return false
+		}
+		superBase := ParseTypeSpec(super).Base
+		if superBase == "java.lang.Enum" {
+			return true
+		}
+		current = superBase
+	}
+	return false
 }
 
 func normalizeCollection(spec TypeSpec, raw any, store Store, lookup javatype.ClassLookup) (any, error) {
@@ -158,11 +198,31 @@ func normalizeObject(spec TypeSpec, raw any, store Store, lookup javatype.ClassL
 	return out, nil
 }
 
-func normalizeEnum(raw any) any {
-	if value, ok := raw.(string); ok {
-		return value
+func normalizeEnum(base string, raw any) any {
+	switch value := raw.(type) {
+	case string:
+		return enumObject(base, value)
+	case map[string]any:
+		out := make(map[string]any, len(value)+1)
+		if explicit, ok := value["@type"].(string); ok && strings.TrimSpace(explicit) != "" {
+			out["@type"] = strings.TrimSpace(explicit)
+		} else {
+			out["@type"] = base
+		}
+		for key, field := range value {
+			if key == "@type" {
+				continue
+			}
+			out[key] = field
+		}
+		return out
+	default:
+		return raw
 	}
-	return raw
+}
+
+func enumObject(base, name string) map[string]any {
+	return map[string]any{"@type": base, "name": name}
 }
 
 func normalizeScalar(base string, raw any) (any, error) {

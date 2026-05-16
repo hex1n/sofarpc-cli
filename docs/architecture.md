@@ -385,6 +385,9 @@ execution:
   recursively
 - common numeric Java types such as `BigDecimal` and `BigInteger` are wrapped
   into typed-object form
+- enum constants are wrapped into SOFA's canonical enum object shape,
+  `{"@type":"com.foo.Status","name":"ACTIVE"}`, so `GenericUtils` can realize
+  them into Java enum constants
 
 This is semantic normalization: it produces replayable JSON-like canonical
 payloads. Wire preparation is a separate `internal/sofarpcwire` step that turns

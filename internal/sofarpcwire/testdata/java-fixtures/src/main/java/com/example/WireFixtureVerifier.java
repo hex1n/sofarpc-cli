@@ -3,6 +3,7 @@ package com.example;
 import com.alipay.hessian.generic.model.GenericCollection;
 import com.alipay.hessian.generic.model.GenericMap;
 import com.alipay.hessian.generic.model.GenericObject;
+import com.alipay.hessian.generic.util.GenericUtils;
 import com.alipay.sofa.rpc.codec.Serializer;
 import com.alipay.sofa.rpc.codec.SerializerFactory;
 import com.alipay.sofa.rpc.common.RpcConstants;
@@ -88,6 +89,12 @@ public final class WireFixtureVerifier {
         }
         JsonNode actualArgs = MAPPER.valueToTree(canonicalizeArgs(request.getMethodArgs()));
         assertJsonEquals(fixturePath, "want.argsJson", expectedArgs, actualArgs);
+
+        JsonNode expectedRealizedArgs = want.path("realizedArgsJson");
+        if (!expectedRealizedArgs.isMissingNode()) {
+            JsonNode actualRealizedArgs = MAPPER.valueToTree(canonicalizeRealizedArgs(request.getMethodArgs()));
+            assertJsonEquals(fixturePath, "want.realizedArgsJson", expectedRealizedArgs, actualRealizedArgs);
+        }
     }
 
     private static SofaRequest decodeRequest(byte[] content) {
@@ -102,6 +109,14 @@ public final class WireFixtureVerifier {
         List<Object> canonical = new ArrayList<Object>();
         for (Object arg : args) {
             canonical.add(canonicalize(arg));
+        }
+        return canonical;
+    }
+
+    private static List<Object> canonicalizeRealizedArgs(Object[] args) {
+        List<Object> canonical = new ArrayList<Object>();
+        for (Object arg : args) {
+            canonical.add(canonicalize(GenericUtils.convertToObject(arg)));
         }
         return canonical;
     }

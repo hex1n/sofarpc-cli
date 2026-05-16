@@ -24,6 +24,7 @@ type goldenFixtureWant struct {
 	ParamTypes              []string        `json:"paramTypes,omitempty"`
 	TargetServiceUniqueName string          `json:"targetServiceUniqueName,omitempty"`
 	ArgsJSON                json.RawMessage `json:"argsJson,omitempty"`
+	RealizedArgsJSON        json.RawMessage `json:"realizedArgsJson,omitempty"`
 }
 
 func main() {
@@ -82,6 +83,33 @@ func requestContentFixture() (goldenWireFixture, error) {
   }
 ]`
 
+	const realizedArgsJSON = `[
+  {
+    "type": "com.example.FixtureRequest",
+    "fields": {
+      "amount": {
+        "type": "java.math.BigDecimal",
+        "value": "1000.50"
+      },
+      "id": 1001,
+      "items": {
+        "type": "java.util.ArrayList",
+        "items": [
+          {
+            "type": "com.example.FixtureItem",
+            "fields": {
+              "amount": null,
+              "code": "primary",
+              "status": "ACTIVE"
+            }
+          }
+        ]
+      },
+      "status": "ACTIVE"
+    }
+  }
+]`
+
 	req, err := sofarpcwire.BuildGenericRequest(sofarpcwire.RequestSpec{
 		Service: "com.example.FixtureFacade",
 		Method:  "query",
@@ -96,7 +124,10 @@ func requestContentFixture() (goldenWireFixture, error) {
 					"@type": "java.math.BigDecimal",
 					"value": "1000.50",
 				},
-				"status": "ACTIVE",
+				"status": map[string]any{
+					"@type": "com.example.FixtureStatus",
+					"name":  "ACTIVE",
+				},
 				"items": []any{
 					map[string]any{
 						"@type":  "com.example.FixtureItem",
@@ -121,6 +152,7 @@ func requestContentFixture() (goldenWireFixture, error) {
 			ParamTypes:              []string{"com.example.FixtureRequest"},
 			TargetServiceUniqueName: "com.example.FixtureFacade:1.0",
 			ArgsJSON:                json.RawMessage(argsJSON),
+			RealizedArgsJSON:        json.RawMessage(realizedArgsJSON),
 		},
 	}, nil
 }

@@ -38,6 +38,9 @@ func buildValue(spec TypeSpec, store Store, lookup javatype.ClassLookup, seen ma
 		inner := buildValue(spec.Element(), store, lookup, seen)
 		return arrayOf(inner)
 	}
+	if isEnumType(spec.Base, store, lookup) {
+		return enumSkeleton(spec.Base, store)
+	}
 
 	role := javatype.Classify(spec.Base, lookup)
 	switch role {
@@ -101,13 +104,7 @@ func buildUserType(fqn string, store Store, lookup javatype.ClassLookup, seen ma
 		return stubObject(fqn)
 	}
 	if cls.Kind == javamodel.KindEnum {
-		if len(cls.EnumConstants) > 0 {
-			body, err := json.Marshal(cls.EnumConstants[0])
-			if err == nil {
-				return body
-			}
-		}
-		return json.RawMessage(`""`)
+		return enumSkeleton(fqn, store)
 	}
 
 	obj := newOrderedObject()
@@ -124,6 +121,18 @@ func stubObject(fqn string) json.RawMessage {
 
 func decimalObject(fqn string) json.RawMessage {
 	return json.RawMessage(`{"@type":"` + fqn + `","value":"0"}`)
+}
+
+func enumSkeleton(fqn string, store Store) json.RawMessage {
+	name := ""
+	if cls, ok := classFor(store, fqn); ok && len(cls.EnumConstants) > 0 {
+		name = cls.EnumConstants[0]
+	}
+	nameJSON, err := json.Marshal(name)
+	if err != nil {
+		nameJSON = []byte(`""`)
+	}
+	return json.RawMessage(`{"@type":"` + fqn + `","name":` + string(nameJSON) + `}`)
 }
 
 // orderedObject lets us emit keys in insertion order so @type always

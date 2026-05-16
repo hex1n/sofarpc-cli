@@ -10,7 +10,7 @@ public class FixtureRequest implements Serializable {
     public long id;
     public BigDecimal amount;
     public List<FixtureItem> items;
-    public String status;
+    public FixtureStatus status;
 
     public FixtureRequest() {
     }
