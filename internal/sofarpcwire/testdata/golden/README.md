@@ -64,6 +64,14 @@ is missing, when `contentHex` is empty, or when an unknown field/kind appears.
           }
         }
       }
+    ],
+    "realizedArgsJson": [
+      {
+        "type": "com.example.FixtureRequest",
+        "fields": {
+          "status": "ACTIVE"
+        }
+      }
     ]
   }
 }

@@ -508,7 +508,71 @@ func TestBuildSkeleton_EnumUsesFirstConstant(t *testing.T) {
 		EnumConstants: []string{"ACTIVE", "INACTIVE"},
 	})
 	sk := BuildSkeleton([]string{"com.foo.Status"}, store)
-	if string(sk[0]) != `"ACTIVE"` {
+	if string(sk[0]) != `{"@type":"com.foo.Status","name":"ACTIVE"}` {
+		t.Fatalf("enum skeleton: %s", sk[0])
+	}
+}
+
+func TestBuildSkeleton_EnumFieldUsesFirstConstant(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Request",
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "status", JavaType: "com.foo.Status"},
+			},
+		},
+		javamodel.Class{
+			FQN:           "com.foo.Status",
+			Kind:          javamodel.KindEnum,
+			EnumConstants: []string{"ACTIVE", "INACTIVE"},
+		},
+	)
+	sk := BuildSkeleton([]string{"com.foo.Request"}, store)
+	var obj map[string]any
+	if err := json.Unmarshal(sk[0], &obj); err != nil {
+		t.Fatalf("not JSON: %s", sk[0])
+	}
+	status, ok := obj["status"].(map[string]any)
+	if !ok {
+		t.Fatalf("status should be enum object; got %T", obj["status"])
+	}
+	if status["@type"] != "com.foo.Status" || status["name"] != "ACTIVE" {
+		t.Fatalf("status: %#v", status)
+	}
+}
+
+func TestBuildSkeleton_EnumContainersUseFirstConstant(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN:           "com.foo.Status",
+		Kind:          javamodel.KindEnum,
+		EnumConstants: []string{"ACTIVE", "INACTIVE"},
+	})
+	sk := BuildSkeleton([]string{
+		"java.util.List<com.foo.Status>",
+		"java.util.Map<java.lang.String, com.foo.Status>",
+		"com.foo.Status[]",
+	}, store)
+	want := `{"@type":"com.foo.Status","name":"ACTIVE"}`
+	if string(sk[0]) != `[`+want+`]` {
+		t.Fatalf("list enum skeleton: %s", sk[0])
+	}
+	if string(sk[1]) != `{"<key>":`+want+`}` {
+		t.Fatalf("map enum skeleton: %s", sk[1])
+	}
+	if string(sk[2]) != `[`+want+`]` {
+		t.Fatalf("array enum skeleton: %s", sk[2])
+	}
+}
+
+func TestBuildSkeleton_EnumDiscoveredBySuperclass(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN:        "com.foo.Status",
+		Kind:       javamodel.KindClass,
+		Superclass: "java.lang.Enum<com.foo.Status>",
+	})
+	sk := BuildSkeleton([]string{"com.foo.Status"}, store)
+	if string(sk[0]) != `{"@type":"com.foo.Status","name":""}` {
 		t.Fatalf("enum skeleton: %s", sk[0])
 	}
 }

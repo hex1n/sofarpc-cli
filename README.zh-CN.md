@@ -212,6 +212,8 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
 - root / nested DTO 会自动补 `@type`
 - `List<DTO>` / `Map<String, V>` 的 value 会递归归一化
 - `java.math.BigDecimal` / `BigInteger` 会自动包装成 canonical typed object
+- enum constant 会自动包装成 SOFA canonical enum object：
+  `{"@type":"com.foo.Status","name":"ACTIVE"}`
 
 例如，dry-run plan 可能会把：
 

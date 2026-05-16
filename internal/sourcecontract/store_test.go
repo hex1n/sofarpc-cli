@@ -176,6 +176,44 @@ public enum Status {
 	}
 }
 
+func TestLoad_ParsesComplexEnumConstants(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/Status.java", `
+package com.foo;
+
+public enum Status {
+    @Deprecated
+    OPEN(1, "open"),
+    CLOSED(2, "closed") {
+        @Override
+        public boolean terminal() { return true; }
+    };
+
+    private final int code;
+    private final String label;
+
+    Status(int code, String label) {
+        this.code = code;
+        this.label = label;
+    }
+
+    public boolean terminal() { return false; }
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	status, ok := store.Class("com.foo.Status")
+	if !ok {
+		t.Fatal("Status not found")
+	}
+	if !reflect.DeepEqual(status.EnumConstants, []string{"OPEN", "CLOSED"}) {
+		t.Fatalf("EnumConstants: got %v", status.EnumConstants)
+	}
+}
+
 func TestLoad_SkipsHiddenAndTestTrees(t *testing.T) {
 	root := t.TempDir()
 	writeJava(t, root, ".claude/worktrees/tmp/src/main/java/com/foo/Hidden.java", `

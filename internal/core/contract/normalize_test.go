@@ -92,6 +92,129 @@ func TestNormalizeArgs_NormalizesNestedDTOAndListOfDTO(t *testing.T) {
 	}
 }
 
+func TestNormalizeArgs_NormalizesEnumFieldInDTO(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.StatusRequest",
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "status", JavaType: "com.foo.Status"},
+			},
+		},
+		javamodel.Class{
+			FQN:           "com.foo.Status",
+			Kind:          javamodel.KindEnum,
+			EnumConstants: []string{"ACTIVE", "DISABLED"},
+		},
+	)
+
+	args, err := NormalizeArgs([]string{"com.foo.StatusRequest"}, []any{
+		map[string]any{"status": "ACTIVE"},
+	}, store)
+	if err != nil {
+		t.Fatalf("NormalizeArgs: %v", err)
+	}
+
+	got := args[0].(map[string]any)
+	want := map[string]any{
+		"@type":  "com.foo.StatusRequest",
+		"status": map[string]any{"@type": "com.foo.Status", "name": "ACTIVE"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args[0]: got %#v want %#v", got, want)
+	}
+}
+
+func TestNormalizeArgs_AllowsEnumLikeStringWhenClassIsMissing(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN:  "com.foo.StatusRequest",
+		Kind: javamodel.KindClass,
+		Fields: []javamodel.Field{
+			{Name: "status", JavaType: "com.foo.Status"},
+		},
+	})
+
+	args, err := NormalizeArgs([]string{"com.foo.StatusRequest"}, []any{
+		map[string]any{"status": "ACTIVE"},
+	}, store)
+	if err != nil {
+		t.Fatalf("NormalizeArgs: %v", err)
+	}
+
+	got := args[0].(map[string]any)
+	want := map[string]any{
+		"@type":  "com.foo.StatusRequest",
+		"status": map[string]any{"@type": "com.foo.Status", "name": "ACTIVE"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args[0]: got %#v want %#v", got, want)
+	}
+}
+
+func TestNormalizeArgs_AllowsTopLevelEnumLikeStringWhenClassIsMissing(t *testing.T) {
+	args, err := NormalizeArgs([]string{"com.foo.Status"}, []any{"ACTIVE"}, NewInMemoryStore())
+	if err != nil {
+		t.Fatalf("NormalizeArgs: %v", err)
+	}
+	want := []any{map[string]any{"@type": "com.foo.Status", "name": "ACTIVE"}}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args: got %#v want %#v", args, want)
+	}
+}
+
+func TestNormalizeArgs_NormalizesEnumContainers(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN:           "com.foo.Status",
+		Kind:          javamodel.KindEnum,
+		EnumConstants: []string{"ACTIVE", "DISABLED"},
+	})
+
+	args, err := NormalizeArgs(
+		[]string{
+			"java.util.List<com.foo.Status>",
+			"java.util.Map<java.lang.String, com.foo.Status>",
+			"com.foo.Status[]",
+		},
+		[]any{
+			[]any{"ACTIVE"},
+			map[string]any{"current": "DISABLED"},
+			[]any{"ACTIVE", "DISABLED"},
+		},
+		store,
+	)
+	if err != nil {
+		t.Fatalf("NormalizeArgs: %v", err)
+	}
+
+	active := map[string]any{"@type": "com.foo.Status", "name": "ACTIVE"}
+	disabled := map[string]any{"@type": "com.foo.Status", "name": "DISABLED"}
+	want := []any{
+		[]any{active},
+		map[string]any{"current": disabled},
+		[]any{active, disabled},
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args: got %#v want %#v", args, want)
+	}
+}
+
+func TestNormalizeArgs_NormalizesEnumDiscoveredBySuperclass(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN:        "com.foo.Status",
+		Kind:       javamodel.KindClass,
+		Superclass: "java.lang.Enum<com.foo.Status>",
+	})
+
+	args, err := NormalizeArgs([]string{"com.foo.Status"}, []any{"ACTIVE"}, store)
+	if err != nil {
+		t.Fatalf("NormalizeArgs: %v", err)
+	}
+	want := []any{map[string]any{"@type": "com.foo.Status", "name": "ACTIVE"}}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args: got %#v want %#v", args, want)
+	}
+}
+
 func TestNormalizeArgs_MapValueNormalization(t *testing.T) {
 	store := NewInMemoryStore(
 		javamodel.Class{
@@ -389,12 +512,13 @@ func TestNormalizeArgs_Golden(t *testing.T) {
 			want:       []any{int64(12345)},
 		},
 		{
-			// Enum values stay as strings — normalisation does not try
-			// to validate the constant name; that is the server's job.
-			name:       "enum_string_passthrough",
+			// Enum values become the canonical GenericObject shape SOFA's
+			// GenericUtils can realize into a Java enum constant. We do not
+			// validate the constant name; that is the server's job.
+			name:       "enum_string_to_generic_object",
 			paramTypes: []string{"com.foo.Mood"},
 			args:       []any{"HAPPY"},
-			want:       []any{"HAPPY"},
+			want:       []any{map[string]any{"@type": "com.foo.Mood", "name": "HAPPY"}},
 		},
 	}
 

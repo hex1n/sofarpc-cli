@@ -37,6 +37,7 @@ type goldenFixtureWant struct {
 	ParamTypes          []string          `json:"paramTypes,omitempty"`
 	TargetServiceUnique string            `json:"targetServiceUniqueName,omitempty"`
 	ArgsJSON            json.RawMessage   `json:"argsJson,omitempty"`
+	RealizedArgsJSON    json.RawMessage   `json:"realizedArgsJson,omitempty"`
 }
 
 func TestJavaGoldenWireFixtures(t *testing.T) {
@@ -334,5 +335,12 @@ func assertGoldenRequestFixture(t *testing.T, want goldenFixtureWant) {
 	var args any
 	if err := json.Unmarshal(trimmedArgs, &args); err != nil {
 		t.Fatalf("request-content want.argsJson is not valid JSON: %v", err)
+	}
+	trimmedRealizedArgs := bytes.TrimSpace(want.RealizedArgsJSON)
+	if len(trimmedRealizedArgs) > 0 && !bytes.Equal(trimmedRealizedArgs, []byte("null")) {
+		var realizedArgs any
+		if err := json.Unmarshal(trimmedRealizedArgs, &realizedArgs); err != nil {
+			t.Fatalf("request-content want.realizedArgsJson is not valid JSON: %v", err)
+		}
 	}
 }

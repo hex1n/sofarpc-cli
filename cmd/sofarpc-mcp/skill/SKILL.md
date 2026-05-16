@@ -44,6 +44,12 @@ Contract-assisted invoke, preferred when `describe` is available:
 The contract layer adds DTO `@type` tags and Java numeric wrappers. Do not
 pre-wrap values when contract assistance is active.
 
+In contract-assisted invoke, enum params and enum DTO fields may be passed as
+the Java constant name: `"ACTIVE"`, `"DISABLED"`, etc. The plan normalizes them
+to SOFA's enum object shape: `{ "@type": "com.foo.Status", "name": "ACTIVE" }`.
+In trusted mode, use that canonical object shape yourself when no contract can
+identify the enum field.
+
 Trusted mode, for no contract or exact user-supplied Java shape:
 
 ```json

@@ -299,6 +299,8 @@ normalizes common Java shapes before the wire step:
 - `List<DTO>` / `Map<String, V>` values are normalized recursively
 - `java.math.BigDecimal` / `BigInteger` values are wrapped into canonical typed
   objects
+- enum constants are wrapped into SOFA's canonical enum object shape,
+  `{"@type":"com.foo.Status","name":"ACTIVE"}`
 
 For example, a dry-run plan may turn:
 
