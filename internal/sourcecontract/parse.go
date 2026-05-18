@@ -137,7 +137,7 @@ func parseNestedDeclaration(segment string) (declaration, bool) {
 func matchTopLevelKind(src string, idx int) (string, bool) {
 	if idx > 0 {
 		prev := src[idx-1]
-		if isIdentChar(prev) || prev == '@' {
+		if isIdentChar(prev) {
 			return "", false
 		}
 	}

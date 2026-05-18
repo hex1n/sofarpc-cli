@@ -176,6 +176,39 @@ public enum Status {
 	}
 }
 
+func TestLoad_IndexesTopLevelAnnotationInterface(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/RequestTag.java", `
+package com.foo;
+
+public @interface RequestTag {
+    String value();
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if store == nil {
+		t.Fatal("Load returned nil store")
+	}
+	diag := store.Diagnostics()
+	if diag.IndexFailureCount != 0 {
+		t.Fatalf("IndexFailureCount: got %d, failures=%v", diag.IndexFailureCount, diag.IndexFailures)
+	}
+	tag, ok := store.Class("com.foo.RequestTag")
+	if !ok {
+		t.Fatal("RequestTag not found")
+	}
+	if tag.Kind != javamodel.KindInterface {
+		t.Fatalf("Kind: got %q", tag.Kind)
+	}
+	if len(tag.Methods) != 1 || tag.Methods[0].Name != "value" || tag.Methods[0].ReturnType != "java.lang.String" {
+		t.Fatalf("Methods: %+v", tag.Methods)
+	}
+}
+
 func TestLoad_ParsesComplexEnumConstants(t *testing.T) {
 	root := t.TempDir()
 	writeJava(t, root, "src/main/java/com/foo/Status.java", `
