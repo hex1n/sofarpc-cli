@@ -1,0 +1,1140 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sofarpc-cli Balsamiq 风格原型图</title>
+    <style>
+      :root {
+        --ink: #202020;
+        --muted: #5f5f5f;
+        --line: #2d2d2d;
+        --paper: #f7f3e8;
+        --paper-dark: #ece5d2;
+        --blue: #dce9f8;
+        --green: #dff0de;
+        --yellow: #fff1b8;
+        --red: #f6d2cf;
+        --white: #fffdf7;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          linear-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(0, 0, 0, 0.035) 1px, transparent 1px),
+          var(--paper);
+        background-size: 18px 18px;
+        font-family: "Comic Sans MS", "Marker Felt", "Bradley Hand", "Trebuchet MS", sans-serif;
+        letter-spacing: 0;
+      }
+
+      .page {
+        width: min(1480px, calc(100vw - 32px));
+        margin: 24px auto 48px;
+      }
+
+      .cover {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 18px;
+        margin-bottom: 22px;
+      }
+
+      .title-card,
+      .analysis-card,
+      .frame {
+        border: 3px solid var(--line);
+        background: var(--white);
+        box-shadow: 5px 6px 0 rgba(0, 0, 0, 0.18);
+        border-radius: 7px;
+      }
+
+      .title-card {
+        padding: 22px 24px;
+        transform: rotate(-0.2deg);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(30px, 4vw, 54px);
+        line-height: 1.04;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        font-size: 26px;
+        line-height: 1.1;
+      }
+
+      h3 {
+        font-size: 18px;
+        line-height: 1.15;
+      }
+
+      .subtitle {
+        margin-top: 12px;
+        max-width: 880px;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.5;
+      }
+
+      .source-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .source-chip,
+      .pill,
+      .button,
+      .tab,
+      .tool-chip {
+        border: 2px solid var(--line);
+        background: var(--white);
+        border-radius: 5px;
+        box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.14);
+      }
+
+      .source-chip {
+        padding: 7px 10px;
+        font-size: 14px;
+      }
+
+      .analysis-card {
+        padding: 18px;
+        background: var(--yellow);
+        transform: rotate(0.4deg);
+      }
+
+      .analysis-card h3 {
+        margin-bottom: 12px;
+      }
+
+      .analysis-list {
+        display: grid;
+        gap: 10px;
+        font-size: 15px;
+        line-height: 1.35;
+      }
+
+      .analysis-list div {
+        display: grid;
+        grid-template-columns: 28px 1fr;
+        gap: 8px;
+        align-items: start;
+      }
+
+      .sketch-number {
+        display: inline-flex;
+        width: 26px;
+        height: 26px;
+        align-items: center;
+        justify-content: center;
+        border: 2px solid var(--line);
+        border-radius: 50%;
+        background: var(--white);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 22px;
+      }
+
+      .frame {
+        min-height: 790px;
+        padding: 16px;
+        background: #fffaf0;
+        position: relative;
+      }
+
+      .frame:nth-child(2n) {
+        transform: rotate(0.12deg);
+      }
+
+      .frame:nth-child(2n + 1) {
+        transform: rotate(-0.12deg);
+      }
+
+      .frame-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        align-items: flex-start;
+        padding-bottom: 12px;
+        border-bottom: 3px solid var(--line);
+      }
+
+      .frame-kicker {
+        color: var(--muted);
+        font-size: 14px;
+        margin-bottom: 5px;
+      }
+
+      .frame-note {
+        border: 2px dashed var(--line);
+        background: var(--yellow);
+        padding: 9px 10px;
+        width: 230px;
+        font-size: 14px;
+        line-height: 1.3;
+        transform: rotate(1deg);
+      }
+
+      .screen {
+        margin-top: 16px;
+        border: 3px solid var(--line);
+        background: var(--white);
+        min-height: 660px;
+        box-shadow: inset 0 0 0 4px rgba(0, 0, 0, 0.03);
+      }
+
+      .browserbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 10px;
+        border-bottom: 3px solid var(--line);
+        background: var(--paper-dark);
+      }
+
+      .dot {
+        width: 13px;
+        height: 13px;
+        border: 2px solid var(--line);
+        border-radius: 50%;
+        background: var(--white);
+      }
+
+      .url {
+        flex: 1;
+        border: 2px solid var(--line);
+        background: var(--white);
+        padding: 5px 10px;
+        font-size: 13px;
+      }
+
+      .screen-body {
+        padding: 14px;
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 0.95fr 1.05fr;
+        gap: 14px;
+      }
+
+      .three {
+        display: grid;
+        grid-template-columns: 165px 1fr 210px;
+        gap: 12px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      .wire-box,
+      .field,
+      .terminal,
+      .json,
+      .table,
+      .sidebar,
+      .diagram-node,
+      .status-box {
+        border: 2px solid var(--line);
+        background: var(--white);
+        border-radius: 4px;
+        box-shadow: 2px 3px 0 rgba(0, 0, 0, 0.1);
+      }
+
+      .wire-box {
+        padding: 12px;
+      }
+
+      .wire-box.blue {
+        background: var(--blue);
+      }
+
+      .wire-box.green {
+        background: var(--green);
+      }
+
+      .wire-box.yellow {
+        background: var(--yellow);
+      }
+
+      .wire-box.red {
+        background: var(--red);
+      }
+
+      .wire-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 10px;
+        border-bottom: 2px solid var(--line);
+        padding-bottom: 7px;
+      }
+
+      .small {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .terminal {
+        background: #f4f4f4;
+        padding: 12px;
+        font-family: "Comic Sans MS", "Trebuchet MS", sans-serif;
+        font-size: 13px;
+        line-height: 1.55;
+        min-height: 225px;
+      }
+
+      .terminal .prompt {
+        color: #333;
+        font-weight: 700;
+      }
+
+      .terminal .ok {
+        color: #315c37;
+      }
+
+      .terminal .warn {
+        color: #7a4b00;
+      }
+
+      .json {
+        background: #fbfbfb;
+        padding: 10px;
+        font-size: 13px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .field {
+        display: grid;
+        grid-template-columns: 122px 1fr;
+        align-items: center;
+        min-height: 38px;
+        overflow: hidden;
+      }
+
+      .field label {
+        border-right: 2px solid var(--line);
+        height: 100%;
+        display: flex;
+        align-items: center;
+        padding: 0 9px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .field span {
+        padding: 8px 10px;
+        font-size: 13px;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        padding: 7px 12px;
+        font-size: 14px;
+        background: var(--white);
+      }
+
+      .button.primary {
+        background: var(--blue);
+        font-weight: 700;
+      }
+
+      .button.locked {
+        color: #6b6b6b;
+        background: #eeeeee;
+      }
+
+      .checkbox-list {
+        display: grid;
+        gap: 9px;
+      }
+
+      .checkbox {
+        display: grid;
+        grid-template-columns: 24px 1fr;
+        gap: 8px;
+        align-items: start;
+        font-size: 14px;
+      }
+
+      .box-mark {
+        width: 22px;
+        height: 22px;
+        border: 2px solid var(--line);
+        background: var(--white);
+        position: relative;
+      }
+
+      .box-mark.checked::after {
+        content: "";
+        position: absolute;
+        left: 4px;
+        top: 1px;
+        width: 11px;
+        height: 17px;
+        border-right: 3px solid var(--line);
+        border-bottom: 3px solid var(--line);
+        transform: rotate(38deg);
+      }
+
+      .tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .tab {
+        padding: 8px 10px;
+        font-size: 13px;
+        background: #f3f3f3;
+      }
+
+      .tab.active {
+        background: var(--yellow);
+        transform: translateY(2px);
+      }
+
+      .priority {
+        display: grid;
+        gap: 8px;
+      }
+
+      .layer {
+        display: grid;
+        grid-template-columns: 32px 1fr;
+        gap: 9px;
+        align-items: center;
+      }
+
+      .arrow {
+        height: 18px;
+        border-left: 2px solid var(--line);
+        margin-left: 15px;
+        position: relative;
+      }
+
+      .arrow::after {
+        content: "";
+        position: absolute;
+        bottom: -1px;
+        left: -6px;
+        width: 10px;
+        height: 10px;
+        border-right: 2px solid var(--line);
+        border-bottom: 2px solid var(--line);
+        transform: rotate(45deg);
+      }
+
+      .sidebar {
+        padding: 10px;
+        background: #f6f6f6;
+      }
+
+      .tool-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .tool-chip {
+        padding: 8px;
+        font-size: 13px;
+        background: var(--white);
+      }
+
+      .tool-chip.active {
+        background: var(--blue);
+        font-weight: 700;
+      }
+
+      .tool-chip.next {
+        background: var(--yellow);
+      }
+
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .pill {
+        padding: 5px 8px;
+        font-size: 12px;
+        background: var(--white);
+      }
+
+      .pill.good {
+        background: var(--green);
+      }
+
+      .pill.warn {
+        background: var(--yellow);
+      }
+
+      .pill.bad {
+        background: var(--red);
+      }
+
+      .editor {
+        min-height: 318px;
+      }
+
+      .table {
+        overflow: hidden;
+      }
+
+      .table-row {
+        display: grid;
+        grid-template-columns: 145px 1fr 88px;
+        border-bottom: 2px solid var(--line);
+        min-height: 40px;
+      }
+
+      .table-row:last-child {
+        border-bottom: 0;
+      }
+
+      .table-row > div {
+        padding: 8px;
+        border-right: 2px solid var(--line);
+        font-size: 13px;
+      }
+
+      .table-row > div:last-child {
+        border-right: 0;
+      }
+
+      .diagram {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        align-items: stretch;
+      }
+
+      .diagram-node {
+        min-height: 112px;
+        padding: 10px;
+        text-align: center;
+        display: grid;
+        align-content: center;
+        gap: 8px;
+        position: relative;
+      }
+
+      .diagram-node::after {
+        content: "";
+        position: absolute;
+        right: -12px;
+        top: 50%;
+        width: 12px;
+        border-top: 3px solid var(--line);
+      }
+
+      .diagram-node:last-child::after {
+        display: none;
+      }
+
+      .wire-footer {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .status-box {
+        min-height: 70px;
+        padding: 10px;
+        background: #fbfbfb;
+        font-size: 13px;
+        line-height: 1.35;
+      }
+
+      .wide {
+        grid-column: 1 / -1;
+      }
+
+      .mini-map {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .note-pin {
+        border: 2px dashed var(--line);
+        background: var(--yellow);
+        padding: 9px;
+        font-size: 13px;
+        line-height: 1.35;
+        transform: rotate(-1deg);
+      }
+
+      .caption {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      @media (max-width: 1150px) {
+        .cover,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .frame {
+          min-height: auto;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .page {
+          width: min(100vw - 20px, 720px);
+          margin-top: 12px;
+        }
+
+        .split,
+        .three,
+        .diagram,
+        .wire-footer,
+        .mini-map {
+          grid-template-columns: 1fr;
+        }
+
+        .field {
+          grid-template-columns: 1fr;
+        }
+
+        .field label {
+          border-right: 0;
+          border-bottom: 2px solid var(--line);
+          min-height: 30px;
+        }
+
+        .frame-head {
+          display: grid;
+        }
+
+        .frame-note {
+          width: auto;
+        }
+
+        .diagram-node::after {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="cover">
+        <div class="title-card">
+          <h1>sofarpc-cli 低保真原型图</h1>
+          <p class="subtitle">
+            基于当前仓库的 README、架构文档和 MCP 工具入口整理。原型聚焦 agent 使用 SOFARPC 泛化调用的核心路径，不假设已有 Web UI。
+          </p>
+          <div class="source-row" aria-label="analysis sources">
+            <span class="source-chip">README.md / README.zh-CN.md</span>
+            <span class="source-chip">docs/architecture.md</span>
+            <span class="source-chip">cmd/sofarpc-mcp</span>
+            <span class="source-chip">internal/mcp</span>
+            <span class="source-chip">cmd/sofarpc-mcp/skill</span>
+          </div>
+        </div>
+
+        <aside class="analysis-card">
+          <h3>项目分析结论</h3>
+          <div class="analysis-list">
+            <div>
+              <span class="sketch-number">1</span>
+              <span>产品形态是 agent-first 本地 MCP Server，核心不是人工点击 UI，而是让 Agent 调用六个 typed JSON tools。</span>
+            </div>
+            <div>
+              <span class="sketch-number">2</span>
+              <span>真实用户流程分两层：用户级 setup 注册 Claude Code / Codex；项目级 setup 写入 `.sofarpc/config*.json`。</span>
+            </div>
+            <div>
+              <span class="sketch-number">3</span>
+              <span>调用主路径是 open -> target -> describe -> invoke dry-run -> invoke/replay；失败时跟随 errcode hint 到 doctor。</span>
+            </div>
+            <div>
+              <span class="sketch-number">4</span>
+              <span>安全边界很重要：真实调用默认关闭，服务、target host、args 文件根目录和 response size 都有 guardrail。</span>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="grid" aria-label="wireframes">
+        <article class="frame">
+          <div class="frame-head">
+            <div>
+              <p class="frame-kicker">Screen 01</p>
+              <h2>用户级 Setup / 首次安装</h2>
+            </div>
+            <div class="frame-note">目标：把单个二进制注册到 Agent 客户端，并安装 embedded skill。</div>
+          </div>
+
+          <div class="screen">
+            <div class="browserbar">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <div class="url">sofarpc-mcp setup --scope=user</div>
+            </div>
+
+            <div class="screen-body split">
+              <div class="stack">
+                <div class="wire-box blue">
+                  <div class="wire-title">
+                    <h3>安装命令</h3>
+                    <span class="pill">fresh machine</span>
+                  </div>
+                  <div class="terminal">
+                    <span class="prompt">$</span> go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@latest<br />
+                    <span class="prompt">$</span> sofarpc-mcp version -json<br />
+                    { "version": "v0.1.x", "commit": "..." }<br />
+                    <span class="prompt">$</span> sofarpc-mcp setup --scope=user --dry-run<br />
+                    <span class="ok">[dry-run] would register MCP server</span><br />
+                    <span class="ok">[dry-run] would install sofarpc-invoke skill</span>
+                  </div>
+                </div>
+
+                <div class="wire-box">
+                  <div class="wire-title">
+                    <h3>注册目标</h3>
+                    <span class="small">默认两个客户端</span>
+                  </div>
+                  <div class="checkbox-list">
+                    <div class="checkbox"><span class="box-mark checked"></span><span>Claude Code: `~/.claude.json` / `mcpServers`</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>Codex: `~/.codex/config.toml` / `[mcp_servers.sofarpc]`</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>安装 `sofarpc-invoke` skill 到两个客户端</span></div>
+                    <div class="checkbox"><span class="box-mark"></span><span>只注册客户端，不安装 skill</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="stack">
+                <div class="wire-box">
+                  <div class="wire-title">
+                    <h3>Setup 参数面板</h3>
+                    <span class="pill warn">merge env</span>
+                  </div>
+                  <div class="form-grid">
+                    <div class="field"><label>command</label><span>/usr/local/bin/sofarpc-mcp</span></div>
+                    <div class="field"><label>project root</label><span>/abs/path/to/java-project</span></div>
+                    <div class="field"><label>direct url</label><span>bolt://dev-rpc.example.com:12200</span></div>
+                    <div class="field"><label>timeout</label><span>3000 ms</span></div>
+                    <div class="field"><label>allow invoke</label><span>false by default</span></div>
+                    <div class="field"><label>allowlist</label><span>com.foo.UserFacade, com.foo.OrderFacade</span></div>
+                  </div>
+                  <div class="button-row">
+                    <span class="button">dry-run</span>
+                    <span class="button primary">写入配置</span>
+                    <span class="button locked">replace env</span>
+                  </div>
+                </div>
+
+                <div class="wire-box green">
+                  <div class="wire-title">
+                    <h3>写入结果</h3>
+                    <span class="pill good">idempotent</span>
+                  </div>
+                  <div class="json">mcpServers.sofarpc = {
+  command: "/abs/path/to/sofarpc-mcp",
+  env: {
+    SOFARPC_PROJECT_ROOT: "...",
+    SOFARPC_DIRECT_URL: "bolt://..."
+  }
+}
+
+skill: sofarpc-invoke
+mode: baked by go:embed</div>
+                </div>
+
+                <div class="caption">此屏对应 `runUserSetup`：解析 binary、合并 SOFARPC env、注册 Claude Code / Codex，并安装嵌入式 skill。</div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="frame">
+          <div class="frame-head">
+            <div>
+              <p class="frame-kicker">Screen 02</p>
+              <h2>项目 Target 配置</h2>
+            </div>
+            <div class="frame-note">目标：为 Java 项目生成可共享或本地的 `.sofarpc` target 默认值。</div>
+          </div>
+
+          <div class="screen">
+            <div class="browserbar">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <div class="url">sofarpc-mcp setup --scope=project --project-root .</div>
+            </div>
+
+            <div class="screen-body split">
+              <div class="stack">
+                <div class="wire-box">
+                  <div class="wire-title">
+                    <h3>配置目标</h3>
+                    <span class="pill">exactly one</span>
+                  </div>
+                  <div class="tabs">
+                    <span class="tab active">local</span>
+                    <span class="tab">shared</span>
+                  </div>
+                  <div class="form-grid">
+                    <div class="field"><label>file</label><span>.sofarpc/config.local.json</span></div>
+                    <div class="field"><label>directUrl</label><span>bolt://dev-rpc.example.com:12200</span></div>
+                    <div class="field"><label>registry</label><span>empty because directUrl wins</span></div>
+                    <div class="field"><label>protocol</label><span>bolt</span></div>
+                    <div class="field"><label>serialization</label><span>hessian2</span></div>
+                    <div class="field"><label>uniqueId</label><span>dev</span></div>
+                    <div class="field"><label>timeouts</label><span>request 3000 / connect 1000</span></div>
+                  </div>
+                  <div class="button-row">
+                    <span class="button">preview JSON</span>
+                    <span class="button primary">write local config</span>
+                    <span class="button locked">force overwrite</span>
+                  </div>
+                </div>
+
+                <div class="wire-box yellow">
+                  <div class="wire-title">
+                    <h3>Local 文件规则</h3>
+                    <span class="pill warn">guardrail</span>
+                  </div>
+                  <div class="checkbox-list">
+                    <div class="checkbox"><span class="box-mark checked"></span><span>`.sofarpc/config.local.json` 加入 `.gitignore`</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>项目级 setup 拒绝 `--allow-invoke` 等真实调用开关</span></div>
+                    <div class="checkbox"><span class="box-mark"></span><span>项目配置里不要写 `mode`，由 endpoint 推导</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="stack">
+                <div class="wire-box blue">
+                  <div class="wire-title">
+                    <h3>Target 解析优先级</h3>
+                    <span class="small">runtime resolution</span>
+                  </div>
+                  <div class="priority">
+                    <div class="layer"><span class="sketch-number">1</span><span>单次 MCP input：directUrl / registryAddress</span></div>
+                    <div class="arrow"></div>
+                    <div class="layer"><span class="sketch-number">2</span><span>.sofarpc/config.local.json</span></div>
+                    <div class="arrow"></div>
+                    <div class="layer"><span class="sketch-number">3</span><span>.sofarpc/config.json</span></div>
+                    <div class="arrow"></div>
+                    <div class="layer"><span class="sketch-number">4</span><span>MCP env: SOFARPC_*</span></div>
+                    <div class="arrow"></div>
+                    <div class="layer"><span class="sketch-number">5</span><span>built-in defaults: bolt + hessian2</span></div>
+                  </div>
+                </div>
+
+                <div class="wire-box">
+                  <div class="wire-title">
+                    <h3>JSON 预览</h3>
+                    <span class="pill">no mode</span>
+                  </div>
+                  <div class="json">{
+  "directUrl": "bolt://dev-rpc.example.com:12200",
+  "protocol": "bolt",
+  "serialization": "hessian2",
+  "timeoutMs": 3000,
+  "connectTimeoutMs": 1000,
+  "uniqueId": "dev"
+}</div>
+                </div>
+
+                <div class="wire-box green">
+                  <div class="wire-title">
+                    <h3>Target 检查卡片</h3>
+                    <span class="pill good">sofarpc_target</span>
+                  </div>
+                  <div class="pill-row">
+                    <span class="pill good">mode: direct</span>
+                    <span class="pill good">probe: reachable</span>
+                    <span class="pill">source: local config</span>
+                    <span class="pill">connectTimeoutMs: 1000</span>
+                  </div>
+                </div>
+
+                <div class="caption">此屏对应 `runProjectSetup` 和 target precedence：项目只写 target defaults，不写真实调用授权。</div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="frame">
+          <div class="frame-head">
+            <div>
+              <p class="frame-kicker">Screen 03</p>
+              <h2>Agent 调用工作台</h2>
+            </div>
+            <div class="frame-note">目标：把六个 MCP tools 变成可见的调用链、JSON skeleton 和 dry-run plan。</div>
+          </div>
+
+          <div class="screen">
+            <div class="browserbar">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <div class="url">MCP Session: ws_... / project: java-facade</div>
+            </div>
+
+            <div class="screen-body three">
+              <aside class="sidebar">
+                <h3>Tool Flow</h3>
+                <div class="tool-list" style="margin-top: 10px">
+                  <span class="tool-chip active">1. sofarpc_open</span>
+                  <span class="tool-chip active">2. sofarpc_target</span>
+                  <span class="tool-chip next">3. sofarpc_describe</span>
+                  <span class="tool-chip">4. sofarpc_invoke dryRun</span>
+                  <span class="tool-chip">5. sofarpc_invoke real</span>
+                  <span class="tool-chip">6. sofarpc_replay</span>
+                  <span class="tool-chip">fallback: doctor</span>
+                </div>
+              </aside>
+
+              <section class="stack">
+                <div class="wire-box blue">
+                  <div class="wire-title">
+                    <h3>Facade 请求</h3>
+                    <span class="pill">contract-assisted</span>
+                  </div>
+                  <div class="form-grid">
+                    <div class="field"><label>service</label><span>com.foo.OrderFacade</span></div>
+                    <div class="field"><label>method</label><span>query</span></div>
+                    <div class="field"><label>types</label><span>["com.foo.OrderQueryRequest"] from describe</span></div>
+                  </div>
+                </div>
+
+                <div class="wire-box editor">
+                  <div class="wire-title">
+                    <h3>JSON Skeleton 编辑器</h3>
+                    <span class="pill good">sourcecontract</span>
+                  </div>
+                  <div class="json">[
+  {
+    "orderId": 42,
+    "includeItems": true,
+    "status": "ACTIVE",
+    "amount": 1000.5
+  }
+]
+
+plan normalization preview:
+- inject root @type
+- wrap BigDecimal
+- wrap enum object</div>
+                  <div class="button-row">
+                    <span class="button">describe</span>
+                    <span class="button primary">dry-run invoke</span>
+                    <span class="button locked">real invoke locked</span>
+                  </div>
+                </div>
+
+                <div class="wire-box green">
+                  <div class="wire-title">
+                    <h3>Dry-run Plan 摘要</h3>
+                    <span class="pill good">replayable</span>
+                  </div>
+                  <div class="diagram">
+                    <div class="diagram-node"><strong>BuildPlan</strong><span class="small">target + contract + args</span></div>
+                    <div class="diagram-node"><strong>Normalize</strong><span class="small">@type / enum / BigDecimal</span></div>
+                    <div class="diagram-node"><strong>Capture</strong><span class="small">session.lastPlan</span></div>
+                  </div>
+                </div>
+              </section>
+
+              <aside class="stack">
+                <div class="wire-box">
+                  <div class="wire-title">
+                    <h3>Workspace</h3>
+                    <span class="pill">open</span>
+                  </div>
+                  <div class="pill-row">
+                    <span class="pill good">directInvoke</span>
+                    <span class="pill good">describe</span>
+                    <span class="pill good">replay</span>
+                  </div>
+                </div>
+
+                <div class="wire-box">
+                  <div class="wire-title">
+                    <h3>Target</h3>
+                    <span class="pill good">direct</span>
+                  </div>
+                  <div class="small">bolt://dev-rpc.example.com:12200</div>
+                  <div class="small">protocol: bolt / hessian2</div>
+                  <div class="small">targetAppName: optional</div>
+                </div>
+
+                <div class="wire-box yellow">
+                  <div class="wire-title">
+                    <h3>Guardrails</h3>
+                    <span class="pill warn">runtime policy</span>
+                  </div>
+                  <div class="checkbox-list">
+                    <div class="checkbox"><span class="box-mark"></span><span>SOFARPC_ALLOW_INVOKE</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>SOFARPC_ALLOWED_SERVICES</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>SOFARPC_MAX_RESPONSE_BYTES</span></div>
+                  </div>
+                </div>
+
+                <div class="note-pin">Agent 应先检查 dry-run plan，再决定是否请求真实调用。</div>
+              </aside>
+            </div>
+          </div>
+        </article>
+
+        <article class="frame">
+          <div class="frame-head">
+            <div>
+              <p class="frame-kicker">Screen 04</p>
+              <h2>Replay / Doctor 诊断</h2>
+            </div>
+            <div class="frame-note">目标：失败时不解析文案，直接跟随稳定 errcode 和 nextTool。</div>
+          </div>
+
+          <div class="screen">
+            <div class="browserbar">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <div class="url">error recovery: hint.nextTool</div>
+            </div>
+
+            <div class="screen-body stack">
+              <div class="wire-box red">
+                <div class="wire-title">
+                  <h3>当前失败</h3>
+                  <span class="pill bad">target.unreachable</span>
+                </div>
+                <div class="json">{
+  "code": "target.unreachable",
+  "phase": "invoke",
+  "message": "direct dial failed",
+  "hint": {
+    "nextTool": "sofarpc_target",
+    "nextArgs": { "explain": true },
+    "reason": "configured target could not be reached"
+  }
+}</div>
+              </div>
+
+              <div class="split">
+                <div class="wire-box">
+                  <div class="wire-title">
+                    <h3>Doctor 检查</h3>
+                    <span class="pill">structured checks</span>
+                  </div>
+                  <div class="table">
+                    <div class="table-row"><div>target</div><div>directUrl parsed, TCP probe failed</div><div>fail</div></div>
+                    <div class="table-row"><div>invoke-policy</div><div>real invoke disabled unless opt-in</div><div>warn</div></div>
+                    <div class="table-row"><div>contract</div><div>source scan attached, describe available</div><div>ok</div></div>
+                    <div class="table-row"><div>sessions</div><div>lastPlan retained under byte limit</div><div>ok</div></div>
+                  </div>
+                  <div class="button-row">
+                    <span class="button primary">run sofarpc_doctor</span>
+                    <span class="button">open target trace</span>
+                  </div>
+                </div>
+
+                <div class="wire-box blue">
+                  <div class="wire-title">
+                    <h3>Replay 面板</h3>
+                    <span class="pill good">same execution path</span>
+                  </div>
+                  <div class="tabs">
+                    <span class="tab active">by sessionId</span>
+                    <span class="tab">literal payload</span>
+                  </div>
+                  <div class="form-grid">
+                    <div class="field"><label>sessionId</label><span>ws_20260519_...</span></div>
+                    <div class="field"><label>dryRun</label><span>true for inspection</span></div>
+                    <div class="field"><label>plan version</label><span>sofarpc.invoke.plan/v1</span></div>
+                  </div>
+                  <div class="button-row">
+                    <span class="button">dry-run replay</span>
+                    <span class="button primary">replay real call</span>
+                    <span class="button locked">blocked by policy</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="wire-footer">
+                <div class="status-box">
+                  <strong>Next step</strong><br />
+                  `sofarpc_target {"explain": true}`，确认哪个 layer 贡献了 target。
+                </div>
+                <div class="status-box">
+                  <strong>Agent rule</strong><br />
+                  跟随 `hint.nextTool`，不要从错误文案里重新推导恢复路径。
+                </div>
+                <div class="status-box">
+                  <strong>Safety</strong><br />
+                  真实 invoke/replay 共用执行策略，target override 需要显式授权。
+                </div>
+              </div>
+
+              <div class="wire-box green">
+                <div class="wire-title">
+                  <h3>诊断闭环</h3>
+                  <span class="pill good">recoverable</span>
+                </div>
+                <div class="diagram">
+                  <div class="diagram-node"><strong>Error</strong><span class="small">stable errcode</span></div>
+                  <div class="diagram-node"><strong>Hint</strong><span class="small">nextTool + nextArgs</span></div>
+                  <div class="diagram-node"><strong>Tool</strong><span class="small">target / describe / doctor</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
