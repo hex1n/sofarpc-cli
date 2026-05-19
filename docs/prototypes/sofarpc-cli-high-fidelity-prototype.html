@@ -1,0 +1,1156 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sofarpc-cli 高保真原型图</title>
+    <style>
+      :root {
+        --bg: #eef1f4;
+        --surface: #ffffff;
+        --surface-2: #f7f9fb;
+        --surface-3: #edf3f7;
+        --ink: #18212f;
+        --muted: #687386;
+        --line: #d5dce5;
+        --line-strong: #b8c2cf;
+        --teal: #087d75;
+        --teal-soft: #d9f3ef;
+        --blue: #2d6cdf;
+        --blue-soft: #e4edff;
+        --green: #16824d;
+        --green-soft: #e2f5e9;
+        --amber: #b87503;
+        --amber-soft: #fff2d8;
+        --red: #bf3434;
+        --red-soft: #ffe2e0;
+        --purple: #6654c0;
+        --purple-soft: #eeeaff;
+        --shadow: 0 22px 60px rgba(18, 29, 47, 0.16);
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 20% 0%, rgba(8, 125, 117, 0.08), transparent 30%),
+          radial-gradient(circle at 82% 4%, rgba(184, 117, 3, 0.08), transparent 26%),
+          var(--bg);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          "PingFang SC",
+          "Microsoft YaHei",
+          sans-serif;
+        letter-spacing: 0;
+      }
+
+      .board {
+        width: 1540px;
+        margin: 0 auto;
+        padding: 34px 28px 48px;
+      }
+
+      .board-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 24px;
+        margin-bottom: 22px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 30px;
+        line-height: 1.18;
+        font-weight: 740;
+      }
+
+      h2 {
+        font-size: 20px;
+        line-height: 1.2;
+        font-weight: 720;
+      }
+
+      h3 {
+        font-size: 14px;
+        line-height: 1.2;
+        font-weight: 710;
+      }
+
+      .subtitle {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 28px;
+        padding: 5px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .badge.good {
+        color: var(--green);
+        background: var(--green-soft);
+        border-color: #b9e4c8;
+      }
+
+      .badge.warn {
+        color: var(--amber);
+        background: var(--amber-soft);
+        border-color: #f0d39f;
+      }
+
+      .badge.blue {
+        color: var(--blue);
+        background: var(--blue-soft);
+        border-color: #c5d6ff;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .app {
+        overflow: hidden;
+        border: 1px solid var(--line-strong);
+        border-radius: 16px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .topbar {
+        height: 64px;
+        display: grid;
+        grid-template-columns: 260px 1fr auto;
+        align-items: center;
+        gap: 20px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.88);
+        padding: 0 22px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        min-width: 0;
+      }
+
+      .logo {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        color: #fff;
+        background: linear-gradient(135deg, var(--teal), #23a79a);
+        font-weight: 800;
+      }
+
+      .brand-title {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .brand-title strong {
+        font-size: 14px;
+      }
+
+      .brand-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .search {
+        height: 38px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-2);
+        padding: 0 12px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .button {
+        height: 36px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--ink);
+        padding: 0 12px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .button.primary {
+        border-color: #066a63;
+        color: #fff;
+        background: var(--teal);
+      }
+
+      .button.danger {
+        border-color: #efbebc;
+        color: var(--red);
+        background: var(--red-soft);
+      }
+
+      .button.disabled {
+        color: #98a2b3;
+        background: #f0f2f5;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 238px 1fr;
+        min-height: 1260px;
+      }
+
+      .sidebar {
+        border-right: 1px solid var(--line);
+        background: #f6f8fb;
+        padding: 18px 14px;
+      }
+
+      .nav-group {
+        display: grid;
+        gap: 7px;
+        margin-bottom: 22px;
+      }
+
+      .nav-title {
+        padding: 0 10px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 760;
+        text-transform: uppercase;
+      }
+
+      .nav-item {
+        min-height: 38px;
+        display: grid;
+        grid-template-columns: 24px 1fr auto;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        padding: 7px 9px;
+        color: #334155;
+        font-size: 13px;
+      }
+
+      .nav-item.active {
+        border-color: #bfd9d5;
+        color: #064f49;
+        background: var(--teal-soft);
+        font-weight: 720;
+      }
+
+      .icon {
+        width: 22px;
+        height: 22px;
+        display: grid;
+        place-items: center;
+        border-radius: 6px;
+        background: #e6ebf1;
+        color: #596579;
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .nav-item.active .icon {
+        background: #0d8a80;
+        color: #fff;
+      }
+
+      .count {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .sidebar-card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        padding: 12px;
+      }
+
+      .sidebar-card .label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 720;
+        text-transform: uppercase;
+      }
+
+      .sidebar-card .value {
+        margin-top: 8px;
+        font-size: 13px;
+        font-weight: 690;
+        overflow-wrap: anywhere;
+      }
+
+      .progress {
+        margin-top: 12px;
+        height: 8px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e7ebf0;
+      }
+
+      .progress span {
+        display: block;
+        width: 68%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--teal), var(--blue));
+      }
+
+      .main {
+        background: var(--surface-2);
+        padding: 20px;
+      }
+
+      .workspace-header {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 18px;
+        align-items: start;
+        margin-bottom: 16px;
+      }
+
+      .crumbs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+
+      .workspace-title {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .workspace-title h2 {
+        font-size: 24px;
+      }
+
+      .status-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .metric {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        padding: 14px;
+      }
+
+      .metric-label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .metric-value {
+        margin-top: 8px;
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 21px;
+        font-weight: 760;
+      }
+
+      .metric-value span {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 560;
+      }
+
+      .content-grid {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr 330px;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        overflow: hidden;
+      }
+
+      .panel-header {
+        min-height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid var(--line);
+        padding: 13px 14px;
+      }
+
+      .panel-body {
+        padding: 14px;
+      }
+
+      .tabs {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #f1f4f7;
+        padding: 3px;
+      }
+
+      .tab {
+        min-height: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        padding: 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .tab.active {
+        color: var(--ink);
+        background: var(--surface);
+        box-shadow: 0 1px 2px rgba(18, 29, 47, 0.1);
+      }
+
+      .form {
+        display: grid;
+        gap: 12px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .field label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .input {
+        min-height: 40px;
+        display: flex;
+        align-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 0 11px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+
+      .input.muted {
+        color: var(--muted);
+        background: var(--surface-2);
+      }
+
+      .split-fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .code {
+        min-height: 342px;
+        border: 1px solid #cdd5df;
+        border-radius: 8px;
+        background: #0f172a;
+        color: #d6e2ff;
+        overflow: hidden;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.58;
+      }
+
+      .code-head {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 0 11px;
+        background: #111827;
+        color: #9fb1ce;
+        font-size: 11px;
+      }
+
+      pre {
+        margin: 0;
+        padding: 14px;
+        white-space: pre-wrap;
+      }
+
+      .code .key {
+        color: #93c5fd;
+      }
+
+      .code .string {
+        color: #b7f7cf;
+      }
+
+      .code .number {
+        color: #fde68a;
+      }
+
+      .code .comment {
+        color: #94a3b8;
+      }
+
+      .plan-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .plan-row {
+        display: grid;
+        grid-template-columns: 26px 1fr auto;
+        gap: 10px;
+        align-items: start;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 10px;
+      }
+
+      .step-mark {
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border-radius: 999px;
+        color: #fff;
+        background: var(--teal);
+        font-size: 12px;
+        font-weight: 780;
+      }
+
+      .plan-row strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .plan-row span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .timeline {
+        display: grid;
+        gap: 10px;
+      }
+
+      .event {
+        display: grid;
+        grid-template-columns: 12px 1fr;
+        gap: 10px;
+      }
+
+      .event-pin {
+        width: 12px;
+        height: 12px;
+        margin-top: 4px;
+        border: 2px solid var(--surface);
+        border-radius: 50%;
+        background: var(--blue);
+        box-shadow: 0 0 0 2px #b8ccf8;
+      }
+
+      .event strong {
+        display: block;
+        font-size: 12px;
+      }
+
+      .event span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      .aside-stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .policy-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .policy {
+        display: grid;
+        grid-template-columns: 36px 1fr;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: var(--surface-2);
+      }
+
+      .switch {
+        width: 34px;
+        height: 20px;
+        border-radius: 999px;
+        background: #c7d0dc;
+        padding: 3px;
+      }
+
+      .switch::after {
+        content: "";
+        display: block;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+      }
+
+      .switch.on {
+        background: var(--teal);
+      }
+
+      .switch.on::after {
+        margin-left: 14px;
+      }
+
+      .policy strong {
+        display: block;
+        font-size: 12px;
+      }
+
+      .policy span {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .health {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+
+      .health-card {
+        min-height: 82px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: var(--surface-2);
+      }
+
+      .health-card strong {
+        display: block;
+        font-size: 12px;
+      }
+
+      .health-card span {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      .health-card.ok {
+        border-color: #b9e4c8;
+        background: var(--green-soft);
+      }
+
+      .health-card.warn {
+        border-color: #f0d39f;
+        background: var(--amber-soft);
+      }
+
+      .health-card.bad {
+        border-color: #f0b5b3;
+        background: var(--red-soft);
+      }
+
+      .lower-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 16px;
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      .table th,
+      .table td {
+        border-bottom: 1px solid var(--line);
+        padding: 10px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .table th {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 720;
+        text-transform: uppercase;
+      }
+
+      .table tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .kbd {
+        display: inline-flex;
+        border: 1px solid var(--line-strong);
+        border-radius: 5px;
+        background: var(--surface-2);
+        padding: 2px 6px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 8px;
+      }
+
+      .flow-step {
+        min-height: 86px;
+        display: grid;
+        gap: 8px;
+        align-content: center;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-2);
+        padding: 10px;
+        text-align: center;
+      }
+
+      .flow-step.active {
+        border-color: #acd9d4;
+        background: var(--teal-soft);
+      }
+
+      .flow-step.warn {
+        border-color: #f0d39f;
+        background: var(--amber-soft);
+      }
+
+      .flow-step strong {
+        font-size: 12px;
+      }
+
+      .flow-step span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="board">
+      <header class="board-header">
+        <div>
+          <h1>sofarpc-cli 高保真原型图</h1>
+          <p class="subtitle">从 MCP Server 的实际使用链路抽象成控制台界面：配置、描述、计划、执行、重放、诊断。</p>
+        </div>
+        <div class="meta">
+          <span class="badge blue"><span class="dot"></span>Desktop 1440</span>
+          <span class="badge good"><span class="dot"></span>Direct + BOLT + Hessian2</span>
+          <span class="badge warn"><span class="dot"></span>Real invoke locked</span>
+        </div>
+      </header>
+
+      <section class="app" aria-label="high fidelity prototype">
+        <div class="topbar">
+          <div class="brand">
+            <div class="logo">S</div>
+            <div class="brand-title">
+              <strong>SOFARPC Invoke Console</strong>
+              <span>sofarpc-mcp · local MCP server</span>
+            </div>
+          </div>
+          <div class="search">⌘K · service, method, sessionId, errcode</div>
+          <div class="top-actions">
+            <span class="badge good"><span class="dot"></span>ws_20260519_f81a</span>
+            <button class="button">Dry-run</button>
+            <button class="button primary">Describe</button>
+          </div>
+        </div>
+
+        <div class="layout">
+          <aside class="sidebar">
+            <nav class="nav-group">
+              <div class="nav-title">Workspace</div>
+              <div class="nav-item active"><span class="icon">O</span><span>Open</span><span class="count">ready</span></div>
+              <div class="nav-item"><span class="icon">T</span><span>Target</span><span class="count">direct</span></div>
+              <div class="nav-item"><span class="icon">D</span><span>Describe</span><span class="count">692</span></div>
+              <div class="nav-item"><span class="icon">I</span><span>Invoke</span><span class="count">dry</span></div>
+            </nav>
+
+            <nav class="nav-group">
+              <div class="nav-title">Recovery</div>
+              <div class="nav-item"><span class="icon">R</span><span>Replay</span><span class="count">v1</span></div>
+              <div class="nav-item"><span class="icon">!</span><span>Doctor</span><span class="count">1 warn</span></div>
+              <div class="nav-item"><span class="icon">P</span><span>Policy</span><span class="count">locked</span></div>
+            </nav>
+
+            <div class="sidebar-card">
+              <div class="label">Project root</div>
+              <div class="value">/workspace/java-facade-demo</div>
+              <div class="progress"><span></span></div>
+            </div>
+
+            <div class="sidebar-card" style="margin-top: 14px">
+              <div class="label">Resolved target</div>
+              <div class="value">bolt://dev-rpc.example.com:12200</div>
+            </div>
+          </aside>
+
+          <section class="main">
+            <div class="workspace-header">
+              <div>
+                <div class="crumbs">Projects / java-facade-demo / com.foo.OrderFacade</div>
+                <div class="workspace-title">
+                  <h2>OrderFacade.query 调用工作台</h2>
+                  <span class="badge good"><span class="dot"></span>contract attached</span>
+                  <span class="badge blue"><span class="dot"></span>sourcecontract</span>
+                </div>
+              </div>
+              <div class="top-actions">
+                <button class="button">Target trace</button>
+                <button class="button danger">Real invoke disabled</button>
+              </div>
+            </div>
+
+            <div class="status-strip">
+              <div class="metric">
+                <div class="metric-label">Indexed classes</div>
+                <div class="metric-value">692 <span>source scan</span></div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Target probe</div>
+                <div class="metric-value">18ms <span>reachable</span></div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Session plan</div>
+                <div class="metric-value">42KB <span>captured</span></div>
+              </div>
+              <div class="metric">
+                <div class="metric-label">Response cap</div>
+                <div class="metric-value">16MiB <span>policy</span></div>
+              </div>
+            </div>
+
+            <div class="content-grid">
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>调用输入</h3>
+                  <div class="tabs">
+                    <span class="tab active">Contract</span>
+                    <span class="tab">Trusted</span>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <div class="form">
+                    <div class="field">
+                      <label>Service</label>
+                      <div class="input">com.foo.OrderFacade</div>
+                    </div>
+                    <div class="split-fields">
+                      <div class="field">
+                        <label>Method</label>
+                        <div class="input">query</div>
+                      </div>
+                      <div class="field">
+                        <label>Version</label>
+                        <div class="input muted">2.0</div>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label>Param types</label>
+                      <div class="input">["com.foo.OrderQueryRequest"]</div>
+                    </div>
+                    <div class="code">
+                      <div class="code-head">
+                        <span>args.json</span>
+                        <span>describe skeleton</span>
+                      </div>
+                      <pre>[
+  {
+    <span class="key">"orderId"</span>: <span class="number">42</span>,
+    <span class="key">"includeItems"</span>: true,
+    <span class="key">"status"</span>: <span class="string">"ACTIVE"</span>,
+    <span class="key">"amount"</span>: <span class="number">1000.5</span>
+  }
+]
+
+<span class="comment">// plan will inject @type, wrap enum and BigDecimal</span></pre>
+                    </div>
+                    <div class="top-actions">
+                      <button class="button primary">Build dry-run plan</button>
+                      <button class="button">Load @file</button>
+                      <button class="button disabled">Send real invoke</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>Dry-run Plan</h3>
+                  <span class="badge good"><span class="dot"></span>replayable</span>
+                </div>
+                <div class="panel-body">
+                  <div class="plan-list">
+                    <div class="plan-row">
+                      <span class="step-mark">1</span>
+                      <div>
+                        <strong>Resolve target</strong>
+                        <span>local config wins, direct mode, bolt/hessian2</span>
+                      </div>
+                      <span class="badge good">ok</span>
+                    </div>
+                    <div class="plan-row">
+                      <span class="step-mark">2</span>
+                      <div>
+                        <strong>Select overload</strong>
+                        <span>exact paramTypes match OrderQueryRequest</span>
+                      </div>
+                      <span class="badge good">ok</span>
+                    </div>
+                    <div class="plan-row">
+                      <span class="step-mark">3</span>
+                      <div>
+                        <strong>Normalize args</strong>
+                        <span>@type, enum object, BigDecimal value wrapper</span>
+                      </div>
+                      <span class="badge blue">diff</span>
+                    </div>
+                    <div class="plan-row">
+                      <span class="step-mark">4</span>
+                      <div>
+                        <strong>Capture session</strong>
+                        <span>lastPlan retained for ws_20260519_f81a</span>
+                      </div>
+                      <span class="badge good">ok</span>
+                    </div>
+                  </div>
+
+                  <div class="code" style="margin-top: 14px; min-height: 330px">
+                    <div class="code-head">
+                      <span>plan.preview.json</span>
+                      <span>schemaVersion: sofarpc.invoke.plan/v1</span>
+                    </div>
+                    <pre>{
+  <span class="key">"service"</span>: <span class="string">"com.foo.OrderFacade"</span>,
+  <span class="key">"method"</span>: <span class="string">"query"</span>,
+  <span class="key">"contractSource"</span>: <span class="string">"sourcecontract"</span>,
+  <span class="key">"target"</span>: {
+    <span class="key">"mode"</span>: <span class="string">"direct"</span>,
+    <span class="key">"protocol"</span>: <span class="string">"bolt"</span>,
+    <span class="key">"serialization"</span>: <span class="string">"hessian2"</span>
+  }
+}</pre>
+                  </div>
+                </div>
+              </div>
+
+              <aside class="aside-stack">
+                <div class="panel">
+                  <div class="panel-header">
+                    <h3>执行策略</h3>
+                    <span class="badge warn"><span class="dot"></span>guarded</span>
+                  </div>
+                  <div class="panel-body">
+                    <div class="policy-grid">
+                      <div class="policy">
+                        <span class="switch"></span>
+                        <div><strong>ALLOW_INVOKE</strong><span>real invoke blocked</span></div>
+                      </div>
+                      <div class="policy">
+                        <span class="switch on"></span>
+                        <div><strong>ALLOWED_SERVICES</strong><span>OrderFacade allowed</span></div>
+                      </div>
+                      <div class="policy">
+                        <span class="switch"></span>
+                        <div><strong>TARGET_OVERRIDE</strong><span>per-call directUrl blocked</span></div>
+                      </div>
+                      <div class="policy">
+                        <span class="switch on"></span>
+                        <div><strong>MAX_RESPONSE_BYTES</strong><span>16 MiB cap</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-header">
+                    <h3>Doctor</h3>
+                    <button class="button">Run checks</button>
+                  </div>
+                  <div class="panel-body">
+                    <div class="health">
+                      <div class="health-card ok"><strong>Target</strong><span>direct target resolved and reachable</span></div>
+                      <div class="health-card warn"><strong>Invoke policy</strong><span>real call requires opt-in</span></div>
+                      <div class="health-card ok"><strong>Contract</strong><span>describe available</span></div>
+                      <div class="health-card ok"><strong>Session</strong><span>lastPlan retained</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-header">
+                    <h3>Recovery hint</h3>
+                    <span class="badge blue">target.unreachable</span>
+                  </div>
+                  <div class="panel-body">
+                    <div class="timeline">
+                      <div class="event">
+                        <span class="event-pin"></span>
+                        <div><strong>nextTool</strong><span><span class="kbd">sofarpc_target</span> with explain=true</span></div>
+                      </div>
+                      <div class="event">
+                        <span class="event-pin" style="background: var(--amber); box-shadow: 0 0 0 2px #f0d39f"></span>
+                        <div><strong>reason</strong><span>configured target could not be reached</span></div>
+                      </div>
+                      <div class="event">
+                        <span class="event-pin" style="background: var(--green); box-shadow: 0 0 0 2px #b9e4c8"></span>
+                        <div><strong>replay</strong><span>dry-run by sessionId before real execution</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <div class="lower-grid">
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>MCP 工具链</h3>
+                  <span class="badge good">stable errcode</span>
+                </div>
+                <div class="panel-body">
+                  <div class="flow">
+                    <div class="flow-step active"><strong>open</strong><span>session</span></div>
+                    <div class="flow-step active"><strong>target</strong><span>probe</span></div>
+                    <div class="flow-step active"><strong>describe</strong><span>skeleton</span></div>
+                    <div class="flow-step active"><strong>invoke</strong><span>dryRun</span></div>
+                    <div class="flow-step"><strong>replay</strong><span>payload</span></div>
+                    <div class="flow-step warn"><strong>doctor</strong><span>hint</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>Target precedence</h3>
+                  <span class="badge blue">effective source</span>
+                </div>
+                <div class="panel-body">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>Layer</th>
+                        <th>Value</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>per-call input</td>
+                        <td>empty</td>
+                        <td><span class="badge">skipped</span></td>
+                      </tr>
+                      <tr>
+                        <td>config.local.json</td>
+                        <td>bolt://dev-rpc.example.com:12200</td>
+                        <td><span class="badge good">selected</span></td>
+                      </tr>
+                      <tr>
+                        <td>config.json</td>
+                        <td>registryAddress configured</td>
+                        <td><span class="badge">shadowed</span></td>
+                      </tr>
+                      <tr>
+                        <td>MCP env</td>
+                        <td>SOFARPC_TIMEOUT_MS=3000</td>
+                        <td><span class="badge blue">merged</span></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
