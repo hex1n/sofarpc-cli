@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -27,14 +26,10 @@ type ReplayOutput struct {
 func registerReplay(server *sdkmcp.Server, opts Options) {
 	sessions := opts.Sessions
 	sources := opts.TargetSources
-	inputSchema, err := jsonschema.For[ReplayInput](nil)
-	if err != nil {
-		panic(fmt.Sprintf("infer replay input schema: %v", err))
-	}
 	server.AddTool(&sdkmcp.Tool{
 		Name:        "sofarpc_replay",
 		Description: "Replay a captured invocation. Accepts a payload from sofarpc_invoke's dryRun output, or a sessionId to look up a captured plan. Replay requires a supported plan schemaVersion.",
-		InputSchema: inputSchema,
+		InputSchema: replayInputSchema(),
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 		in, payload, err := decodeReplayInput(req)
 		if err != nil {

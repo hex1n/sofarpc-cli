@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
@@ -38,14 +37,10 @@ type InvokeOutput struct {
 func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
-	inputSchema, err := jsonschema.For[InvokeInput](nil)
-	if err != nil {
-		panic(fmt.Sprintf("infer invoke input schema: %v", err))
-	}
 	server.AddTool(&sdkmcp.Tool{
 		Name:        "sofarpc_invoke",
-		Description: "Plan and execute a SOFARPC generic invocation. args accepts inline JSON or an @<path> JSON file rooted at SOFARPC_ARGS_FILE_ROOT or the project root. Single-parameter methods may pass the value directly; multi-parameter methods must pass a JSON array. dryRun=true returns the plan without executing the request. Real invokes require SOFARPC_ALLOW_INVOKE=true.",
-		InputSchema: inputSchema,
+		Description: "Plan and execute a SOFARPC generic invocation. args is a JSON array argument vector; single-parameter methods still use a one-item array. dryRun=true returns the plan without executing the request. Real invokes require SOFARPC_ALLOW_INVOKE=true.",
+		InputSchema: invokeInputSchema(),
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 		store := holder.Get()
 		decoded, args, err := decodeInvokeInput(req)
@@ -136,7 +131,7 @@ func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
 		return InvokeInput{}, nil, errcode.New(errcode.ArgsInvalid, "invoke",
 			fmt.Sprintf("parse args as JSON: %v", err)).
 			WithHint("sofarpc_describe", describeHintArgs(raw.Service, raw.Method),
-				"send args as valid JSON or use @<path>")
+				"send args as a JSON array")
 	}
 	return InvokeInput{
 		Service:          raw.Service,
