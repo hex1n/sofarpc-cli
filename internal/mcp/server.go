@@ -103,12 +103,11 @@ type DescribeInput struct {
 
 // --- sofarpc_invoke (see invoke.go) ----------------------------------------
 
-// InvokeInput is the input shape for sofarpc_invoke. Args is any so the
-// agent can send a JSON array inline, or an "@<path>" string pointing at
-// a file that contains a JSON array of the same shape. Anything else is
-// rejected as input.args-invalid. Stdin ("-") is not accepted — the MCP
-// server's stdin carries the transport, not user data. Version and
-// TargetAppName are optional transport hints for direct invoke paths.
+// InvokeInput is the input shape for sofarpc_invoke. Args is any because
+// runtime decoding preserves legacy input forms, but the public MCP schema
+// advertises a JSON array argument vector. Invalid shapes are rejected as
+// input.args-invalid. Version and TargetAppName are optional transport hints
+// for direct invoke paths.
 type InvokeInput struct {
 	Service          string   `json:"service,omitempty"`
 	Method           string   `json:"method,omitempty"`

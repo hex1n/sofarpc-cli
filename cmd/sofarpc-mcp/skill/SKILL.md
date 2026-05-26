@@ -66,9 +66,8 @@ Use per-call target/version/timeout fields only when the user wants an override.
 The executable mainline is direct + BOLT + Hessian2; `registryAddress` is
 inspectable but not executable.
 
-Prefer inline JSON `args`. Use `args: "@payloads/order-query.json"` only for
-large/reusable payloads or a user-provided file. `@file` is rooted at
-`SOFARPC_ARGS_FILE_ROOT` or the project root.
+Always send `args` as an inline JSON array. Single-parameter methods still use
+a one-item array.
 
 ## Replay
 

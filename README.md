@@ -184,22 +184,16 @@ export SOFARPC_ALLOW_INVOKE=true
 ```
 
 Use that only for development or test targets. For safer local setups,
-restrict callable services, bound `@file` inputs, and cap how much plan data
-sessions retain for `sessionId` replay. Direct BOLT responses are also capped
-before the client allocates the response body:
+restrict callable services and cap how much plan data sessions retain for
+`sessionId` replay. Direct BOLT responses are also capped before the client
+allocates the response body:
 
 ```sh
 export SOFARPC_ALLOWED_SERVICES=com.foo.UserFacade,com.foo.OrderFacade
 export SOFARPC_ALLOWED_TARGET_HOSTS=127.0.0.1,dev-rpc.example.com:12200
-export SOFARPC_ARGS_FILE_ROOT=/abs/path/to/project
-export SOFARPC_ARGS_FILE_MAX_BYTES=1048576
 export SOFARPC_SESSION_PLAN_MAX_BYTES=1048576
 export SOFARPC_MAX_RESPONSE_BYTES=16777216
 ```
-
-`@file` arguments are resolved inside `SOFARPC_ARGS_FILE_ROOT` when set,
-otherwise inside `SOFARPC_PROJECT_ROOT`. Files outside that root are
-rejected after symlink resolution. The default file-size limit is 1 MiB.
 
 For non-dry-run direct calls, the default policy only executes the resolved
 project/env target from `.sofarpc/config.local.json`, `.sofarpc/config.json`, or
