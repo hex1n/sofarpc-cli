@@ -42,6 +42,10 @@ type Options struct {
 	Contract          contract.Store
 	ContractLoadError error
 	ContractLoader    func() (contract.Store, error)
+	// ProjectContractLoader loads a contract store for the resolved
+	// projectRoot of a tool call or session. When set, project/session-scoped
+	// calls use it instead of the process-global ContractLoader.
+	ProjectContractLoader func(projectRoot string) (contract.Store, error)
 }
 
 // New returns an MCP server with the six sofarpc tools registered.
@@ -50,6 +54,8 @@ func New(opts Options) *sdkmcp.Server {
 		opts.Sessions = NewSessionStore()
 	}
 	holder := newContractHolder(opts.Contract, loadErrorMessage(opts.ContractLoadError), opts.ContractLoader)
+	holder.SetDefaultRoot(opts.TargetSources.ProjectRoot)
+	holder.SetProjectLoader(opts.ProjectContractLoader)
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{
 		Name:    serverName,
 		Version: normalizeServerVersion(opts.ServerVersion),
@@ -96,9 +102,12 @@ type OpenInput struct {
 // DescribeInput is the input shape for sofarpc_describe. Types is the
 // paramType list the agent may supply to disambiguate overloads.
 type DescribeInput struct {
-	Service string   `json:"service,omitempty"`
-	Method  string   `json:"method,omitempty"`
-	Types   []string `json:"types,omitempty"`
+	Cwd       string   `json:"cwd,omitempty"`
+	Project   string   `json:"project,omitempty"`
+	SessionID string   `json:"sessionId,omitempty"`
+	Service   string   `json:"service,omitempty"`
+	Method    string   `json:"method,omitempty"`
+	Types     []string `json:"types,omitempty"`
 }
 
 // --- sofarpc_invoke (see invoke.go) ----------------------------------------
@@ -109,6 +118,8 @@ type DescribeInput struct {
 // input.args-invalid. Version and TargetAppName are optional transport hints
 // for direct invoke paths.
 type InvokeInput struct {
+	Cwd              string   `json:"cwd,omitempty"`
+	Project          string   `json:"project,omitempty"`
 	Service          string   `json:"service,omitempty"`
 	Method           string   `json:"method,omitempty"`
 	Types            []string `json:"types,omitempty"`
@@ -120,6 +131,8 @@ type InvokeInput struct {
 	RegistryProtocol string   `json:"registryProtocol,omitempty"`
 	TimeoutMS        int      `json:"timeoutMs,omitempty"`
 	DryRun           bool     `json:"dryRun,omitempty"`
+	Trusted          bool     `json:"trusted,omitempty"`
+	ContractMode     string   `json:"contractMode,omitempty"`
 	// SessionID, when set, tags the resulting plan onto the session so
 	// sofarpc_replay can replay it without re-sending the payload.
 	SessionID string `json:"sessionId,omitempty"`
@@ -127,11 +140,13 @@ type InvokeInput struct {
 
 // --- sofarpc_replay (see replay.go) ----------------------------------------
 
-// ReplayInput is the input shape for sofarpc_replay. Exactly one of
-// SessionID and Payload should be set — the handler errors otherwise.
-// DryRun mirrors sofarpc_invoke.
+// ReplayInput is the input shape for sofarpc_replay. SessionID can either
+// select the captured session plan or, when Payload is present, provide the
+// project/safety context for that literal plan. DryRun mirrors sofarpc_invoke.
 type ReplayInput struct {
 	SessionID string `json:"sessionId,omitempty"`
+	Cwd       string `json:"cwd,omitempty"`
+	Project   string `json:"project,omitempty"`
 	Payload   any    `json:"payload,omitempty"`
 	DryRun    bool   `json:"dryRun,omitempty"`
 }
@@ -141,5 +156,8 @@ type ReplayInput struct {
 // DoctorInput is the input shape for sofarpc_doctor. Service is optional:
 // when set, doctor biases target resolution toward a per-service uniqueId.
 type DoctorInput struct {
-	Service string `json:"service,omitempty"`
+	Cwd       string `json:"cwd,omitempty"`
+	Project   string `json:"project,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
+	Service   string `json:"service,omitempty"`
 }

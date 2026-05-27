@@ -21,6 +21,9 @@ const (
 	envAllowedServices     = invoke.EnvAllowedServices
 	envAllowTargetOverride = invoke.EnvAllowTargetOverride
 	envAllowedTargetHosts  = invoke.EnvAllowedTargetHosts
+	contractModeAuto       = "auto"
+	contractModeStrict     = "strict"
+	contractModeTrusted    = "trusted"
 )
 
 // InvokeOutput is the structured payload for sofarpc_invoke. Ok=true
@@ -42,15 +45,33 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		Description: "Plan and execute a SOFARPC generic invocation. args is a JSON array argument vector; single-parameter methods still use a one-item array. dryRun=true returns the plan without executing the request. Real invokes require SOFARPC_ALLOW_INVOKE=true.",
 		InputSchema: invokeInputSchema(),
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
-		store := holder.Get()
 		decoded, args, err := decodeInvokeInput(req)
 		if err != nil {
 			return invokeToolResult(InvokeOutput{Error: asErrcodeError(err)}, errorText("invoke failed", err), true), nil
 		}
-		toolSources := sourcesForSession(sources, sessions, decoded.SessionID)
+		contractMode, err := resolveContractMode(decoded)
+		if err != nil {
+			ecerr := errcode.New(errcode.ArgsInvalid, "invoke", err.Error())
+			return invokeToolResult(InvokeOutput{Error: ecerr}, errorText("invoke failed", ecerr), true), nil
+		}
+		scope, err := resolveToolScope(sources, sessions, decoded.SessionID, decoded.Cwd, decoded.Project)
+		if err != nil {
+			ecerr := errcode.New(errcode.ArgsInvalid, "invoke", err.Error())
+			return invokeToolResult(InvokeOutput{Error: ecerr}, errorText("invoke failed", ecerr), true), nil
+		}
+		toolSources := scope.Sources
 		args, err = normalizeArgs(decoded.Service, decoded.Method, args, toolSources.ProjectRoot)
 		if err != nil {
 			return invokeToolResult(InvokeOutput{Error: asErrcodeError(err)}, errorText("invoke failed", err), true), nil
+		}
+		contractSnapshot := holder.ForProject(scope.ProjectRoot)
+		store := contractSnapshot.store
+		if contractMode == contractModeStrict && store == nil {
+			ecerr := strictContractUnavailableError(contractSnapshot)
+			return invokeToolResult(InvokeOutput{Error: ecerr}, errorText("invoke failed", ecerr), true), nil
+		}
+		if contractMode == contractModeTrusted {
+			store = nil
 		}
 
 		plan, err := invoke.BuildPlan(invoke.Input{
@@ -68,6 +89,23 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 				TimeoutMS:        decoded.TimeoutMS,
 			},
 		}, store, toolSources)
+		if err != nil && shouldAutoTrustedFallback(decoded, args, err, contractMode) {
+			plan, err = invoke.BuildPlan(invoke.Input{
+				Service:       decoded.Service,
+				Method:        decoded.Method,
+				ParamTypes:    decoded.Types,
+				Args:          args,
+				Version:       decoded.Version,
+				TargetAppName: decoded.TargetAppName,
+				Target: target.Input{
+					Service:          decoded.Service,
+					DirectURL:        decoded.DirectURL,
+					RegistryAddress:  decoded.RegistryAddress,
+					RegistryProtocol: decoded.RegistryProtocol,
+					TimeoutMS:        decoded.TimeoutMS,
+				},
+			}, nil, toolSources)
+		}
 		if err != nil {
 			out := InvokeOutput{Error: asErrcodeError(err)}
 			return invokeToolResult(out, errorText("invoke failed", err), true), nil
@@ -101,6 +139,8 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 }
 
 type rawInvokeInput struct {
+	Cwd              string          `json:"cwd,omitempty"`
+	Project          string          `json:"project,omitempty"`
 	Service          string          `json:"service,omitempty"`
 	Method           string          `json:"method,omitempty"`
 	Types            []string        `json:"types,omitempty"`
@@ -112,6 +152,8 @@ type rawInvokeInput struct {
 	RegistryProtocol string          `json:"registryProtocol,omitempty"`
 	TimeoutMS        int             `json:"timeoutMs,omitempty"`
 	DryRun           bool            `json:"dryRun,omitempty"`
+	Trusted          bool            `json:"trusted,omitempty"`
+	ContractMode     string          `json:"contractMode,omitempty"`
 	SessionID        string          `json:"sessionId,omitempty"`
 }
 
@@ -134,6 +176,8 @@ func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
 				"send args as a JSON array")
 	}
 	return InvokeInput{
+		Cwd:              raw.Cwd,
+		Project:          raw.Project,
 		Service:          raw.Service,
 		Method:           raw.Method,
 		Types:            raw.Types,
@@ -144,6 +188,8 @@ func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
 		RegistryProtocol: raw.RegistryProtocol,
 		TimeoutMS:        raw.TimeoutMS,
 		DryRun:           raw.DryRun,
+		Trusted:          raw.Trusted,
+		ContractMode:     raw.ContractMode,
 		SessionID:        raw.SessionID,
 	}, args, nil
 }
@@ -198,17 +244,6 @@ func capturePlanForSession(sessions *SessionStore, sessionID string, plan invoke
 	return &capture
 }
 
-func sourcesForSession(base target.Sources, sessions *SessionStore, sessionID string) target.Sources {
-	if sessions == nil || strings.TrimSpace(sessionID) == "" {
-		return base
-	}
-	session, ok := sessions.Get(sessionID)
-	if !ok || strings.TrimSpace(session.ProjectRoot) == "" {
-		return base
-	}
-	return target.ProjectSources(session.ProjectRoot, base.Env)
-}
-
 func diagnosticsWithCapture(base map[string]any, capture *PlanCaptureResult) map[string]any {
 	if capture == nil || capture.Captured {
 		return base
@@ -219,6 +254,62 @@ func diagnosticsWithCapture(base map[string]any, capture *PlanCaptureResult) map
 	}
 	out["sessionPlanCapture"] = capture
 	return out
+}
+
+func resolveContractMode(in InvokeInput) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(in.ContractMode))
+	if mode == "" {
+		mode = contractModeAuto
+	}
+	switch mode {
+	case contractModeAuto, contractModeStrict, contractModeTrusted:
+	default:
+		return "", fmt.Errorf("contractMode must be one of auto, strict, or trusted; got %q", in.ContractMode)
+	}
+	if in.Trusted {
+		if mode == contractModeStrict {
+			return "", fmt.Errorf("trusted=true conflicts with contractMode=strict")
+		}
+		return contractModeTrusted, nil
+	}
+	return mode, nil
+}
+
+func shouldAutoTrustedFallback(in InvokeInput, args any, err error, mode string) bool {
+	if mode != contractModeAuto {
+		return false
+	}
+	if !hasCompleteTrustedTuple(in, args) {
+		return false
+	}
+	var ecerr *errcode.Error
+	if !errors.As(err, &ecerr) {
+		return false
+	}
+	return ecerr.Code == errcode.ContractUnresolvable
+}
+
+func hasCompleteTrustedTuple(in InvokeInput, args any) bool {
+	return strings.TrimSpace(in.Service) != "" &&
+		strings.TrimSpace(in.Method) != "" &&
+		len(in.Types) > 0 &&
+		args != nil
+}
+
+func strictContractUnavailableError(snapshot contractSnapshot) *errcode.Error {
+	msg := "contractMode=strict requires contract information for this workspace"
+	if strings.TrimSpace(snapshot.root) != "" {
+		msg = fmt.Sprintf("%s (contractRoot=%s)", msg, snapshot.root)
+	}
+	if strings.TrimSpace(snapshot.loadError) != "" {
+		msg = fmt.Sprintf("%s: %s", msg, snapshot.loadError)
+	}
+	err := errcode.New(errcode.FacadeNotConfigured, "invoke", msg)
+	args := map[string]any{}
+	if strings.TrimSpace(snapshot.root) != "" {
+		args["project"] = snapshot.root
+	}
+	return err.WithHint("sofarpc_doctor", args, "doctor reports contract availability for the selected project/session")
 }
 
 // describeHintArgs builds the NextArgs payload for a describe hint. We

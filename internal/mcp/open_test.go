@@ -135,6 +135,34 @@ public interface Svc {
 	}
 }
 
+func TestOpen_LoadsContractForResolvedProject(t *testing.T) {
+	dir := t.TempDir()
+	store := contract.NewInMemoryStore(javamodel.Class{
+		FQN:     "com.foo.Svc",
+		Kind:    javamodel.KindInterface,
+		Methods: []javamodel.Method{{Name: "ping", ParamTypes: []string{"java.lang.String"}}},
+	})
+
+	out := callOpen(t, Options{
+		ProjectContractLoader: func(projectRoot string) (contract.Store, error) {
+			if projectRoot != dir {
+				t.Fatalf("loader projectRoot: got %q want %q", projectRoot, dir)
+			}
+			return store, nil
+		},
+	}, map[string]any{"cwd": dir})
+
+	if !out.Capabilities.Describe {
+		t.Fatal("open should advertise describe when project contract loads")
+	}
+	if !out.Contract.Attached {
+		t.Fatal("contract should be attached")
+	}
+	if out.Contract.ContractRoot != dir {
+		t.Fatalf("contractRoot: got %q want %q", out.Contract.ContractRoot, dir)
+	}
+}
+
 func TestOpen_InvalidProjectReturnsError(t *testing.T) {
 	server := New(Options{})
 	ctx := context.Background()

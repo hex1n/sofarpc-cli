@@ -14,7 +14,7 @@
 | `sofarpc_target` | 解析目标并探测可达性。 |
 | `sofarpc_describe` | 当存在 contract information 时，解析重载并生成 JSON skeleton。 |
 | `sofarpc_invoke` | 构建 plan 并执行调用。`dryRun=true` 只返回 plan。 |
-| `sofarpc_replay` | 用 `sessionId` 或完整 `payload` 重放一次 plan。 |
+| `sofarpc_replay` | 用 `sessionId` 或完整 `payload` 加 project/session 安全上下文重放 plan。 |
 | `sofarpc_doctor` | 对 target、workspace 状态和 invoke 前提做结构化诊断。 |
 
 所有失败都会返回稳定的 `errcode.Code`，并且可能带有结构化的
@@ -140,8 +140,10 @@ target 解析优先级是：
 ```
 
 `sofarpc-mcp` 启动和注册 tools 时不会扫描 `.java` 源码。source-contract
-信息会在第一次有 tool 需要 contract store 时惰性加载，所以大项目不会拖慢
-MCP startup。隐藏目录、测试目录和常见构建产物目录会被跳过。
+信息会在第一次有 tool 需要 contract store 时按已解析 project root 惰性加载，
+随后按项目缓存，所以大项目不会拖慢 MCP startup。`project` / `cwd` 会显式
+选择项目；否则 `sessionId` 会复用 `sofarpc_open` 打开的项目。隐藏目录、
+测试目录和常见构建产物目录会被跳过。
 
 ### 手写客户端配置
 
@@ -167,9 +169,10 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
 
 1. `sofarpc_open`
 2. `sofarpc_target`（可带 `project` 或 `cwd` 检查另一个项目）
-3. 如果存在 contract information，则 `sofarpc_describe`
-4. `sofarpc_invoke`
-5. `sofarpc_replay`
+3. 如果存在 contract information，则带 `sessionId` 调 `sofarpc_describe`
+4. 带 `sessionId` 调 `sofarpc_invoke`
+5. `sofarpc_replay` 使用 `sessionId`；如果传完整 `payload`，也可同时传
+   `sessionId` 作为安全上下文
 6. invoke 无法继续时调用 `sofarpc_doctor`
 
 已安装的 `sofarpc-invoke` skill 把这条链条变成机器可读的 playbook，
@@ -186,15 +189,19 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
   "version": "2.0",
   "targetAppName": "foo-app",
   "directUrl": "bolt://host:12200",
+  "sessionId": "ws_...",
   "dryRun": true
 }
 ```
 
+- `project` / `cwd` 可以显式选择 project root；否则 `sessionId` 提供
+  project-scoped target config 和 contract store。
 - `version` 会覆盖本次调用的 SOFA service version。
 - `targetAppName` 会设置 direct transport 的 target app header。
 - `directUrl` / `registryAddress` 是单次覆盖；否则先使用项目配置，再使用 MCP env。
 - `dryRun=true` 返回的 plan 可以直接交给 `sofarpc_replay`；replay 也接受包含
-  `plan` 字段的 dry-run 输出对象。
+  `plan` 字段的 dry-run 输出对象。literal payload replay 可以同时传
+  `sessionId`、`project` 或 `cwd`，让执行策略使用目标项目的安全上下文。
 - 真实 `sofarpc_invoke` 和 `sofarpc_replay` 都需要 `SOFARPC_ALLOW_INVOKE=true`；
   可用 `SOFARPC_ALLOWED_SERVICES` 限制允许调用的 service FQN。
 - 非 dry-run direct 调用默认只执行项目配置或 MCP env 解析出的 direct target；如果要允许
@@ -255,6 +262,13 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
 这种情况下 plan 会标记为 `contractSource: "trusted"`，不会做重载消歧，也不会
 自动做类型归一化或生成 skeleton。远端如果需要 `@type`、`BigDecimal` 等
 Java 特定形状，调用方需要自己显式传入。
+
+用 `contractMode` 可以显式控制 contract 行为：
+
+- `auto`（默认）：优先使用项目 contract；如果 contract 无法解析方法，且
+  已提供完整 `service` / `method` / `types` / `args`，自动退到 trusted plan。
+- `strict`：必须使用项目 contract，绝不退到 trusted。
+- `trusted`：忽略 contract，完全信任调用方提供的 tuple。
 
 ## 测试与发布
 

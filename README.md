@@ -14,7 +14,7 @@ Agent-first local MCP server for SOFARPC generic invoke.
 | `sofarpc_target` | Resolve the effective target and probe reachability. |
 | `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. |
 | `sofarpc_invoke` | Build a plan and execute it. `dryRun=true` returns the plan only. |
-| `sofarpc_replay` | Re-run a captured plan from `sessionId` or a literal `payload`. |
+| `sofarpc_replay` | Re-run a captured plan from `sessionId` or a literal `payload` with project/session safety context. |
 | `sofarpc_doctor` | Run structured diagnostics across target, workspace state, and invoke prerequisites. |
 
 Every failure returns a stable `errcode.Code` and may include a structured
@@ -217,8 +217,10 @@ default 16 MiB limit.
 
 `sofarpc-mcp` does not scan `.java` files during MCP startup. It loads
 source-contract information lazily when a tool first needs the contract
-store, so tool registration stays fast even for large workspaces. Hidden
-directories, test trees, and common build-output directories are skipped.
+store for the resolved project root, then caches that project-scoped store.
+`project` / `cwd` inputs select the project explicitly; otherwise a
+`sessionId` reuses the project opened by `sofarpc_open`. Hidden directories,
+test trees, and common build-output directories are skipped.
 
 ### Hand-written client config
 
@@ -244,9 +246,9 @@ Codex: `~/.codex/config.toml` under `[mcp_servers.sofarpc]`):
 
 1. `sofarpc_open`
 2. `sofarpc_target` (optionally with `project` or `cwd` to inspect another project)
-3. `sofarpc_describe` if contract information is available
-4. `sofarpc_invoke`
-5. `sofarpc_replay`
+3. `sofarpc_describe` with the `sessionId` if contract information is available
+4. `sofarpc_invoke` with the `sessionId`
+5. `sofarpc_replay` with the `sessionId`, or `payload` plus `sessionId` for safety context
 6. `sofarpc_doctor` when invoke cannot proceed
 
 The installed `sofarpc-invoke` skill turns this flow into a machine-
@@ -265,16 +267,21 @@ source.
   "version": "2.0",
   "targetAppName": "foo-app",
   "directUrl": "bolt://host:12200",
+  "sessionId": "ws_...",
   "dryRun": true
 }
 ```
 
+- `project` / `cwd` can explicitly select a project root; otherwise `sessionId`
+  supplies the project-scoped target config and contract store.
 - `version` overrides the SOFA service version for this call.
 - `targetAppName` sets the direct-transport target app header.
 - `directUrl` and `registryAddress` are per-call overrides; otherwise project
   config wins, then MCP env.
 - `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later;
   replay accepts either that plan or a dry-run output object containing `plan`.
+  Literal payload replay may include `sessionId`, `project`, or `cwd` so
+  execution policy uses the intended project safety context.
 - Real invocation requires `SOFARPC_ALLOW_INVOKE=true`; keep the default disabled
   when you only want planning, skeletons, and diagnostics.
 - Non-dry-run direct calls default to the resolved project/env direct target;
@@ -338,6 +345,14 @@ In this mode the plan is marked `contractSource: "trusted"`. No overload
 disambiguation, automatic type normalization, or skeleton generation happens.
 If the remote side needs `@type`, `BigDecimal`, or other Java-specific payload
 shapes, the caller must send them explicitly.
+
+Use `contractMode` to make contract behavior explicit:
+
+- `auto` (default): use the project contract when available; if the contract
+  cannot resolve the method and `service` / `method` / `types` / `args` are all
+  supplied, fall back to trusted planning.
+- `strict`: require the project contract and never fall back to trusted mode.
+- `trusted`: ignore the contract and require the caller-supplied tuple.
 
 ## Testing
 

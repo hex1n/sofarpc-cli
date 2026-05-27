@@ -132,6 +132,56 @@ public class Resp {
 	}
 }
 
+func TestDescribe_UsesSessionProjectContract(t *testing.T) {
+	projectA := t.TempDir()
+	projectB := t.TempDir()
+	storeB := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.ProjectBFacade",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"com.foo.ProjectBRequest"}},
+			},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.ProjectBRequest",
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "id", JavaType: "java.lang.Long"},
+			},
+		},
+	)
+	sessions := NewSessionStore()
+	session := sessions.Create(Session{ProjectRoot: projectB})
+
+	out := callDescribe(t, Options{
+		Sessions: sessions,
+		ProjectContractLoader: func(projectRoot string) (contract.Store, error) {
+			if projectRoot == projectA {
+				return contract.NewInMemoryStore(), nil
+			}
+			if projectRoot == projectB {
+				return storeB, nil
+			}
+			t.Fatalf("unexpected projectRoot %q", projectRoot)
+			return nil, nil
+		},
+	}, map[string]any{
+		"sessionId": session.ID,
+		"service":   "com.foo.ProjectBFacade",
+		"method":    "query",
+	})
+	if out.Error != nil {
+		t.Fatalf("unexpected error: %+v", out.Error)
+	}
+	if out.Diagnostics.Contract.ContractRoot != projectB {
+		t.Fatalf("contractRoot: got %q want %q", out.Diagnostics.Contract.ContractRoot, projectB)
+	}
+	if len(out.Skeleton) != 1 {
+		t.Fatalf("skeleton entries: got %d", len(out.Skeleton))
+	}
+}
+
 func TestDescribe_AmbiguousReturnsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(javamodel.Class{
 		FQN:  "com.foo.Svc",
