@@ -34,6 +34,7 @@ public final class WireFixtureGenerator {
         Files.createDirectories(outputDir);
         writeResponseSuccessFixture(outputDir);
         writeResponseErrorFixture(outputDir);
+        writeRemoteExceptionFixture(outputDir);
     }
 
     private static void writeResponseSuccessFixture(Path outputDir) throws IOException {
@@ -93,6 +94,22 @@ public final class WireFixtureGenerator {
                         "isError", true,
                         "errorMsg", "fixture error",
                         "responseProps", object("traceId", "fixture-error-trace"))));
+    }
+
+    private static void writeRemoteExceptionFixture(Path outputDir) throws IOException {
+        IllegalStateException exception = new IllegalStateException("fixture remote failure");
+        exception.setStackTrace(new StackTraceElement[0]);
+
+        writeFixture(outputDir, "response-remote-exception.json", object(
+                "name", "Java-encoded remote exception throwable",
+                "description", "Top-level throwable content decoded by Go as a remote exception",
+                "kind", "response-content",
+                "contentHex", hex(encode(exception)),
+                "want", object(
+                        "isError", true,
+                        "errorMsg", "fixture remote failure",
+                        "appResponseType", "java.lang.IllegalStateException",
+                        "remoteExceptionType", "java.lang.IllegalStateException")));
     }
 
     private static Map<String, Object> fixtureItemJson() {

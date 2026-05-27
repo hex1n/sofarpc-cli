@@ -6,7 +6,6 @@ import (
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
-	"github.com/hex1n/sofarpc-cli/internal/core/workspace"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -50,50 +49,44 @@ type ContractBanner struct {
 }
 
 func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
-	envCfg := opts.TargetSources.Env
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_open",
+		Title:       "Open SOFARPC Workspace",
 		Description: "Open a sofarpc workspace. Returns the resolved target, a capability banner, and a session id the agent can reuse in subsequent calls.",
-	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in OpenInput) (*sdkmcp.CallToolResult, OpenOutput, error) {
-		ws, err := workspace.Resolve(workspace.Input{
-			Cwd:     in.Cwd,
-			Project: in.Project,
-		})
+		Annotations: localReadOnlyAnnotations("Open SOFARPC Workspace"),
+	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in OpenInput) (*sdkmcp.CallToolResult, OpenOutput, error) {
+		notifyToolProgress(ctx, req, 0, 3, "resolving workspace")
+		toolCtx, err := resolveOpenContext(opts.TargetSources, holder, in.Cwd, in.Project)
 		if err != nil {
-			return &sdkmcp.CallToolResult{
-				IsError: true,
-				Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: err.Error()}},
-			}, OpenOutput{}, nil
+			out := OpenOutput{}
+			return toolResult(out, err.Error(), true), out, nil
 		}
 
-		contractSnapshot := holder.ForProject(ws.ProjectRoot)
-		report := target.Resolve(target.Input{}, ws.Sources(envCfg))
+		notifyToolProgress(ctx, req, 1, 3, "resolving target")
+		report := target.Resolve(target.Input{}, toolCtx.Sources)
 
 		session := sessions.Create(Session{
-			ProjectRoot: ws.ProjectRoot,
+			ProjectRoot: toolCtx.ProjectRoot,
 			Target:      report.Target,
 		})
 
 		out := OpenOutput{
 			SessionID:    session.ID,
-			ProjectRoot:  ws.ProjectRoot,
+			ProjectRoot:  toolCtx.ProjectRoot,
 			Target:       report.Target,
 			Layers:       report.Layers,
 			ConfigErrors: report.ConfigErrors,
 			Capabilities: Capabilities{
 				DirectInvoke: true,
-				Describe:     contractSnapshot.store != nil,
+				Describe:     toolCtx.Contract.store != nil,
 				Replay:       sessions != nil,
 			},
-			Contract: buildContractBanner(contractSnapshot.store, contractSnapshot.loadError, contractSnapshot.root),
+			Contract: toolCtx.ContractBanner,
 		}
 
-		result := &sdkmcp.CallToolResult{
-			Content: []sdkmcp.Content{
-				&sdkmcp.TextContent{Text: summarizeOpen(out)},
-			},
-		}
+		notifyToolProgress(ctx, req, 3, 3, "workspace opened")
+		result := toolResultWithLinks(out, summarizeOpen(out), false, openResourceLinks(session.ID)...)
 		return result, out, nil
 	})
 }

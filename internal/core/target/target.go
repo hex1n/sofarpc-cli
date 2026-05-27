@@ -1,14 +1,11 @@
 package target
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/hex1n/sofarpc-cli/internal/core/projectconfig"
 )
 
 const (
@@ -49,18 +46,6 @@ type Config struct {
 	UniqueID         string `json:"uniqueId,omitempty"`
 	TimeoutMS        int    `json:"timeoutMs,omitempty"`
 	ConnectTimeoutMS int    `json:"connectTimeoutMs,omitempty"`
-}
-
-type projectConfig struct {
-	DirectURL        string    `json:"directUrl,omitempty"`
-	RegistryAddress  string    `json:"registryAddress,omitempty"`
-	RegistryProtocol string    `json:"registryProtocol,omitempty"`
-	Protocol         string    `json:"protocol,omitempty"`
-	Serialization    string    `json:"serialization,omitempty"`
-	UniqueID         string    `json:"uniqueId,omitempty"`
-	TimeoutMS        int       `json:"timeoutMs,omitempty"`
-	ConnectTimeoutMS int       `json:"connectTimeoutMs,omitempty"`
-	AllowedServices  *[]string `json:"allowedServices,omitempty"`
 }
 
 // Sources is the ambient, already-materialised config surface available
@@ -243,47 +228,28 @@ func ProjectSources(projectRoot string, env Config) Sources {
 	if projectRoot == "" {
 		return src
 	}
-	project, projectPolicy, ok, err := loadProjectConfigFile(filepath.Join(projectRoot, ".sofarpc", "config.json"))
-	if err != nil {
-		src.ConfigErrors = append(src.ConfigErrors, ConfigError{Path: filepath.Join(projectRoot, ".sofarpc", "config.json"), Error: err.Error()})
-	} else if ok {
-		src.Project = project
-		src.ProjectPolicy = projectPolicy
-	}
-	local, localPolicy, ok, err := loadProjectConfigFile(filepath.Join(projectRoot, ".sofarpc", "config.local.json"))
-	if err != nil {
-		src.ConfigErrors = append(src.ConfigErrors, ConfigError{Path: filepath.Join(projectRoot, ".sofarpc", "config.local.json"), Error: err.Error()})
-	} else if ok {
-		src.ProjectLocal = local
-		src.ProjectLocalPolicy = localPolicy
-	}
+	applyProjectConfig(&src, projectconfig.KindShared)
+	applyProjectConfig(&src, projectconfig.KindLocal)
 	return src
 }
 
-func loadProjectConfigFile(path string) (Config, PolicyConfig, bool, error) {
-	body, err := os.ReadFile(path)
+func applyProjectConfig(src *Sources, kind projectconfig.Kind) {
+	loaded, err := projectconfig.Read(src.ProjectRoot, kind)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return Config{}, PolicyConfig{}, false, nil
-		}
-		return Config{}, PolicyConfig{}, false, err
+		src.ConfigErrors = append(src.ConfigErrors, ConfigError{Path: loaded.Path, Error: err.Error()})
+		return
 	}
-	var cfg projectConfig
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&cfg); err != nil {
-		return Config{}, PolicyConfig{}, true, err
+	if !loaded.Exists {
+		return
 	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			err = fmt.Errorf("contains multiple JSON values")
-		}
-		return Config{}, PolicyConfig{}, true, err
+	switch kind {
+	case projectconfig.KindShared:
+		src.Project = configFromProjectConfig(loaded.Config)
+		src.ProjectPolicy = policyFromProjectConfig(loaded)
+	case projectconfig.KindLocal:
+		src.ProjectLocal = configFromProjectConfig(loaded.Config)
+		src.ProjectLocalPolicy = policyFromProjectConfig(loaded)
 	}
-	if strings.TrimSpace(cfg.DirectURL) != "" && strings.TrimSpace(cfg.RegistryAddress) != "" {
-		return Config{}, PolicyConfig{}, true, fmt.Errorf("directUrl and registryAddress are mutually exclusive")
-	}
-	return normalizeConfig(configFromProjectConfig(cfg)), policyFromProjectConfig(cfg), true, nil
 }
 
 // AllowedServices returns the effective project-scoped service allowlist.
@@ -400,8 +366,8 @@ func shadowedEndpointValues(winnerName string, layers []layerConfig) []TraceValu
 	return out
 }
 
-func configFromProjectConfig(cfg projectConfig) Config {
-	return Config{
+func configFromProjectConfig(cfg projectconfig.Config) Config {
+	return normalizeConfig(Config{
 		DirectURL:        cfg.DirectURL,
 		RegistryAddress:  cfg.RegistryAddress,
 		RegistryProtocol: cfg.RegistryProtocol,
@@ -410,28 +376,17 @@ func configFromProjectConfig(cfg projectConfig) Config {
 		UniqueID:         cfg.UniqueID,
 		TimeoutMS:        cfg.TimeoutMS,
 		ConnectTimeoutMS: cfg.ConnectTimeoutMS,
-	}
+	})
 }
 
-func policyFromProjectConfig(cfg projectConfig) PolicyConfig {
-	if cfg.AllowedServices == nil {
+func policyFromProjectConfig(loaded projectconfig.ReadResult) PolicyConfig {
+	if !loaded.AllowedServicesSet {
 		return PolicyConfig{}
 	}
 	return PolicyConfig{
-		AllowedServices:    normalizeStringList(*cfg.AllowedServices),
+		AllowedServices:    append([]string(nil), loaded.Config.AllowedServices...),
 		AllowedServicesSet: true,
 	}
-}
-
-func normalizeStringList(values []string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			out = append(out, value)
-		}
-	}
-	return out
 }
 
 func configFromInput(in Input) Config {

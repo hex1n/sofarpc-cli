@@ -43,9 +43,12 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_doctor",
+		Title:       "Diagnose SOFARPC Workspace",
 		Description: "Run end-to-end self-diagnosis: target resolution, reachability, workspace state, and session readiness.",
-	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DoctorInput) (*sdkmcp.CallToolResult, DoctorOutput, error) {
-		scope, err := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
+		Annotations: networkReadOnlyAnnotations("Diagnose SOFARPC Workspace"),
+	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in DoctorInput) (*sdkmcp.CallToolResult, DoctorOutput, error) {
+		notifyToolProgress(ctx, req, 0, 3, "resolving diagnostic context")
+		toolCtx, err := resolveToolContext(sources, sessions, holder, in.SessionID, in.Cwd, in.Project)
 		if err != nil {
 			out := DoctorOutput{
 				Checks: []DoctorCheck{{
@@ -59,37 +62,29 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			}
 			out.Ok = false
 			out.Summary = summarizeDoctor(out.Checks)
-			return &sdkmcp.CallToolResult{
-				IsError: true,
-				Content: []sdkmcp.Content{
-					&sdkmcp.TextContent{Text: out.Summary},
-				},
-			}, out, nil
+			return toolResult(out, out.Summary, true), out, nil
 		}
-		contractSnapshot := holder.ForProject(scope.ProjectRoot)
+		notifyToolProgress(ctx, req, 1, 3, "running diagnostic checks")
 		checks := make([]DoctorCheck, 4)
 		var wg sync.WaitGroup
 		wg.Add(4)
-		go func() { defer wg.Done(); checks[0] = checkTarget(in, scope.Sources) }()
+		go func() { defer wg.Done(); checks[0] = checkTarget(in, toolCtx.Sources) }()
 		go func() {
 			defer wg.Done()
-			checks[1] = checkContract(contractSnapshot, scope.ProjectRoot, holder.ProjectCacheDiagnostics())
+			checks[1] = checkContract(toolCtx.Contract, toolCtx.ProjectRoot, holder.ProjectCacheDiagnostics())
 		}()
 		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
-		go func() { defer wg.Done(); checks[3] = checkInvokePolicy(in, scope.Sources) }()
+		go func() { defer wg.Done(); checks[3] = checkInvokePolicy(in, toolCtx.Sources) }()
 		wg.Wait()
 		out := DoctorOutput{Checks: checks}
 		out.Ok = allOk(out.Checks)
 		out.Summary = summarizeDoctor(out.Checks)
 
-		result := &sdkmcp.CallToolResult{
-			Content: []sdkmcp.Content{
-				&sdkmcp.TextContent{Text: out.Summary},
-			},
-		}
+		result := toolResult(out, out.Summary, false)
 		if !out.Ok {
 			result.IsError = true
 		}
+		notifyToolProgress(ctx, req, 3, 3, "diagnostics complete")
 		return result, out, nil
 	})
 }

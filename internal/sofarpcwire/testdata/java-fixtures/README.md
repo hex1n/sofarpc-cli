@@ -12,6 +12,14 @@ mvn -q -Dsofarpc.version=5.4.0 dependency:build-classpath -Dmdep.outputFile=targ
 java -cp "target/classes:$(cat target/classpath.txt)" com.example.WireFixtureVerifier ../golden
 ```
 
+The repository helper wraps the same sequence and also runs the Go golden
+fixture gate:
+
+```sh
+bash scripts/verify-wire-fixtures.sh
+bash scripts/verify-wire-fixtures.sh --sofarpc-version 5.8.0
+```
+
 To regenerate the committed baseline fixtures:
 
 ```sh

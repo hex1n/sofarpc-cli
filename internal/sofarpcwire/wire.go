@@ -20,9 +20,11 @@ const (
 )
 
 type RequestSpec struct {
-	Service       string
-	Method        string
-	ParamTypes    []string
+	Service    string
+	Method     string
+	ParamTypes []string
+	// Args are contract-normalized JSON-like values. BuildGenericRequest calls
+	// PrepareArgs to adapt typed maps and collections for Hessian encoding.
 	Args          []any
 	Version       string
 	UniqueID      string
@@ -83,7 +85,7 @@ func BuildGenericRequest(spec RequestSpec) (EncodedRequest, error) {
 	targetServiceUniqueName := TargetServiceUniqueName(spec.Service, spec.Version, spec.UniqueID)
 	header := requestHeader(spec.Method, targetServiceUniqueName, spec.TargetAppName)
 
-	normalizedArgs := NormalizeArgs(spec.Args)
+	preparedArgs := PrepareArgs(spec.Args)
 	requestProps := map[string]interface{}{
 		"sofa_head_generic_type": GenericType,
 		"type":                   InvokeTypeSync,
@@ -99,7 +101,7 @@ func BuildGenericRequest(spec RequestSpec) (EncodedRequest, error) {
 	if err := enc.writeSofaRequest(spec.Method, targetServiceUniqueName, requestProps, spec.ParamTypes, targetAppName); err != nil {
 		return EncodedRequest{}, fmt.Errorf("encode SofaRequest: %w", err)
 	}
-	for i, arg := range normalizedArgs {
+	for i, arg := range preparedArgs {
 		if err := enc.writeValue(arg); err != nil {
 			return EncodedRequest{}, fmt.Errorf("encode arg %d: %w", i, err)
 		}
@@ -145,15 +147,25 @@ func LoadArgsFile(path string) ([]any, error) {
 	return raw, nil
 }
 
-// NormalizeArgs prepares canonical JSON-like args for the Hessian writer by
-// replacing maps/slices with Java class adapters. Contract-aware semantic
-// normalization happens earlier in internal/core/contract.
-func NormalizeArgs(args []any) []any {
+// PrepareArgs adapts contract-normalized JSON-like args for the Hessian writer
+// by replacing typed maps and collections with Java class adapters.
+func PrepareArgs(args []any) []any {
 	out := make([]any, len(args))
 	for i, arg := range args {
-		out[i] = normalizeValue(arg)
+		out[i] = PrepareValue(arg)
 	}
 	return out
+}
+
+// PrepareValue adapts one contract-normalized value for Hessian encoding.
+func PrepareValue(v any) any {
+	return normalizeValue(v)
+}
+
+// NormalizeArgs is kept for compatibility with existing tests and callers.
+// New code should use PrepareArgs to avoid confusion with contract.NormalizeArgs.
+func NormalizeArgs(args []any) []any {
+	return PrepareArgs(args)
 }
 
 func FormatValue(v any) any {

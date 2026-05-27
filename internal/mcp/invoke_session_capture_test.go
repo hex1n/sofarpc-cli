@@ -48,6 +48,37 @@ func TestInvoke_DryRunOversizedPlanStillReturnsPlanButSkipsSessionCapture(t *tes
 	}
 }
 
+func TestInvoke_PolicyRejectionKeepsSkippedSessionCaptureDiagnostic(t *testing.T) {
+	t.Setenv(envAllowInvoke, "false")
+	sessions := NewSessionStoreWithLimits(0, 0).WithMaxPlanBytes(128).WithIDFunc(seqIDs())
+	session := sessions.Create(Session{ProjectRoot: "/tmp"})
+	store := contract.NewInMemoryStore(javamodel.Class{
+		FQN: "com.foo.Svc", Kind: javamodel.KindInterface,
+		Methods: []javamodel.Method{{Name: "doThing", ParamTypes: []string{"java.lang.String"}}},
+	})
+
+	out := callInvoke(t, Options{Sessions: sessions, Contract: store}, map[string]any{
+		"service":   "com.foo.Svc",
+		"method":    "doThing",
+		"directUrl": "bolt://h:1",
+		"sessionId": session.ID,
+		"args":      []any{strings.Repeat("x", 2048)},
+	})
+	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
+		t.Fatalf("expected policy rejection, got %+v", out.Error)
+	}
+	if out.Plan == nil {
+		t.Fatal("rejected invoke should still return the planned payload")
+	}
+	capture, ok := out.Diagnostics["sessionPlanCapture"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected sessionPlanCapture diagnostic, got %+v", out.Diagnostics)
+	}
+	if got := capture["reason"]; got != "plan-too-large" {
+		t.Fatalf("capture reason = %#v, want plan-too-large", got)
+	}
+}
+
 func TestInvoke_DryRunCapturedPlanCanReplayBySession(t *testing.T) {
 	sessions := NewSessionStoreWithLimits(0, 0).WithMaxPlanBytes(4096).WithIDFunc(seqIDs())
 	session := sessions.Create(Session{ProjectRoot: "/tmp"})
@@ -115,7 +146,7 @@ func TestInvoke_OversizedSessionCaptureRequiresPayloadReplay(t *testing.T) {
 
 	byPayload := callReplay(t, Options{Sessions: sessions}, map[string]any{
 		"payload": inv.Plan,
-		"dryRun": true,
+		"dryRun":  true,
 	})
 	if !byPayload.Ok {
 		t.Fatalf("payload replay should still work, got error=%+v", byPayload.Error)

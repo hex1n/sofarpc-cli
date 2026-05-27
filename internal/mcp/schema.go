@@ -31,6 +31,27 @@ func replayInputSchema() map[string]any {
 	})
 }
 
+func invokeOutputSchema() map[string]any {
+	return objectSchema(map[string]any{
+		"ok":          booleanSchema("True when the invocation or dry-run plan was produced successfully."),
+		"plan":        objectPropertySchema("Resolved invocation plan, present for dry-runs and real execution attempts that reached planning."),
+		"result":      anyPropertySchema("Raw transport result returned by the target service."),
+		"diagnostics": objectPropertySchema("Execution policy, capture, and transport diagnostics."),
+		"error":       objectPropertySchema("Structured error details when invocation planning or execution fails."),
+	})
+}
+
+func replayOutputSchema() map[string]any {
+	return objectSchema(map[string]any{
+		"ok":          booleanSchema("True when the replay dry-run or execution completed successfully."),
+		"source":      stringSchema("Where the replay plan came from: session or payload."),
+		"plan":        objectPropertySchema("Replayable invocation plan."),
+		"result":      anyPropertySchema("Raw transport result returned by the target service."),
+		"diagnostics": objectPropertySchema("Execution policy and transport diagnostics."),
+		"error":       objectPropertySchema("Structured error details when replay planning or execution fails."),
+	})
+}
+
 func initProjectInputSchema() map[string]any {
 	return objectSchema(map[string]any{
 		"cwd":                 stringSchema("Optional current working directory used to resolve the project root. When omitted with project/sessionId, init_project attempts safe Java project auto-discovery."),
@@ -104,6 +125,12 @@ func argsArraySchema() map[string]any {
 func objectPropertySchema(description string) map[string]any {
 	return map[string]any{
 		"type":        "object",
+		"description": description,
+	}
+}
+
+func anyPropertySchema(description string) map[string]any {
+	return map[string]any{
 		"description": description,
 	}
 }

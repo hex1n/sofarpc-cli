@@ -114,6 +114,23 @@ is missing, when `contentHex` is empty, or when an unknown field/kind appears.
 }
 ```
 
+## Remote exception fixture example
+
+```json
+{
+  "name": "response-remote-exception",
+  "description": "Java throwable content decoded by Go as a remote exception",
+  "kind": "response-content",
+  "contentHex": "4f...",
+  "want": {
+    "isError": true,
+    "errorMsg": "fixture remote failure",
+    "appResponseType": "java.lang.IllegalStateException",
+    "remoteExceptionType": "java.lang.IllegalStateException"
+  }
+}
+```
+
 Keeping these fixtures Java-backed is intentional: they prove compatibility
 beyond Go encoder/decoder round trips.
 
@@ -122,6 +139,13 @@ beyond Go encoder/decoder round trips.
 Committed fixtures use the repository's baseline Java fixture version. Company
 projects may run different SOFARPC versions, so the Java fixture project accepts
 `-Dsofarpc.version=...` for manual compatibility checks.
+
+Use the repo helper for the baseline and local matrix:
+
+```sh
+bash scripts/verify-wire-fixtures.sh
+bash scripts/verify-wire-fixtures.sh --matrix 5.4.0,5.7.6,5.8.0
+```
 
 For matrix runs, generate fixtures into a temporary directory and point the Go
 test at it with `SOFARPCWIRE_GOLDEN_DIR`. Do not commit duplicate fixture files

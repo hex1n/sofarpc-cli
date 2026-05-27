@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sort"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -40,6 +41,240 @@ func TestNew_RegistersSofarpcTools(t *testing.T) {
 		if names[i] != want[i] {
 			t.Fatalf("tool %d: got %q want %q", i, names[i], want[i])
 		}
+	}
+}
+
+func TestNew_ToolsAdvertiseBestPracticeMetadata(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	want := map[string]struct {
+		title           string
+		readOnly        bool
+		openWorld       bool
+		destructive     bool
+		wantDestructive bool
+	}{
+		"sofarpc_describe":     {title: "Describe SOFARPC Method", readOnly: true, openWorld: false},
+		"sofarpc_doctor":       {title: "Diagnose SOFARPC Workspace", readOnly: true, openWorld: true},
+		"sofarpc_init_project": {title: "Initialize SOFARPC Project", readOnly: false, openWorld: false, destructive: true, wantDestructive: true},
+		"sofarpc_invoke":       {title: "Invoke SOFARPC Method", readOnly: false, openWorld: true, destructive: true, wantDestructive: true},
+		"sofarpc_open":         {title: "Open SOFARPC Workspace", readOnly: true, openWorld: false},
+		"sofarpc_replay":       {title: "Replay SOFARPC Invocation", readOnly: false, openWorld: true, destructive: true, wantDestructive: true},
+		"sofarpc_target":       {title: "Resolve SOFARPC Target", readOnly: true, openWorld: true},
+	}
+	for name, expected := range want {
+		tool := listedTool(t, client, name)
+		if tool.Title != expected.title {
+			t.Fatalf("%s title: got %q want %q", name, tool.Title, expected.title)
+		}
+		if tool.Annotations == nil {
+			t.Fatalf("%s annotations are missing", name)
+		}
+		if tool.Annotations.Title != expected.title {
+			t.Fatalf("%s annotation title: got %q want %q", name, tool.Annotations.Title, expected.title)
+		}
+		if tool.Annotations.ReadOnlyHint != expected.readOnly {
+			t.Fatalf("%s readOnlyHint: got %v want %v", name, tool.Annotations.ReadOnlyHint, expected.readOnly)
+		}
+		assertBoolHint(t, name, "openWorldHint", tool.Annotations.OpenWorldHint, expected.openWorld)
+		if expected.wantDestructive {
+			assertBoolHint(t, name, "destructiveHint", tool.Annotations.DestructiveHint, expected.destructive)
+		} else if tool.Annotations.DestructiveHint != nil {
+			t.Fatalf("%s destructiveHint: got explicit %v, want omitted", name, *tool.Annotations.DestructiveHint)
+		}
+		if tool.Annotations.IdempotentHint {
+			t.Fatalf("%s idempotentHint: got true want false", name)
+		}
+	}
+}
+
+func TestNew_ToolsAdvertiseOutputSchemas(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	listed, err := client.ListTools(ctx, &sdkmcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	for _, tool := range listed.Tools {
+		schema := schemaMap(t, tool.OutputSchema)
+		if got := schema["type"]; got != "object" {
+			t.Fatalf("%s output schema type: got %#v want object", tool.Name, got)
+		}
+	}
+
+	for _, name := range []string{"sofarpc_invoke", "sofarpc_replay"} {
+		properties := schemaProperties(t, schemaMap(t, listedTool(t, client, name).OutputSchema))
+		for _, property := range []string{"ok", "plan", "result", "diagnostics", "error"} {
+			if _, ok := properties[property].(map[string]any); !ok {
+				t.Fatalf("%s output schema property %q: got %T", name, property, properties[property])
+			}
+		}
+	}
+}
+
+func TestNew_AdvertisesResourceTemplates(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	listed, err := client.ListResourceTemplates(ctx, &sdkmcp.ListResourceTemplatesParams{})
+	if err != nil {
+		t.Fatalf("list resource templates: %v", err)
+	}
+	got := map[string]*sdkmcp.ResourceTemplate{}
+	for _, template := range listed.ResourceTemplates {
+		got[template.URITemplate] = template
+	}
+	want := []string{
+		"sofarpc://session/{sessionId}",
+		"sofarpc://session/{sessionId}/contract",
+		"sofarpc://session/{sessionId}/plan",
+	}
+	for _, uriTemplate := range want {
+		template := got[uriTemplate]
+		if template == nil {
+			t.Fatalf("resource template %q not listed; got %v", uriTemplate, keys(got))
+		}
+		if template.MIMEType != resourceMIMEJSON {
+			t.Fatalf("%s MIME type: got %q want %q", uriTemplate, template.MIMEType, resourceMIMEJSON)
+		}
+		if template.Title == "" || template.Description == "" {
+			t.Fatalf("%s should advertise title and description: %+v", uriTemplate, template)
+		}
+	}
+}
+
+func TestResources_ReadSessionAndPlan(t *testing.T) {
+	sessions := NewSessionStoreWithLimits(0, 32).WithIDFunc(func() string { return "sess-1" })
+	plan := samplePlan()
+	session := sessions.Create(Session{
+		ProjectRoot: "/tmp/project",
+		Target:      plan.Target,
+	})
+	if capture := sessions.CapturePlan(session.ID, plan); !capture.Captured {
+		t.Fatalf("capture plan: %+v", capture)
+	}
+
+	server := New(Options{Sessions: sessions})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	sessionBody := readResourceText(t, ctx, client, sessionResourceURI(session.ID))
+	var sessionOut sessionResource
+	if err := json.Unmarshal([]byte(sessionBody), &sessionOut); err != nil {
+		t.Fatalf("unmarshal session resource: %v", err)
+	}
+	if sessionOut.ID != session.ID || sessionOut.LastPlan == nil {
+		t.Fatalf("session resource: %+v", sessionOut)
+	}
+	if sessionOut.LastPlan.URI != sessionPlanResourceURI(session.ID) {
+		t.Fatalf("session last plan URI: got %q want %q", sessionOut.LastPlan.URI, sessionPlanResourceURI(session.ID))
+	}
+
+	planBody := readResourceText(t, ctx, client, sessionPlanResourceURI(session.ID))
+	var planOut planResource
+	if err := json.Unmarshal([]byte(planBody), &planOut); err != nil {
+		t.Fatalf("unmarshal plan resource: %v", err)
+	}
+	if planOut.SessionID != session.ID || planOut.Plan.Service != plan.Service || planOut.Plan.Method != plan.Method {
+		t.Fatalf("plan resource: %+v", planOut)
+	}
+}
+
+func TestInvokeDryRunReturnsCapturedPlanResourceLink(t *testing.T) {
+	sessions := NewSessionStoreWithLimits(0, 32).WithIDFunc(func() string { return "sess-1" })
+	session := sessions.Create(Session{ProjectRoot: t.TempDir()})
+	server := New(Options{Sessions: sessions})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	result, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
+		Name: "sofarpc_invoke",
+		Arguments: map[string]any{
+			"sessionId":    session.ID,
+			"contractMode": "trusted",
+			"service":      "com.foo.Svc",
+			"method":       "doThing",
+			"types":        []string{"java.lang.String"},
+			"args":         []any{"hello"},
+			"directUrl":    "bolt://h:1",
+			"dryRun":       true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call invoke: %v", err)
+	}
+	link := findResourceLink(result.Content, sessionPlanResourceURI(session.ID))
+	if link == nil {
+		t.Fatalf("invoke result did not include plan resource link; content=%#v", result.Content)
+	}
+
+	planBody := readResourceText(t, ctx, client, link.URI)
+	var planOut planResource
+	if err := json.Unmarshal([]byte(planBody), &planOut); err != nil {
+		t.Fatalf("unmarshal plan resource: %v", err)
+	}
+	if planOut.Plan.Service != "com.foo.Svc" || planOut.Plan.Method != "doThing" {
+		t.Fatalf("plan resource: %+v", planOut.Plan)
+	}
+}
+
+func TestToolProgressNotificationsWhenTokenProvided(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	progress := make(chan string, 8)
+	client := connectWithOptions(t, ctx, server, &sdkmcp.ClientOptions{
+		ProgressNotificationHandler: func(_ context.Context, req *sdkmcp.ProgressNotificationClientRequest) {
+			progress <- req.Params.Message
+		},
+	})
+	defer client.Close()
+
+	params := &sdkmcp.CallToolParams{Name: "sofarpc_target"}
+	params.SetProgressToken("progress-1")
+	if _, err := client.CallTool(ctx, params); err != nil {
+		t.Fatalf("call target: %v", err)
+	}
+	messages := collectProgressMessages(t, progress, 2)
+	if !contains(messages, "resolving target scope") {
+		t.Fatalf("progress messages missing scope notification: %v", messages)
+	}
+}
+
+func TestToolLoggingNotificationsWhenLevelProvided(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	logs := make(chan map[string]any, 8)
+	client := connectWithOptions(t, ctx, server, &sdkmcp.ClientOptions{
+		LoggingMessageHandler: func(_ context.Context, req *sdkmcp.LoggingMessageRequest) {
+			if req.Params.Logger != toolLogLogger {
+				return
+			}
+			if data, ok := req.Params.Data.(map[string]any); ok {
+				logs <- data
+			}
+		},
+	})
+	defer client.Close()
+
+	if err := client.SetLoggingLevel(ctx, &sdkmcp.SetLoggingLevelParams{Level: "info"}); err != nil {
+		t.Fatalf("set logging level: %v", err)
+	}
+	if _, err := client.CallTool(ctx, &sdkmcp.CallToolParams{Name: "sofarpc_target"}); err != nil {
+		t.Fatalf("call target: %v", err)
+	}
+	entries := collectLogEntries(t, logs, 2)
+	if !hasLogEntry(entries, "sofarpc_target", "resolving target scope") {
+		t.Fatalf("logging entries missing target scope notification: %v", entries)
 	}
 }
 
@@ -97,13 +332,46 @@ func TestNew_ReplaySchemaAdvertisesPayloadObject(t *testing.T) {
 	}
 }
 
+func TestToolResultIncludesStructuredJSONTextMirror(t *testing.T) {
+	out := InvokeOutput{Ok: true, Diagnostics: map[string]any{"capture": "session"}}
+	result := invokeToolResult(out, "summary", false)
+	if result.IsError {
+		t.Fatal("result should not be marked as error")
+	}
+	if len(result.Content) != 2 {
+		t.Fatalf("content count: got %d want 2", len(result.Content))
+	}
+	if got := contentText(t, result.Content[0]); got != "summary" {
+		t.Fatalf("summary text: got %q want summary", got)
+	}
+	structured, ok := result.StructuredContent.(json.RawMessage)
+	if !ok {
+		t.Fatalf("structured content type: got %T want json.RawMessage", result.StructuredContent)
+	}
+	if got := contentText(t, result.Content[1]); got != string(structured) {
+		t.Fatalf("json mirror: got %q want %q", got, string(structured))
+	}
+	var decoded InvokeOutput
+	if err := json.Unmarshal(structured, &decoded); err != nil {
+		t.Fatalf("unmarshal structured: %v", err)
+	}
+	if !decoded.Ok || decoded.Diagnostics["capture"] != "session" {
+		t.Fatalf("decoded output: %+v", decoded)
+	}
+}
+
 func connect(t *testing.T, ctx context.Context, server *sdkmcp.Server) *sdkmcp.ClientSession {
+	t.Helper()
+	return connectWithOptions(t, ctx, server, nil)
+}
+
+func connectWithOptions(t *testing.T, ctx context.Context, server *sdkmcp.Server, opts *sdkmcp.ClientOptions) *sdkmcp.ClientSession {
 	t.Helper()
 	serverSide, clientSide := sdkmcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, serverSide, nil); err != nil {
 		t.Fatalf("server connect: %v", err)
 	}
-	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "test", Version: "0.0.0"}, opts)
 	session, err := client.Connect(ctx, clientSide, nil)
 	if err != nil {
 		t.Fatalf("client connect: %v", err)
@@ -155,6 +423,125 @@ func schemaObjectProperty(t *testing.T, properties map[string]any, name string) 
 		t.Fatalf("schema property %q: got %T", name, properties[name])
 	}
 	return property
+}
+
+func readResourceText(t *testing.T, ctx context.Context, client *sdkmcp.ClientSession, uri string) string {
+	t.Helper()
+	result, err := client.ReadResource(ctx, &sdkmcp.ReadResourceParams{URI: uri})
+	if err != nil {
+		t.Fatalf("read resource %s: %v", uri, err)
+	}
+	if len(result.Contents) != 1 {
+		t.Fatalf("resource %s contents: got %d want 1", uri, len(result.Contents))
+	}
+	content := result.Contents[0]
+	if content.MIMEType != resourceMIMEJSON {
+		t.Fatalf("resource %s MIME type: got %q want %q", uri, content.MIMEType, resourceMIMEJSON)
+	}
+	if content.Text == "" {
+		t.Fatalf("resource %s text is empty", uri)
+	}
+	return content.Text
+}
+
+func findResourceLink(content []sdkmcp.Content, uri string) *sdkmcp.ResourceLink {
+	for _, item := range content {
+		link, ok := item.(*sdkmcp.ResourceLink)
+		if ok && link.URI == uri {
+			return link
+		}
+	}
+	return nil
+}
+
+func collectProgressMessages(t *testing.T, progress <-chan string, min int) []string {
+	t.Helper()
+	deadline := time.After(time.Second)
+	var messages []string
+	for len(messages) < min {
+		select {
+		case message := <-progress:
+			messages = append(messages, message)
+		case <-deadline:
+			t.Fatalf("timed out waiting for progress notifications; got %v", messages)
+		}
+	}
+	for {
+		select {
+		case message := <-progress:
+			messages = append(messages, message)
+		default:
+			return messages
+		}
+	}
+}
+
+func collectLogEntries(t *testing.T, logs <-chan map[string]any, min int) []map[string]any {
+	t.Helper()
+	deadline := time.After(time.Second)
+	var entries []map[string]any
+	for len(entries) < min {
+		select {
+		case entry := <-logs:
+			entries = append(entries, entry)
+		case <-deadline:
+			t.Fatalf("timed out waiting for logging notifications; got %v", entries)
+		}
+	}
+	for {
+		select {
+		case entry := <-logs:
+			entries = append(entries, entry)
+		default:
+			return entries
+		}
+	}
+}
+
+func hasLogEntry(entries []map[string]any, tool, message string) bool {
+	for _, entry := range entries {
+		if entry["tool"] == tool && entry["message"] == message {
+			return true
+		}
+	}
+	return false
+}
+
+func assertBoolHint(t *testing.T, toolName, field string, got *bool, want bool) {
+	t.Helper()
+	if got == nil {
+		t.Fatalf("%s %s: got nil want %v", toolName, field, want)
+	}
+	if *got != want {
+		t.Fatalf("%s %s: got %v want %v", toolName, field, *got, want)
+	}
+}
+
+func contentText(t *testing.T, content sdkmcp.Content) string {
+	t.Helper()
+	text, ok := content.(*sdkmcp.TextContent)
+	if !ok {
+		t.Fatalf("content type: got %T want *mcp.TextContent", content)
+	}
+	return text.Text
+}
+
+func keys[V any](values map[string]V) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func assertNoSchemaKeyword(t *testing.T, value any, keyword string) {

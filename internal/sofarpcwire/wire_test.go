@@ -2,6 +2,7 @@ package sofarpcwire
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -68,6 +69,91 @@ func TestNormalizeArgs_PromotesBigDecimalTypedObject(t *testing.T) {
 	}
 }
 
+func TestPrepareArgs_AdaptsContractNormalizedCanonicalValues(t *testing.T) {
+	t.Parallel()
+
+	args := PrepareArgs([]any{
+		map[string]any{
+			"@type": "com.example.Request",
+			"amount": map[string]any{
+				"@type": "java.math.BigDecimal",
+				"value": "1000.50",
+			},
+			"status": map[string]any{
+				"@type": "com.example.Status",
+				"name":  "ACTIVE",
+			},
+			"items": []any{
+				map[string]any{
+					"@type": "com.example.Item",
+					"code":  "A",
+				},
+			},
+			"attributes": map[string]any{
+				"count": json.Number("7"),
+				"ratio": json.Number("1.5"),
+			},
+		},
+	})
+
+	request, ok := args[0].(javaTypedObject)
+	if !ok {
+		t.Fatalf("arg type = %T", args[0])
+	}
+	if request.typeName != "com.example.Request" {
+		t.Fatalf("request.typeName = %q", request.typeName)
+	}
+
+	amount, ok := request.fields["amount"].(javaTypedObject)
+	if !ok {
+		t.Fatalf("amount type = %T", request.fields["amount"])
+	}
+	if amount.typeName != "java.math.BigDecimal" {
+		t.Fatalf("amount.typeName = %q", amount.typeName)
+	}
+	if got := amount.fields["value"]; got != "1000.50" {
+		t.Fatalf("amount.value = %#v", got)
+	}
+
+	status, ok := request.fields["status"].(javaTypedObject)
+	if !ok {
+		t.Fatalf("status type = %T", request.fields["status"])
+	}
+	if status.typeName != "com.example.Status" {
+		t.Fatalf("status.typeName = %q", status.typeName)
+	}
+	if got := status.fields["name"]; got != "ACTIVE" {
+		t.Fatalf("status.name = %#v", got)
+	}
+
+	items, ok := request.fields["items"].(*javaArrayList)
+	if !ok {
+		t.Fatalf("items type = %T", request.fields["items"])
+	}
+	rawItems := items.Get()
+	if len(rawItems) != 1 {
+		t.Fatalf("len(items) = %d", len(rawItems))
+	}
+	item, ok := rawItems[0].(javaTypedObject)
+	if !ok {
+		t.Fatalf("item type = %T", rawItems[0])
+	}
+	if item.typeName != "com.example.Item" {
+		t.Fatalf("item.typeName = %q", item.typeName)
+	}
+
+	attributes, ok := request.fields["attributes"].(javaLinkedHashMap)
+	if !ok {
+		t.Fatalf("attributes type = %T", request.fields["attributes"])
+	}
+	if got := attributes["count"]; got != int64(7) {
+		t.Fatalf("attributes.count = %#v", got)
+	}
+	if got := attributes["ratio"]; got != float64(1.5) {
+		t.Fatalf("attributes.ratio = %#v", got)
+	}
+}
+
 func TestBuildGenericRequestEncodesExpectedStrings(t *testing.T) {
 	t.Parallel()
 
@@ -129,6 +215,43 @@ func TestBuildGenericRequest_EncodesBigDecimalTypedObject(t *testing.T) {
 	}
 	if bytes.Contains(req.Content, []byte("@type")) {
 		t.Fatal("typed objects should be encoded as Hessian objects, not literal @type map entries")
+	}
+}
+
+func TestBuildGenericRequest_PreparesContractNormalizedValuesBeforeEncoding(t *testing.T) {
+	t.Parallel()
+
+	req, err := BuildGenericRequest(RequestSpec{
+		Service:    "com.example.Facade",
+		Method:     "submit",
+		ParamTypes: []string{"com.example.Request"},
+		Args: []any{
+			map[string]any{
+				"@type": "com.example.Request",
+				"status": map[string]any{
+					"@type": "com.example.Status",
+					"name":  "ACTIVE",
+				},
+				"attributes": map[string]any{
+					"count": json.Number("7"),
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildGenericRequest() error = %v", err)
+	}
+	for _, needle := range [][]byte{
+		[]byte("com.example.Request"),
+		[]byte("com.example.Status"),
+		[]byte("java.util.LinkedHashMap"),
+	} {
+		if !bytes.Contains(req.Content, needle) {
+			t.Fatalf("content missing %q", needle)
+		}
+	}
+	if bytes.Contains(req.Content, []byte("@type")) {
+		t.Fatal("typed objects should be prepared before Hessian encoding")
 	}
 }
 

@@ -149,6 +149,58 @@ func TestTargetHandler_UsesProjectContextForConfigErrors(t *testing.T) {
 	}
 }
 
+func TestTargetHandler_UsesSessionProjectContext(t *testing.T) {
+	serverRoot := t.TempDir()
+	sessionRoot := t.TempDir()
+	writeMCPProjectFile(t, sessionRoot, ".sofarpc/config.local.json", `{"directUrl":"bolt://127.0.0.1:2"}`)
+	sessions := NewSessionStore()
+	session := sessions.Create(Session{ProjectRoot: sessionRoot})
+
+	out := callTargetTool(t, Options{
+		Sessions:      sessions,
+		TargetSources: target.ProjectSources(serverRoot, target.Config{DirectURL: "bolt://127.0.0.1:1"}),
+	}, map[string]any{
+		"sessionId":        session.ID,
+		"connectTimeoutMs": 1,
+	})
+
+	if out.ProjectRoot != sessionRoot {
+		t.Fatalf("projectRoot: got %q want %q", out.ProjectRoot, sessionRoot)
+	}
+	if out.Target.DirectURL != "bolt://127.0.0.1:2" {
+		t.Fatalf("directUrl should come from session project config, got %q", out.Target.DirectURL)
+	}
+}
+
+func TestTargetHandler_RejectsMismatchedSessionAndProject(t *testing.T) {
+	projectRoot := t.TempDir()
+	sessionRoot := t.TempDir()
+	sessions := NewSessionStore()
+	session := sessions.Create(Session{ProjectRoot: sessionRoot})
+	server := New(Options{Sessions: sessions})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	result, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
+		Name: "sofarpc_target",
+		Arguments: map[string]any{
+			"sessionId": session.ID,
+			"project":   projectRoot,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call target: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("target should reject mismatched session and project roots")
+	}
+	text := result.Content[0].(*sdkmcp.TextContent).Text
+	if !strings.Contains(text, "does not match") {
+		t.Fatalf("error should mention mismatch, got %q", text)
+	}
+}
+
 func callTargetTool(t *testing.T, opts Options, args map[string]any) TargetOutput {
 	t.Helper()
 	server := New(opts)

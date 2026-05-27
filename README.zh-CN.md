@@ -39,6 +39,25 @@ go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@latest
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
+如果要分发给不想安装 Go 的用户，可以构建 MCPB 一键安装包，默认覆盖
+macOS、Linux 和 Windows：
+
+```sh
+VERSION=v0.1.0 MCPB_VERSION=0.1.0 bash scripts/build-mcpb.sh
+```
+
+默认 target matrix 是：
+
+```text
+darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
+```
+
+产物位于 `dist/mcpb/*.mcpb`。每个 bundle 只包含一个平台对应的二进制和
+`manifest.json`；Windows 产物内是 `server/sofarpc-mcp.exe`。manifest 会暴露
+真实调用开关、target override、允许访问的 target hosts、session plan
+保留上限和最大响应体大小等安全配置。手动 GitHub Actions `mcpb` workflow
+也会执行同一个脚本并上传这些 bundle。
+
 Setup 分成两层：
 
 - 用户级：把 MCP server 注册进 Claude Code 和 Codex，并给当前用户安装

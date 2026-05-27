@@ -1,0 +1,12 @@
+{
+  "contentHex" : "4faf6a6176612e6c616e672e496c6c6567616c5374617465457863657074696f6e940d64657461696c4d6573736167650563617573650a737461636b54726163651473757070726573736564457863657074696f6e736f9016666978747572652072656d6f7465206661696c7572654a005674001c5b6a6176612e6c616e672e537461636b5472616365456c656d656e746e007a567400326a6176612e7574696c2e436f6c6c656374696f6e7324556e6d6f6469666961626c6552616e646f6d4163636573734c6973746e007a",
+  "description" : "Top-level throwable content decoded by Go as a remote exception",
+  "kind" : "response-content",
+  "name" : "Java-encoded remote exception throwable",
+  "want" : {
+    "appResponseType" : "java.lang.IllegalStateException",
+    "errorMsg" : "fixture remote failure",
+    "isError" : true,
+    "remoteExceptionType" : "java.lang.IllegalStateException"
+  }
+}

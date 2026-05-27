@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/projectbootstrap"
 	"github.com/hex1n/sofarpc-cli/internal/core/projectconfig"
 )
 
@@ -29,49 +31,50 @@ func runProjectSetup(opts setupOptions) error {
 	if opts.local {
 		kind = projectconfig.KindLocal
 	}
-	path := projectconfig.ConfigPath(projectRoot, kind)
-	exists, err := projectconfig.Existing(path)
+	result, err := projectbootstrap.Run(projectbootstrap.Input{
+		ProjectRoot:            projectRoot,
+		Kind:                   kind,
+		Config:                 cfg,
+		Force:                  opts.force,
+		DryRun:                 opts.dryRun,
+		RequireConfigFields:    true,
+		RequireAllowedServices: true,
+	})
 	if err != nil {
-		return err
-	}
-	if exists && !opts.force {
-		return fmt.Errorf("%s already exists; pass --force to overwrite", path)
-	}
-
-	body, err := projectconfig.Marshal(cfg)
-	if err != nil {
-		return err
+		return projectSetupBootstrapError(err)
 	}
 
 	if opts.dryRun {
-		fmt.Printf("[dry-run] project %s:\n%s", path, body)
-		if opts.local {
-			status, err := projectconfig.LocalConfigIgnoreStatus(projectRoot)
-			if err != nil {
-				return err
-			}
-			if status.Changed {
-				fmt.Printf("[dry-run] project %s append:\n%s\n", status.Path, status.Entry)
+		fmt.Printf("[dry-run] project %s:\n%s", result.ConfigPath, result.ConfigBody)
+		if result.Gitignore != nil {
+			if result.Gitignore.WouldChange {
+				fmt.Printf("[dry-run] project %s append:\n%s\n", result.Gitignore.Path, result.Gitignore.Entry)
 			} else {
-				fmt.Printf("[dry-run] project %s already contains %s\n", status.Path, status.Entry)
+				fmt.Printf("[dry-run] project %s already contains %s\n", result.Gitignore.Path, result.Gitignore.Entry)
 			}
 		}
 		return nil
 	}
-	if opts.local {
-		status, err := projectconfig.EnsureLocalConfigIgnored(projectRoot)
-		if err != nil {
-			return err
-		}
-		if status.Changed {
-			fmt.Printf("project: ensured %s ignores %s\n", status.Path, status.Entry)
-		}
+	if result.Gitignore != nil && result.Gitignore.Changed {
+		fmt.Printf("project: ensured %s ignores %s\n", result.Gitignore.Path, result.Gitignore.Entry)
 	}
-	if _, err := projectconfig.Write(projectRoot, kind, cfg, opts.force); err != nil {
+	fmt.Printf("project: wrote %s\n", result.ConfigPath)
+	return nil
+}
+
+func projectSetupBootstrapError(err error) error {
+	switch {
+	case errors.Is(err, projectbootstrap.ErrNoConfigFields):
+		return fmt.Errorf("project setup needs at least one target config flag")
+	case errors.Is(err, projectbootstrap.ErrAllowedServicesMissing):
+		return fmt.Errorf("project setup requires --allowed-services; use --allowed-services=* intentionally to allow every service")
+	default:
+		var existing projectbootstrap.ExistingConfigError
+		if errors.As(err, &existing) {
+			return fmt.Errorf("%s already exists; pass --force to overwrite", existing.Path)
+		}
 		return err
 	}
-	fmt.Printf("project: wrote %s\n", path)
-	return nil
 }
 
 func rejectUserOnlyFlags(opts setupOptions) error {
@@ -127,30 +130,23 @@ func buildProjectTargetConfig(opts setupOptions) (projectconfig.Config, error) {
 		return projectconfig.Config{}, fmt.Errorf("--direct-url and --registry-address are mutually exclusive")
 	}
 	var cfg projectconfig.Config
-	fields := 0
 	if v := projectStringFlag(opts, "direct-url", opts.directURL); v != "" {
 		cfg.DirectURL = v
-		fields++
 	}
 	if v := projectStringFlag(opts, "registry-address", opts.registryAddr); v != "" {
 		cfg.RegistryAddress = v
-		fields++
 	}
 	if v := projectStringFlag(opts, "registry-protocol", opts.registryProtocol); v != "" {
 		cfg.RegistryProtocol = v
-		fields++
 	}
 	if v := projectStringFlag(opts, "protocol", opts.protocol); v != "" {
 		cfg.Protocol = v
-		fields++
 	}
 	if v := projectStringFlag(opts, "serialization", opts.serialization); v != "" {
 		cfg.Serialization = v
-		fields++
 	}
 	if v := projectStringFlag(opts, "unique-id", opts.uniqueID); v != "" {
 		cfg.UniqueID = v
-		fields++
 	}
 	if opts.set["timeout-ms"] {
 		v, err := positiveProjectInt("timeout-ms", opts.timeoutMS)
@@ -158,7 +154,6 @@ func buildProjectTargetConfig(opts setupOptions) (projectconfig.Config, error) {
 			return projectconfig.Config{}, err
 		}
 		cfg.TimeoutMS = v
-		fields++
 	}
 	if opts.set["connect-timeout-ms"] {
 		v, err := positiveProjectInt("connect-timeout-ms", opts.connectTimeoutMS)
@@ -166,19 +161,9 @@ func buildProjectTargetConfig(opts setupOptions) (projectconfig.Config, error) {
 			return projectconfig.Config{}, err
 		}
 		cfg.ConnectTimeoutMS = v
-		fields++
 	}
 	if opts.set["allowed-services"] {
 		cfg.AllowedServices = csvProjectFlag(opts.allowedServices)
-		if len(cfg.AllowedServices) > 0 {
-			fields++
-		}
-	}
-	if fields == 0 {
-		return projectconfig.Config{}, fmt.Errorf("project setup needs at least one target config flag")
-	}
-	if len(cfg.AllowedServices) == 0 {
-		return projectconfig.Config{}, fmt.Errorf("project setup requires --allowed-services; use --allowed-services=* intentionally to allow every service")
 	}
 	return cfg, nil
 }
