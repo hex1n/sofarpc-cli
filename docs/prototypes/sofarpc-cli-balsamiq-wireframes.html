@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>sofarpc-cli Balsamiq 风格原型图</title>
+    <title>sofarpc-cli 原型图</title>
     <style>
       :root {
         --ink: #202020;
@@ -238,9 +238,16 @@
         gap: 14px;
       }
 
+      .split > *,
+      .three > *,
+      .stack,
+      .wire-box {
+        min-width: 0;
+      }
+
       .three {
         display: grid;
-        grid-template-columns: 165px 1fr 210px;
+        grid-template-columns: 150px minmax(0, 1fr) 190px;
         gap: 12px;
       }
 
@@ -326,6 +333,7 @@
         font-size: 13px;
         line-height: 1.45;
         white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
 
       .form-grid {
@@ -668,9 +676,9 @@
     <main class="page">
       <section class="cover">
         <div class="title-card">
-          <h1>sofarpc-cli 低保真原型图</h1>
+          <h1>sofarpc-cli 原型图</h1>
           <p class="subtitle">
-            基于当前仓库的 README、架构文档和 MCP 工具入口整理。原型聚焦 agent 使用 SOFARPC 泛化调用的核心路径，不假设已有 Web UI。
+            基于当前仓库的 README、架构文档、MCP 工具入口和 MCPB 分发方案整理。原型聚焦 agent 使用 SOFARPC 泛化调用的核心路径，不假设已有 Web UI。
           </p>
           <div class="source-row" aria-label="analysis sources">
             <span class="source-chip">README.md / README.zh-CN.md</span>
@@ -678,6 +686,7 @@
             <span class="source-chip">cmd/sofarpc-mcp</span>
             <span class="source-chip">internal/mcp</span>
             <span class="source-chip">cmd/sofarpc-mcp/skill</span>
+            <span class="source-chip">scripts/build-mcpb.sh</span>
           </div>
         </div>
 
@@ -699,6 +708,10 @@
             <div>
               <span class="sketch-number">4</span>
               <span>安全边界很重要：真实调用默认关闭，服务、target host、args 文件根目录和 response size 都有 guardrail。</span>
+            </div>
+            <div>
+              <span class="sketch-number">5</span>
+              <span>MCP 设计已经补上 metadata、structured JSON mirror、resources、progress/logging；分发路径也要覆盖 macOS / Linux / Windows MCPB。</span>
             </div>
           </div>
         </aside>
@@ -731,6 +744,7 @@
                   </div>
                   <div class="terminal">
                     <span class="prompt">$</span> go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@latest<br />
+                    <span class="prompt">$</span> open dist/mcpb/sofarpc-mcp-0.1.0-windows-amd64.mcpb<br />
                     <span class="prompt">$</span> sofarpc-mcp version -json<br />
                     { "version": "v0.1.x", "commit": "..." }<br />
                     <span class="prompt">$</span> sofarpc-mcp setup --scope=user --dry-run<br />
@@ -761,6 +775,7 @@
                   </div>
                   <div class="form-grid">
                     <div class="field"><label>command</label><span>/usr/local/bin/sofarpc-mcp</span></div>
+                    <div class="field"><label>package</label><span>go install / MCPB bundle</span></div>
                     <div class="field"><label>allow invoke</label><span>false by default</span></div>
                     <div class="field"><label>allowed hosts</label><span>127.0.0.1, dev-rpc.example.com</span></div>
                     <div class="field"><label>response cap</label><span>16 MiB default</span></div>
@@ -787,7 +802,8 @@
 }
 
 skill: sofarpc-invoke
-mode: baked by go:embed</div>
+mode: baked by go:embed
+mcpb user_config: safe env toggles</div>
                 </div>
 
                 <div class="caption">此屏对应 `runUserSetup`：解析 binary、合并 SOFARPC env、注册 Claude Code / Codex，并安装嵌入式 skill。</div>
@@ -800,9 +816,9 @@ mode: baked by go:embed</div>
           <div class="frame-head">
             <div>
               <p class="frame-kicker">Screen 02</p>
-              <h2>项目 Target 配置</h2>
+              <h2>项目级 Bootstrap / Target 配置</h2>
             </div>
-            <div class="frame-note">目标：为 Java 项目生成可共享或本地的 `.sofarpc` target 默认值。</div>
+            <div class="frame-note">目标：显式 project/cwd/session 后，安全生成 `.sofarpc` target 和 service allowlist。</div>
           </div>
 
           <div class="screen">
@@ -826,10 +842,12 @@ mode: baked by go:embed</div>
                   </div>
                   <div class="form-grid">
                     <div class="field"><label>file</label><span>.sofarpc/config.local.json</span></div>
+                    <div class="field"><label>project</label><span>explicit project / cwd / sessionId</span></div>
                     <div class="field"><label>directUrl</label><span>bolt://dev-rpc.example.com:12200</span></div>
                     <div class="field"><label>registry</label><span>empty because directUrl wins</span></div>
                     <div class="field"><label>protocol</label><span>bolt</span></div>
                     <div class="field"><label>serialization</label><span>hessian2</span></div>
+                    <div class="field"><label>allowedServices</label><span>discovered *Facade interfaces</span></div>
                     <div class="field"><label>uniqueId</label><span>dev</span></div>
                     <div class="field"><label>timeouts</label><span>request 3000 / connect 1000</span></div>
                   </div>
@@ -848,6 +866,7 @@ mode: baked by go:embed</div>
                   <div class="checkbox-list">
                     <div class="checkbox"><span class="box-mark checked"></span><span>`.sofarpc/config.local.json` 加入 `.gitignore`</span></div>
                     <div class="checkbox"><span class="box-mark checked"></span><span>项目级 setup 拒绝 `--allow-invoke` 等真实调用开关</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>无显式 scope 时只返回 projectResolution，不写文件</span></div>
                     <div class="checkbox"><span class="box-mark"></span><span>项目配置里不要写 `mode`，由 endpoint 推导</span></div>
                   </div>
                 </div>
@@ -866,9 +885,7 @@ mode: baked by go:embed</div>
                     <div class="arrow"></div>
                     <div class="layer"><span class="sketch-number">3</span><span>.sofarpc/config.json</span></div>
                     <div class="arrow"></div>
-                    <div class="layer"><span class="sketch-number">4</span><span>进程 env 兼容兜底</span></div>
-                    <div class="arrow"></div>
-                    <div class="layer"><span class="sketch-number">5</span><span>built-in defaults: bolt + hessian2</span></div>
+                    <div class="layer"><span class="sketch-number">4</span><span>built-in defaults: bolt + hessian2</span></div>
                   </div>
                 </div>
 
@@ -883,7 +900,11 @@ mode: baked by go:embed</div>
   "serialization": "hessian2",
   "timeoutMs": 3000,
   "connectTimeoutMs": 1000,
-  "uniqueId": "dev"
+  "uniqueId": "dev",
+  "allowedServices": [
+    "com.foo.OrderFacade",
+    "com.foo.UserFacade"
+  ]
 }</div>
                 </div>
 
@@ -897,10 +918,11 @@ mode: baked by go:embed</div>
                     <span class="pill good">probe: reachable</span>
                     <span class="pill">source: local config</span>
                     <span class="pill">connectTimeoutMs: 1000</span>
+                    <span class="pill">projectResolution: explicit</span>
                   </div>
                 </div>
 
-                <div class="caption">此屏对应 `runProjectSetup` 和 target precedence：项目只写 target defaults，不写真实调用授权。</div>
+                <div class="caption">此屏对应 `projectbootstrap`、`sofarpc_init_project` 和 target precedence：项目只写 target defaults 与 allowedServices，不写真实调用授权。</div>
               </div>
             </div>
           </div>
@@ -929,11 +951,11 @@ mode: baked by go:embed</div>
                 <div class="tool-list" style="margin-top: 10px">
                   <span class="tool-chip active">1. sofarpc_init_project</span>
                   <span class="tool-chip">2. sofarpc_open</span>
-                  <span class="tool-chip active">2. sofarpc_target</span>
-                  <span class="tool-chip next">3. sofarpc_describe</span>
-                  <span class="tool-chip">4. sofarpc_invoke dryRun</span>
-                  <span class="tool-chip">5. sofarpc_invoke real</span>
-                  <span class="tool-chip">6. sofarpc_replay</span>
+                  <span class="tool-chip active">3. sofarpc_target</span>
+                  <span class="tool-chip next">4. sofarpc_describe</span>
+                  <span class="tool-chip">5. sofarpc_invoke dryRun</span>
+                  <span class="tool-chip">6. sofarpc_invoke real</span>
+                  <span class="tool-chip">7. sofarpc_replay</span>
                   <span class="tool-chip">fallback: doctor</span>
                 </div>
               </aside>
@@ -999,6 +1021,7 @@ plan normalization preview:
                     <span class="pill good">directInvoke</span>
                     <span class="pill good">describe</span>
                     <span class="pill good">replay</span>
+                    <span class="pill good">resources</span>
                   </div>
                 </div>
 
@@ -1021,10 +1044,11 @@ plan normalization preview:
                     <div class="checkbox"><span class="box-mark"></span><span>SOFARPC_ALLOW_INVOKE</span></div>
                     <div class="checkbox"><span class="box-mark checked"></span><span>.sofarpc allowedServices</span></div>
                     <div class="checkbox"><span class="box-mark checked"></span><span>SOFARPC_MAX_RESPONSE_BYTES</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>outputSchema + structured JSON mirror</span></div>
                   </div>
                 </div>
 
-                <div class="note-pin">Agent 应先检查 dry-run plan，再决定是否请求真实调用。</div>
+                <div class="note-pin">Agent 应先检查 dry-run plan 和 resource link，再决定是否请求真实调用。</div>
               </aside>
             </div>
           </div>
@@ -1129,6 +1153,98 @@ plan normalization preview:
                   <div class="diagram-node"><strong>Error</strong><span class="small">stable errcode</span></div>
                   <div class="diagram-node"><strong>Hint</strong><span class="small">nextTool + nextArgs</span></div>
                   <div class="diagram-node"><strong>Tool</strong><span class="small">target / describe / doctor</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="frame">
+          <div class="frame-head">
+            <div>
+              <p class="frame-kicker">Screen 05</p>
+              <h2>MCPB 分发 / MCP 能力面板</h2>
+            </div>
+            <div class="frame-note">目标：让安装包、resource links、progress/logging 在 agent 视角可见。</div>
+          </div>
+
+          <div class="screen">
+            <div class="browserbar">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <div class="url">dist/mcpb/*.mcpb + sofarpc://session/{id}</div>
+            </div>
+
+            <div class="screen-body split">
+              <div class="stack">
+                <div class="wire-box blue">
+                  <div class="wire-title">
+                    <h3>跨平台 MCPB 包</h3>
+                    <span class="pill good">one click</span>
+                  </div>
+                  <div class="priority">
+                    <div class="layer"><span class="sketch-number">1</span><span>darwin/amd64 + darwin/arm64: server/sofarpc-mcp</span></div>
+                    <div class="arrow"></div>
+                    <div class="layer"><span class="sketch-number">2</span><span>linux/amd64 + linux/arm64: server/sofarpc-mcp</span></div>
+                    <div class="arrow"></div>
+                    <div class="layer"><span class="sketch-number">3</span><span>windows/amd64 + windows/arm64: server/sofarpc-mcp.exe</span></div>
+                  </div>
+                </div>
+
+                <div class="wire-box">
+                  <div class="wire-title">
+                    <h3>Manifest 配置</h3>
+                    <span class="pill">manifest_version 0.3</span>
+                  </div>
+                  <div class="json">{
+  "server": { "type": "binary" },
+  "user_config": {
+    "allow_invoke": false,
+    "allowed_target_hosts": "127.0.0.1,localhost",
+    "session_plan_max_bytes": 1048576,
+    "max_response_bytes": 16777216
+  }
+}</div>
+                </div>
+              </div>
+
+              <div class="stack">
+                <div class="wire-box green">
+                  <div class="wire-title">
+                    <h3>Resource Links</h3>
+                    <span class="pill good">read-only</span>
+                  </div>
+                  <div class="json">sofarpc://session/ws_20260527_f81a
+sofarpc://session/ws_20260527_f81a/plan
+sofarpc://session/ws_20260527_f81a/contract</div>
+                  <div class="caption">open / invoke / replay 可以返回 resource link，agent 不必把大 plan 和 contract 全塞进正文。</div>
+                </div>
+
+                <div class="wire-box yellow">
+                  <div class="wire-title">
+                    <h3>Progress / Logging</h3>
+                    <span class="pill warn">client opt-in</span>
+                  </div>
+                  <div class="checkbox-list">
+                    <div class="checkbox"><span class="box-mark checked"></span><span>progressToken 存在时发送 notifications/progress</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>SetLoggingLevel 后发送 notifications/message</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>log payload 不包含原始 invoke args</span></div>
+                    <div class="checkbox"><span class="box-mark"></span><span>prompt 仍是可选 backlog，不扩大当前 tool surface</span></div>
+                  </div>
+                </div>
+
+                <div class="wire-box">
+                  <div class="wire-title">
+                    <h3>Tool Metadata</h3>
+                    <span class="pill">best practice</span>
+                  </div>
+                  <div class="pill-row">
+                    <span class="pill good">title</span>
+                    <span class="pill good">annotations</span>
+                    <span class="pill good">outputSchema</span>
+                    <span class="pill good">JSON mirror</span>
+                  </div>
                 </div>
               </div>
             </div>
