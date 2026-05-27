@@ -4,25 +4,34 @@ description: Guides agents through using the sofarpc-mcp MCP tools to plan, invo
 ---
 
 # sofarpc-invoke
-Agent playbook for the `sofarpc-mcp` tools: `sofarpc_open`,
-`sofarpc_target`, `sofarpc_describe`, `sofarpc_invoke`, `sofarpc_replay`, and
-`sofarpc_doctor`.
+Agent playbook for the `sofarpc-mcp` tools: `sofarpc_init_project`,
+`sofarpc_open`, `sofarpc_target`, `sofarpc_describe`, `sofarpc_invoke`,
+`sofarpc_replay`, and `sofarpc_doctor`.
 
 ## Operating Loop
-1. Call `sofarpc_open` once for a new project/session. Keep the `sessionId`.
-2. Read `capabilities` and `contract` from `sofarpc_open`.
-3. If `capabilities.describe == true`, call `sofarpc_describe` with
+1. If the Java project has no `.sofarpc/config*.json`, call
+   `sofarpc_init_project` with `project`/`cwd` when you know the workspace.
+   If no scope is available, call it with `dryRun: true` first and inspect
+   `projectResolution`; retry with an explicit candidate `project` before
+   writing, even when confidence is high. Pass `directUrl` or `registryAddress`
+   only when the user supplied the target. Otherwise let it write discovered
+   `allowedServices` and report target next steps. If discovery finds no
+   services, pass explicit `services`; use `allowAllServices: true` only when
+   the user intentionally allows every service.
+2. Call `sofarpc_open` once for a new project/session. Keep the `sessionId`.
+3. Read `capabilities` and `contract` from `sofarpc_open`.
+4. If `capabilities.describe == true`, call `sofarpc_describe` with
    `sessionId`, `service`, and `method`; reuse the returned `types`.
-4. Call `sofarpc_invoke` with `dryRun: true` unless the user explicitly asked
+5. Call `sofarpc_invoke` with `dryRun: true` unless the user explicitly asked
    to send a real request. Include the `sessionId`.
-5. Inspect `plan.target`, `plan.paramTypes`, `plan.args`, and `contractSource`.
-6. For real calls, invoke without `dryRun` only after the plan matches intent.
-7. On failure, follow `hint.nextTool` / `hint.nextArgs` before guessing.
+6. Inspect `plan.target`, `plan.paramTypes`, `plan.args`, and `contractSource`.
+7. For real calls, invoke without `dryRun` only after the plan matches intent.
+8. On failure, follow `hint.nextTool` / `hint.nextArgs` before guessing.
 
 ## Preconditions
 - Server registered: `sofarpc-mcp setup --scope=user`.
 - Target resolution: per-call input, `.sofarpc/config.local.json`,
-  `.sofarpc/config.json`, MCP env, defaults. Project config must not set `mode`.
+  `.sofarpc/config.json`, defaults. Project config must not set `mode`.
 - Contract data is loaded lazily per resolved project root. `project` / `cwd`
   selects a project explicitly; otherwise `sessionId` selects the project opened
   by `sofarpc_open`.
@@ -30,8 +39,9 @@ Agent playbook for the `sofarpc-mcp` tools: `sofarpc_open`,
   resolve a complete user-supplied tuple, use `contractMode: "trusted"` or
   `trusted: true`. Use `contractMode: "strict"` only when falling back would be
   unsafe.
-- Real calls require `SOFARPC_ALLOW_INVOKE=true`; per-call `directUrl`
-  overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`.
+- Real calls require `SOFARPC_ALLOW_INVOKE=true` and explicit project
+  `.sofarpc/config*.json` `allowedServices`; missing allowlists block invoke.
+  Per-call `directUrl` overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`.
 
 ## Invoke Shapes
 Contract-assisted invoke, preferred when `describe` is available:
@@ -91,7 +101,10 @@ Every failure returns `{code, message, phase, hint?}`. Treat `hint.nextTool` and
 `hint.nextArgs` as machine instructions.
 
 - `target.missing` or `target.invalid`: call `sofarpc_target` with
-  `{"explain": true}`.
+  `{"explain": true}`. If no project config exists, call
+  `sofarpc_init_project`; if project scope is unclear, start with
+  `dryRun: true` and inspect `projectResolution`. Do not guess directUrl or
+  registryAddress.
 - `target.unreachable`, `target.connect-failed`, `runtime.timeout`, or
   `runtime.protocol-failed`: call `sofarpc_doctor`.
 - `contract.method-not-found` or `runtime.serialize-failed`: call

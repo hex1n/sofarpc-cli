@@ -13,6 +13,7 @@ package sourcecontract
 
 import (
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -145,6 +146,22 @@ func (s *Store) Size() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.index)
+}
+
+// IndexedClasses returns every top-level Java FQN discovered during the
+// lightweight source scan. It does not force method/field parsing.
+func (s *Store) IndexedClasses() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, 0, len(s.index))
+	for fqn := range s.index {
+		out = append(out, fqn)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Diagnostics snapshots the store's index/cache state for health

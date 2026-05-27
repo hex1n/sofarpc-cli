@@ -48,7 +48,7 @@ type Options struct {
 	ProjectContractLoader func(projectRoot string) (contract.Store, error)
 }
 
-// New returns an MCP server with the six sofarpc tools registered.
+// New returns an MCP server with the sofarpc tools registered.
 func New(opts Options) *sdkmcp.Server {
 	if opts.Sessions == nil {
 		opts.Sessions = NewSessionStore()
@@ -60,6 +60,7 @@ func New(opts Options) *sdkmcp.Server {
 		Name:    serverName,
 		Version: normalizeServerVersion(opts.ServerVersion),
 	}, nil)
+	registerInitProject(server, opts, holder)
 	registerOpen(server, opts, holder)
 	registerDescribe(server, opts, holder)
 	registerTarget(server, opts)

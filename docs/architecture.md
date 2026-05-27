@@ -22,8 +22,8 @@ Everything else exists only to make that loop reliable for agents.
 
 ## 2. Design principles
 
-1. **Agent-first surface.** The public API is six MCP tools with typed JSON
-   inputs and outputs.
+1. **Agent-first surface.** The public API is a small MCP tool set with typed
+   JSON inputs and outputs.
 2. **Single visible runtime.** Users and agents interact with one binary:
    `cmd/sofarpc-mcp`.
 3. **Pure-Go invoke path.** Direct invocation is implemented in Go for
@@ -31,9 +31,10 @@ Everything else exists only to make that loop reliable for agents.
 4. **Source-first contract guidance, mandatory execution.** `describe`
    should work from local Java sources when they exist, but invoke must remain
    usable in trusted mode without any local contract cache requirement.
-5. **Project defaults are layered target config.** Target defaults can live in
-   project-local `.sofarpc/config.local.json`, shared `.sofarpc/config.json`,
-   or user-level MCP env; per-call input still wins.
+5. **Project defaults are layered target config.** Target defaults live in
+   project-local `.sofarpc/config.local.json` or shared
+   `.sofarpc/config.json`; per-call input still wins. MCP process env remains
+   only as a legacy/manual fallback, not an installation target.
 6. **Structured recovery.** Errors return stable codes and next-step hints so
    agents can recover by calling another tool, not by parsing prose.
 
@@ -46,7 +47,7 @@ flowchart TB
     end
 
     subgraph MCP["MCP layer · internal/mcp"]
-        Server["sofarpc-mcp\n6 tools"]
+        Server["sofarpc-mcp\ntools"]
         Sessions["SessionStore\nTTL + LRU"]
     end
 
@@ -88,10 +89,11 @@ The architectural split is:
 
 ## 4. Public MCP surface
 
-The public API is fixed at six tools.
+The public API is intentionally small and project-scoped.
 
 | Tool | Purpose |
 | --- | --- |
+| `sofarpc_init_project` | Initialize `.sofarpc/config*.json` for a Java project, including service allowlist discovery. |
 | `sofarpc_open` | Open a workspace and return project root, resolved target, capabilities, and a session id. |
 | `sofarpc_target` | Resolve the effective target and optionally probe reachability. |
 | `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. |
@@ -119,12 +121,12 @@ Example:
 
 ## 5. Configuration and target model
 
-`sofarpc-cli` has no required project manifest. Target defaults can come from
-optional project files, user-level MCP env, or built-in defaults. Target
-resolution is:
+`sofarpc-cli` has no required project manifest. Target defaults should come
+from optional project files; MCP process env is limited to global guardrails.
+Target resolution is:
 
 ```text
-per-call MCP input > .sofarpc/config.local.json > .sofarpc/config.json > MCP server env > built-in defaults
+per-call MCP input > .sofarpc/config.local.json > .sofarpc/config.json > built-in defaults
 ```
 
 This is implemented by `internal/core/target.Resolve`.
@@ -167,32 +169,47 @@ Built-in defaults:
   `.sofarpc/config.json` in a Java project. Local config is added to the
   project's `.gitignore`; shared config never accepts real-invoke guardrails.
 
-Per-project defaults can also live on a user-level MCP server entry when that is
-the desired deployment model.
+Per-project defaults live in `.sofarpc/config*.json`, not in user-level MCP
+client env. User setup scrubs stale target and service allowlist env such as
+`SOFARPC_PROJECT_ROOT`, `SOFARPC_DIRECT_URL`, and
+`SOFARPC_ALLOWED_SERVICES` from the managed sofarpc entry, and the MCP
+entrypoint ignores those project-specific env keys at runtime. With project
+config, normal `sofarpc_invoke` requests do not need to repeat `directUrl`.
+Per-call target fields exist only for explicit override. Project config does
+not accept a literal `mode`; the mode is derived from the first endpoint
+selected by priority (`directUrl` for direct, `registryAddress` for registry).
 
-```json
-{
-  "mcpServers": {
-    "sofarpc-demo": {
-      "command": "/abs/path/to/sofarpc-mcp",
-      "env": {
-        "SOFARPC_PROJECT_ROOT": "/abs/path/to/project",
-        "SOFARPC_DIRECT_URL": "bolt://host:12200",
-        "SOFARPC_PROTOCOL": "bolt",
-        "SOFARPC_SERIALIZATION": "hessian2"
-      }
-    }
-  }
-}
-```
+### 5.3 `sofarpc_init_project`
 
-With a project-level MCP env or `.sofarpc/config*.json`, normal
-`sofarpc_invoke` requests do not need to repeat `directUrl`. Per-call target
-fields exist only for explicit override. Project config does not accept a
-literal `mode`; the mode is derived from the first endpoint selected by
-priority (`directUrl` for direct, `registryAddress` for registry).
+`sofarpc_init_project` is the agent-facing equivalent of project-scope setup.
+It resolves a project from `project`, `cwd`, or `sessionId`; if none is
+provided, it attempts safe Java project auto-discovery from the MCP process cwd.
+The tool writes either `.sofarpc/config.local.json` or `.sofarpc/config.json`
+and uses the same project config serializer as the CLI only after scope is
+explicit.
 
-### 5.3 `sofarpc_target`
+Auto-discovery is write-safe: no-scope calls return `projectResolution` only
+and never write files, even when exactly one high-confidence candidate is found.
+High-confidence evidence is an existing `.sofarpc/config*.json`, or Java build
+and source markers inside a git worktree. Discovery includes candidates and
+`scanTruncated` evidence so agents can retry with an explicit `project`, `cwd`,
+or `sessionId`.
+
+The tool may auto-fill `allowedServices` from source-contract data. Discovery
+is conservative by default: it first filters indexed Java FQNs by simple-name
+suffix (`Facade` by default), then parses only those matches to verify they are
+method-bearing interfaces. Agents can pass `serviceNameSuffixes` such as
+`["Facade", "Service"]`, or `["*"]` when they intentionally want to inspect all
+method-bearing interfaces. It never infers `directUrl` or `registryAddress`;
+those targets must be supplied explicitly. The tool refuses to write a config
+without `allowedServices`; callers must pass `services`, rely on successful
+discovery, or set `allowAllServices=true` intentionally.
+
+Local config initialization also ensures `.sofarpc/config.local.json` is
+ignored by the project `.gitignore`. Existing config is not overwritten unless
+`force=true` is supplied.
+
+### 5.4 `sofarpc_target`
 
 `sofarpc_target` is the inspection tool for target resolution. It returns:
 
@@ -214,7 +231,7 @@ The probe only checks whether a TCP connection can be opened within
 `sofarpc_open` establishes the working context for a project:
 
 - resolve project root from `cwd` or `project`
-- resolve the ambient target from project config, MCP env, and defaults
+- resolve the ambient target from project config and defaults
 - return capabilities and a new session id
 
 Representative output:
@@ -260,8 +277,9 @@ same call context repeatedly.
 ## 7. Contract model
 
 The contract layer exists to bridge Java method signatures into agent-editable
-JSON. In the pure-Go mainline, `cmd/sofarpc-mcp` attaches a store built by
-scanning `.java` files under `SOFARPC_PROJECT_ROOT`. It owns:
+JSON. In the pure-Go mainline, `cmd/sofarpc-mcp` lazily builds and caches a
+store per resolved project root by scanning that project's `.java` files. It
+owns:
 
 - overload resolution
 - parameter and return type resolution
@@ -438,7 +456,9 @@ that policy; the guardrail decisions are not implemented in the tool handlers.
 The policy controls:
 
 - real invoke opt-in via `SOFARPC_ALLOW_INVOKE`
-- service allowlisting via `SOFARPC_ALLOWED_SERVICES`
+- mandatory service allowlisting via project `.sofarpc/config*.json`
+  `allowedServices`; missing allowlists reject real invoke, and `["*"]` is the
+  explicit wildcard
 - direct target override rules via `SOFARPC_ALLOW_TARGET_OVERRIDE`
 - direct host allowlisting via `SOFARPC_ALLOWED_TARGET_HOSTS`
 - rejection of invalid project target config before execution

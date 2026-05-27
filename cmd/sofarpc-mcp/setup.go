@@ -27,8 +27,9 @@ var embeddedSkill string
 // runSetup owns installation-time configuration. User scope registers
 // this binary with Claude Code and Codex; project scope writes target
 // defaults into .sofarpc/config*.json. User registration is minimal on
-// purpose: `command` points at the binary, and SOFARPC_* flags seed env
-// defaults while the server keeps resolving everything else at runtime.
+// purpose: `command` points at the binary, and SOFARPC_* flags seed only
+// global guardrail env while project-specific target config lives in the
+// project.
 //
 // User registration is idempotent: running setup again with different
 // flags replaces only the sofarpc entry and merges existing sofarpc env
@@ -40,17 +41,17 @@ func runSetup(args []string) error {
 	flags.BoolVar(&opts.claude, "claude-code", false, "user scope: register only in Claude Code (~/.claude.json)")
 	flags.BoolVar(&opts.codex, "codex", false, "user scope: register only in Codex (~/.codex/config.toml)")
 	flags.StringVar(&opts.command, "command", "", "user scope: absolute sofarpc-mcp command path to register")
-	flags.StringVar(&opts.projectRoot, "project-root", "", "user scope: optional SOFARPC_PROJECT_ROOT; project scope: target project root")
-	flags.StringVar(&opts.directURL, "direct-url", "", "optional direct target URL")
-	flags.StringVar(&opts.registryAddr, "registry-address", "", "optional registry target address")
-	flags.StringVar(&opts.registryProtocol, "registry-protocol", "", "optional registry protocol")
-	flags.StringVar(&opts.protocol, "protocol", "", "optional wire protocol")
-	flags.StringVar(&opts.serialization, "serialization", "", "optional wire serialization")
-	flags.StringVar(&opts.uniqueID, "unique-id", "", "optional SOFA service uniqueId")
-	flags.StringVar(&opts.timeoutMS, "timeout-ms", "", "optional request timeout in milliseconds")
-	flags.StringVar(&opts.connectTimeoutMS, "connect-timeout-ms", "", "optional connect timeout in milliseconds")
+	flags.StringVar(&opts.projectRoot, "project-root", "", "project scope: target project root")
+	flags.StringVar(&opts.directURL, "direct-url", "", "project scope: direct target URL")
+	flags.StringVar(&opts.registryAddr, "registry-address", "", "project scope: registry target address")
+	flags.StringVar(&opts.registryProtocol, "registry-protocol", "", "project scope: registry protocol")
+	flags.StringVar(&opts.protocol, "protocol", "", "project scope: wire protocol")
+	flags.StringVar(&opts.serialization, "serialization", "", "project scope: wire serialization")
+	flags.StringVar(&opts.uniqueID, "unique-id", "", "project scope: SOFA service uniqueId")
+	flags.StringVar(&opts.timeoutMS, "timeout-ms", "", "project scope: request timeout in milliseconds")
+	flags.StringVar(&opts.connectTimeoutMS, "connect-timeout-ms", "", "project scope: connect timeout in milliseconds")
 	flags.BoolVar(&opts.allowInvoke, "allow-invoke", false, "user scope: set SOFARPC_ALLOW_INVOKE")
-	flags.StringVar(&opts.allowedServices, "allowed-services", "", "user scope: comma-separated SOFARPC_ALLOWED_SERVICES")
+	flags.StringVar(&opts.allowedServices, "allowed-services", "", "project scope: comma-separated allowedServices")
 	flags.StringVar(&opts.allowedTargetHosts, "allowed-target-hosts", "", "user scope: comma-separated SOFARPC_ALLOWED_TARGET_HOSTS")
 	flags.BoolVar(&opts.allowTargetOverride, "allow-target-override", false, "user scope: set SOFARPC_ALLOW_TARGET_OVERRIDE")
 	flags.StringVar(&opts.argsFileRoot, "args-file-root", "", "user scope: SOFARPC_ARGS_FILE_ROOT")
@@ -169,9 +170,23 @@ func runUserSetup(opts setupOptions) error {
 }
 
 func rejectProjectOnlyFlags(opts setupOptions) error {
-	for _, name := range []string{"local", "shared", "force"} {
+	for _, name := range []string{
+		"local",
+		"shared",
+		"force",
+		"project-root",
+		"direct-url",
+		"registry-address",
+		"registry-protocol",
+		"protocol",
+		"serialization",
+		"unique-id",
+		"timeout-ms",
+		"connect-timeout-ms",
+		"allowed-services",
+	} {
 		if opts.set[name] {
-			return fmt.Errorf("--%s is only valid with --scope=project", name)
+			return fmt.Errorf("--%s is project-specific; use --scope=project", name)
 		}
 	}
 	return nil
@@ -228,25 +243,9 @@ func isLikelyGoRunBinary(path string) bool {
 
 func buildSetupEnv(opts setupOptions) (map[string]string, error) {
 	out := map[string]string{}
-	if err := addProjectRootEnv(out, opts.projectRoot, opts.set); err != nil {
-		return nil, err
-	}
-	addStringEnv(out, "direct-url", "SOFARPC_DIRECT_URL", opts.directURL, opts.set)
-	addStringEnv(out, "registry-address", "SOFARPC_REGISTRY_ADDRESS", opts.registryAddr, opts.set)
-	addStringEnv(out, "registry-protocol", "SOFARPC_REGISTRY_PROTOCOL", opts.registryProtocol, opts.set)
-	addStringEnv(out, "protocol", "SOFARPC_PROTOCOL", opts.protocol, opts.set)
-	addStringEnv(out, "serialization", "SOFARPC_SERIALIZATION", opts.serialization, opts.set)
-	addStringEnv(out, "unique-id", "SOFARPC_UNIQUE_ID", opts.uniqueID, opts.set)
-	if err := addNumericEnv(out, "timeout-ms", "SOFARPC_TIMEOUT_MS", opts.timeoutMS, opts.set); err != nil {
-		return nil, err
-	}
-	if err := addNumericEnv(out, "connect-timeout-ms", "SOFARPC_CONNECT_TIMEOUT_MS", opts.connectTimeoutMS, opts.set); err != nil {
-		return nil, err
-	}
 	if opts.set["allow-invoke"] {
 		out["SOFARPC_ALLOW_INVOKE"] = strconv.FormatBool(opts.allowInvoke)
 	}
-	addStringEnv(out, "allowed-services", "SOFARPC_ALLOWED_SERVICES", opts.allowedServices, opts.set)
 	addStringEnv(out, "allowed-target-hosts", "SOFARPC_ALLOWED_TARGET_HOSTS", opts.allowedTargetHosts, opts.set)
 	if opts.set["allow-target-override"] {
 		out["SOFARPC_ALLOW_TARGET_OVERRIDE"] = strconv.FormatBool(opts.allowTargetOverride)
@@ -262,25 +261,6 @@ func buildSetupEnv(opts setupOptions) (map[string]string, error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-func addProjectRootEnv(out map[string]string, raw string, set map[string]bool) error {
-	if !set["project-root"] {
-		return nil
-	}
-	root := strings.TrimSpace(raw)
-	if root == "" {
-		return nil
-	}
-	if !filepath.IsAbs(root) {
-		abs, err := filepath.Abs(root)
-		if err != nil {
-			return fmt.Errorf("--project-root: %w", err)
-		}
-		root = abs
-	}
-	out["SOFARPC_PROJECT_ROOT"] = root
-	return nil
 }
 
 func addStringEnv(out map[string]string, flagName, envName, raw string, set map[string]bool) {
@@ -339,6 +319,7 @@ func setupClaudeAt(path, binary string, envDefaults map[string]string, replaceEn
 	env := map[string]string{}
 	if !replaceEnv {
 		env = readClaudeEnv(servers["sofarpc"])
+		scrubUserScopeEnv(env)
 	}
 	for k, v := range envDefaults {
 		env[k] = v
@@ -385,6 +366,25 @@ func readClaudeEnv(entry any) map[string]string {
 	return out
 }
 
+var projectScopedEnvKeys = map[string]struct{}{
+	"SOFARPC_PROJECT_ROOT":       {},
+	"SOFARPC_DIRECT_URL":         {},
+	"SOFARPC_REGISTRY_ADDRESS":   {},
+	"SOFARPC_REGISTRY_PROTOCOL":  {},
+	"SOFARPC_PROTOCOL":           {},
+	"SOFARPC_SERIALIZATION":      {},
+	"SOFARPC_UNIQUE_ID":          {},
+	"SOFARPC_TIMEOUT_MS":         {},
+	"SOFARPC_CONNECT_TIMEOUT_MS": {},
+	"SOFARPC_ALLOWED_SERVICES":   {},
+}
+
+func scrubUserScopeEnv(env map[string]string) {
+	for key := range projectScopedEnvKeys {
+		delete(env, key)
+	}
+}
+
 // --- Codex ---------------------------------------------------------------
 
 // codexHeaderRe matches a TOML section header on its own line. Inline
@@ -425,6 +425,7 @@ func upsertCodexTOML(existing, binary string, envDefaults map[string]string, rep
 	env := map[string]string{}
 	if !replaceEnv {
 		env = readCodexSofaEnv(existing)
+		scrubUserScopeEnv(env)
 	}
 	for k, v := range envDefaults {
 		env[k] = v

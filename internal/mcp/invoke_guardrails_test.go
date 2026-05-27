@@ -3,6 +3,7 @@ package mcp
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
@@ -33,17 +34,49 @@ func TestValidateRealInvokeRequiresAllowEnv(t *testing.T) {
 	}
 }
 
-func TestValidateRealInvokeRespectsAllowedServices(t *testing.T) {
+func TestValidateRealInvokeLegacyAllowedServicesEnvDoesNotSatisfyProjectAllowlist(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "com.foo.AllowedFacade,com.foo.OtherFacade")
+	t.Setenv(envAllowedServices, "com.foo.OtherFacade")
 
-	if err := validateRealInvoke("com.foo.AllowedFacade"); err != nil {
-		t.Fatalf("allowed service rejected: %v", err)
+	err := validateRealInvoke("com.foo.Svc")
+	if err == nil {
+		t.Fatal("expected missing project allowedServices to reject real invoke")
+	}
+	if !strings.Contains(err.Error(), "project allowedServices") {
+		t.Fatalf("error should mention project allowedServices: %v", err)
+	}
+}
+
+func TestValidateExecutionPolicyUsesProjectAllowedServices(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowTargetOverride, "false")
+
+	sources := target.Sources{
+		ProjectLocal: target.Config{DirectURL: "bolt://project.example:12200"},
+		ProjectLocalPolicy: target.PolicyConfig{
+			AllowedServices: []string{"com.foo.AllowedFacade"},
+		},
+	}
+	err := validateExecutionPolicy(invoke.Plan{
+		Service: "com.foo.AllowedFacade",
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://project.example:12200",
+		},
+	}, "invoke", sources)
+	if err != nil {
+		t.Fatalf("project-allowed service rejected: %v", err)
 	}
 
-	err := validateRealInvoke("com.foo.BlockedFacade")
+	err = validateExecutionPolicy(invoke.Plan{
+		Service: "com.foo.BlockedFacade",
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://project.example:12200",
+		},
+	}, "invoke", sources)
 	if err == nil {
-		t.Fatal("expected disallowed service to be rejected")
+		t.Fatal("expected project-disallowed service to be rejected")
 	}
 	ecerr, ok := err.(*errcode.Error)
 	if !ok {
@@ -65,7 +98,11 @@ func TestValidateExecutionPolicyRejectsDirectTargetOverrideByDefault(t *testing.
 			Mode:      target.ModeDirect,
 			DirectURL: "bolt://override.example:12200",
 		},
-	}, "invoke", target.Sources{})
+	}, "invoke", target.Sources{
+		ProjectPolicy: target.PolicyConfig{
+			AllowedServices: []string{"com.foo.Svc"},
+		},
+	})
 	if err == nil {
 		t.Fatal("expected direct target override to be rejected")
 	}
@@ -78,7 +115,7 @@ func TestValidateExecutionPolicyRejectsDirectTargetOverrideByDefault(t *testing.
 	}
 }
 
-func TestValidateExecutionPolicyAllowsEnvDirectTargetByDefault(t *testing.T) {
+func TestValidateExecutionPolicyAllowsEnvDirectTargetWithProjectAllowedServices(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
 	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowTargetOverride, "false")
@@ -91,6 +128,9 @@ func TestValidateExecutionPolicyAllowsEnvDirectTargetByDefault(t *testing.T) {
 		},
 	}, "invoke", target.Sources{
 		Env: target.Config{DirectURL: "bolt://env.example:12200"},
+		ProjectPolicy: target.PolicyConfig{
+			AllowedServices: []string{"com.foo.Svc"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("env direct target should be allowed: %v", err)
@@ -110,6 +150,9 @@ func TestValidateExecutionPolicyAllowsProjectDirectTargetByDefault(t *testing.T)
 		},
 	}, "invoke", target.Sources{
 		ProjectLocal: target.Config{DirectURL: "bolt://project.example:12200"},
+		ProjectLocalPolicy: target.PolicyConfig{
+			AllowedServices: []string{"com.foo.Svc"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("project direct target should be allowed: %v", err)
@@ -129,6 +172,9 @@ func TestValidateExecutionPolicyRejectsProjectConfigErrors(t *testing.T) {
 		},
 	}, "invoke", target.Sources{
 		ProjectLocal: target.Config{DirectURL: "bolt://project.example:12200"},
+		ProjectLocalPolicy: target.PolicyConfig{
+			AllowedServices: []string{"com.foo.Svc"},
+		},
 		ConfigErrors: []target.ConfigError{{Path: ".sofarpc/config.json", Error: "bad json"}},
 	})
 	if err == nil {
@@ -155,7 +201,11 @@ func TestValidateExecutionPolicyRespectsAllowedTargetHosts(t *testing.T) {
 			Mode:      target.ModeDirect,
 			DirectURL: "bolt://blocked.example:12200",
 		},
-	}, "replay", target.Sources{})
+	}, "replay", target.Sources{
+		ProjectPolicy: target.PolicyConfig{
+			AllowedServices: []string{"com.foo.Svc"},
+		},
+	})
 	if err == nil {
 		t.Fatal("expected blocked target host to be rejected")
 	}
@@ -176,7 +226,11 @@ func TestValidateExecutionPolicyRespectsAllowedTargetHosts(t *testing.T) {
 			Mode:      target.ModeDirect,
 			DirectURL: "bolt://allowed.example:12200",
 		},
-	}, "invoke", target.Sources{})
+	}, "invoke", target.Sources{
+		ProjectPolicy: target.PolicyConfig{
+			AllowedServices: []string{"com.foo.Svc"},
+		},
+	})
 	if err != nil {
 		t.Fatalf("allowed target host rejected: %v", err)
 	}

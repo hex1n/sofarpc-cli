@@ -686,7 +686,7 @@
           <div class="analysis-list">
             <div>
               <span class="sketch-number">1</span>
-              <span>产品形态是 agent-first 本地 MCP Server，核心不是人工点击 UI，而是让 Agent 调用六个 typed JSON tools。</span>
+              <span>产品形态是 agent-first 本地 MCP Server，核心不是人工点击 UI，而是让 Agent 调用一组 typed JSON tools。</span>
             </div>
             <div>
               <span class="sketch-number">2</span>
@@ -761,11 +761,10 @@
                   </div>
                   <div class="form-grid">
                     <div class="field"><label>command</label><span>/usr/local/bin/sofarpc-mcp</span></div>
-                    <div class="field"><label>project root</label><span>/abs/path/to/java-project</span></div>
-                    <div class="field"><label>direct url</label><span>bolt://dev-rpc.example.com:12200</span></div>
-                    <div class="field"><label>timeout</label><span>3000 ms</span></div>
                     <div class="field"><label>allow invoke</label><span>false by default</span></div>
-                    <div class="field"><label>allowlist</label><span>com.foo.UserFacade, com.foo.OrderFacade</span></div>
+                    <div class="field"><label>allowed hosts</label><span>127.0.0.1, dev-rpc.example.com</span></div>
+                    <div class="field"><label>response cap</label><span>16 MiB default</span></div>
+                    <div class="field"><label>session cap</label><span>plan capture bytes</span></div>
                   </div>
                   <div class="button-row">
                     <span class="button">dry-run</span>
@@ -782,8 +781,8 @@
                   <div class="json">mcpServers.sofarpc = {
   command: "/abs/path/to/sofarpc-mcp",
   env: {
-    SOFARPC_PROJECT_ROOT: "...",
-    SOFARPC_DIRECT_URL: "bolt://..."
+    SOFARPC_ALLOW_INVOKE: "true",
+    SOFARPC_ALLOWED_TARGET_HOSTS: "127.0.0.1"
   }
 }
 
@@ -867,7 +866,7 @@ mode: baked by go:embed</div>
                     <div class="arrow"></div>
                     <div class="layer"><span class="sketch-number">3</span><span>.sofarpc/config.json</span></div>
                     <div class="arrow"></div>
-                    <div class="layer"><span class="sketch-number">4</span><span>MCP env: SOFARPC_*</span></div>
+                    <div class="layer"><span class="sketch-number">4</span><span>进程 env 兼容兜底</span></div>
                     <div class="arrow"></div>
                     <div class="layer"><span class="sketch-number">5</span><span>built-in defaults: bolt + hessian2</span></div>
                   </div>
@@ -913,7 +912,7 @@ mode: baked by go:embed</div>
               <p class="frame-kicker">Screen 03</p>
               <h2>Agent 调用工作台</h2>
             </div>
-            <div class="frame-note">目标：把六个 MCP tools 变成可见的调用链、JSON skeleton 和 dry-run plan。</div>
+            <div class="frame-note">目标：把 MCP tools 变成可见的调用链、JSON skeleton 和 dry-run plan。</div>
           </div>
 
           <div class="screen">
@@ -928,7 +927,8 @@ mode: baked by go:embed</div>
               <aside class="sidebar">
                 <h3>Tool Flow</h3>
                 <div class="tool-list" style="margin-top: 10px">
-                  <span class="tool-chip active">1. sofarpc_open</span>
+                  <span class="tool-chip active">1. sofarpc_init_project</span>
+                  <span class="tool-chip">2. sofarpc_open</span>
                   <span class="tool-chip active">2. sofarpc_target</span>
                   <span class="tool-chip next">3. sofarpc_describe</span>
                   <span class="tool-chip">4. sofarpc_invoke dryRun</span>
@@ -1019,7 +1019,7 @@ plan normalization preview:
                   </div>
                   <div class="checkbox-list">
                     <div class="checkbox"><span class="box-mark"></span><span>SOFARPC_ALLOW_INVOKE</span></div>
-                    <div class="checkbox"><span class="box-mark checked"></span><span>SOFARPC_ALLOWED_SERVICES</span></div>
+                    <div class="checkbox"><span class="box-mark checked"></span><span>.sofarpc allowedServices</span></div>
                     <div class="checkbox"><span class="box-mark checked"></span><span>SOFARPC_MAX_RESPONSE_BYTES</span></div>
                   </div>
                 </div>

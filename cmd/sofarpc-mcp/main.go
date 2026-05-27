@@ -1,5 +1,5 @@
 // sofarpc-mcp serves the sofarpc-cli tools over MCP stdio. The single
-// entrypoint is intentional: agents load one server, call six tools. See
+// entrypoint is intentional: agents load one server and call the sofarpc tools. See
 // docs/architecture.md for the design.
 package main
 
@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
@@ -76,13 +75,10 @@ func run(ctx context.Context) error {
 }
 
 // projectRootFromEnv picks the directory the server should anchor to.
-// SOFARPC_PROJECT_ROOT wins; otherwise we use the process CWD. Empty
-// string is acceptable — handlers that need a project root resolve it
-// per-call via the workspace package.
+// Project-specific SOFARPC_* env such as SOFARPC_PROJECT_ROOT are ignored:
+// project roots now come from per-call project/cwd/session inputs or the
+// process CWD, and target config lives under .sofarpc/config*.json.
 func projectRootFromEnv() string {
-	if v := os.Getenv("SOFARPC_PROJECT_ROOT"); v != "" {
-		return v
-	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return ""
@@ -90,37 +86,11 @@ func projectRootFromEnv() string {
 	return wd
 }
 
-// envConfig reads the SOFARPC_* environment into a target.Config. Only
-// fields that are set contribute to resolution; everything else stays
-// empty so the defaults layer can fill it.
+// envConfig intentionally does not read project-specific target env.
+// User-level setup may still seed global guardrail env in the MCP host, but
+// target/root/service policy belongs in project .sofarpc/config*.json.
 func envConfig() target.Config {
-	cfg := target.Config{
-		DirectURL:        os.Getenv("SOFARPC_DIRECT_URL"),
-		RegistryAddress:  os.Getenv("SOFARPC_REGISTRY_ADDRESS"),
-		RegistryProtocol: os.Getenv("SOFARPC_REGISTRY_PROTOCOL"),
-		Protocol:         os.Getenv("SOFARPC_PROTOCOL"),
-		Serialization:    os.Getenv("SOFARPC_SERIALIZATION"),
-		UniqueID:         os.Getenv("SOFARPC_UNIQUE_ID"),
-		TimeoutMS:        atoiOrZero(os.Getenv("SOFARPC_TIMEOUT_MS")),
-		ConnectTimeoutMS: atoiOrZero(os.Getenv("SOFARPC_CONNECT_TIMEOUT_MS")),
-	}
-	if cfg.DirectURL != "" {
-		cfg.Mode = target.ModeDirect
-	} else if cfg.RegistryAddress != "" {
-		cfg.Mode = target.ModeRegistry
-	}
-	return cfg
-}
-
-func atoiOrZero(raw string) int {
-	if raw == "" {
-		return 0
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0
-	}
-	return n
+	return target.Config{}
 }
 
 // loadContractStore attempts to materialize a source-contract store. The

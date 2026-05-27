@@ -52,25 +52,42 @@ type Config struct {
 }
 
 type projectConfig struct {
-	DirectURL        string `json:"directUrl,omitempty"`
-	RegistryAddress  string `json:"registryAddress,omitempty"`
-	RegistryProtocol string `json:"registryProtocol,omitempty"`
-	Protocol         string `json:"protocol,omitempty"`
-	Serialization    string `json:"serialization,omitempty"`
-	UniqueID         string `json:"uniqueId,omitempty"`
-	TimeoutMS        int    `json:"timeoutMs,omitempty"`
-	ConnectTimeoutMS int    `json:"connectTimeoutMs,omitempty"`
+	DirectURL        string    `json:"directUrl,omitempty"`
+	RegistryAddress  string    `json:"registryAddress,omitempty"`
+	RegistryProtocol string    `json:"registryProtocol,omitempty"`
+	Protocol         string    `json:"protocol,omitempty"`
+	Serialization    string    `json:"serialization,omitempty"`
+	UniqueID         string    `json:"uniqueId,omitempty"`
+	TimeoutMS        int       `json:"timeoutMs,omitempty"`
+	ConnectTimeoutMS int       `json:"connectTimeoutMs,omitempty"`
+	AllowedServices  *[]string `json:"allowedServices,omitempty"`
 }
 
 // Sources is the ambient, already-materialised config surface available
 // to resolution. ProjectLocal and Project are loaded from
 // .sofarpc/config.local.json and .sofarpc/config.json respectively.
 type Sources struct {
-	Env          Config
-	Project      Config
-	ProjectLocal Config
-	ProjectRoot  string
-	ConfigErrors []ConfigError
+	Env                Config
+	Project            Config
+	ProjectLocal       Config
+	ProjectPolicy      PolicyConfig
+	ProjectLocalPolicy PolicyConfig
+	ProjectRoot        string
+	ConfigErrors       []ConfigError
+}
+
+// PolicyConfig contains project-scoped execution policy. It is parsed from
+// the same .sofarpc/config*.json files as target config, but kept separate
+// from Config so resolved invoke targets do not leak policy-only fields.
+type PolicyConfig struct {
+	AllowedServices    []string `json:"allowedServices,omitempty"`
+	AllowedServicesSet bool     `json:"allowedServicesSet,omitempty"`
+}
+
+type ServiceAllowlist struct {
+	Configured bool
+	Services   []string
+	Source     string
 }
 
 // ConfigError records a project config file that existed but could not be
@@ -226,45 +243,83 @@ func ProjectSources(projectRoot string, env Config) Sources {
 	if projectRoot == "" {
 		return src
 	}
-	project, ok, err := loadProjectConfigFile(filepath.Join(projectRoot, ".sofarpc", "config.json"))
+	project, projectPolicy, ok, err := loadProjectConfigFile(filepath.Join(projectRoot, ".sofarpc", "config.json"))
 	if err != nil {
 		src.ConfigErrors = append(src.ConfigErrors, ConfigError{Path: filepath.Join(projectRoot, ".sofarpc", "config.json"), Error: err.Error()})
 	} else if ok {
 		src.Project = project
+		src.ProjectPolicy = projectPolicy
 	}
-	local, ok, err := loadProjectConfigFile(filepath.Join(projectRoot, ".sofarpc", "config.local.json"))
+	local, localPolicy, ok, err := loadProjectConfigFile(filepath.Join(projectRoot, ".sofarpc", "config.local.json"))
 	if err != nil {
 		src.ConfigErrors = append(src.ConfigErrors, ConfigError{Path: filepath.Join(projectRoot, ".sofarpc", "config.local.json"), Error: err.Error()})
 	} else if ok {
 		src.ProjectLocal = local
+		src.ProjectLocalPolicy = localPolicy
 	}
 	return src
 }
 
-func loadProjectConfigFile(path string) (Config, bool, error) {
+func loadProjectConfigFile(path string) (Config, PolicyConfig, bool, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Config{}, false, nil
+			return Config{}, PolicyConfig{}, false, nil
 		}
-		return Config{}, false, err
+		return Config{}, PolicyConfig{}, false, err
 	}
 	var cfg projectConfig
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
-		return Config{}, true, err
+		return Config{}, PolicyConfig{}, true, err
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		if err == nil {
 			err = fmt.Errorf("contains multiple JSON values")
 		}
-		return Config{}, true, err
+		return Config{}, PolicyConfig{}, true, err
 	}
 	if strings.TrimSpace(cfg.DirectURL) != "" && strings.TrimSpace(cfg.RegistryAddress) != "" {
-		return Config{}, true, fmt.Errorf("directUrl and registryAddress are mutually exclusive")
+		return Config{}, PolicyConfig{}, true, fmt.Errorf("directUrl and registryAddress are mutually exclusive")
 	}
-	return normalizeConfig(configFromProjectConfig(cfg)), true, nil
+	return normalizeConfig(configFromProjectConfig(cfg)), policyFromProjectConfig(cfg), true, nil
+}
+
+// AllowedServices returns the effective project-scoped service allowlist.
+// Local config wins over shared config. A nil return means the project did
+// not set a service allowlist.
+func AllowedServices(sources Sources) []string {
+	allowlist := ServiceAllowlistForSources(sources)
+	if !allowlist.Configured {
+		return nil
+	}
+	return append([]string(nil), allowlist.Services...)
+}
+
+// ServiceAllowlistForSources returns the effective service allowlist plus
+// whether it was explicitly configured. An explicitly empty local allowlist
+// still wins over a shared allowlist and blocks every service.
+func ServiceAllowlistForSources(sources Sources) ServiceAllowlist {
+	if policyHasAllowedServices(sources.ProjectLocalPolicy) {
+		return ServiceAllowlist{
+			Configured: true,
+			Services:   append([]string(nil), sources.ProjectLocalPolicy.AllowedServices...),
+			Source:     "project allowedServices",
+		}
+	}
+	if policyHasAllowedServices(sources.ProjectPolicy) {
+		return ServiceAllowlist{
+			Configured: true,
+			Services:   append([]string(nil), sources.ProjectPolicy.AllowedServices...),
+			Source:     "project allowedServices",
+		}
+	}
+	return ServiceAllowlist{}
+}
+
+func policyHasAllowedServices(policy PolicyConfig) bool {
+	return policy.AllowedServicesSet || len(policy.AllowedServices) > 0
 }
 
 func resolveEndpoint(layers []layerConfig) (Config, []FieldTrace, map[string][]string) {
@@ -356,6 +411,27 @@ func configFromProjectConfig(cfg projectConfig) Config {
 		TimeoutMS:        cfg.TimeoutMS,
 		ConnectTimeoutMS: cfg.ConnectTimeoutMS,
 	}
+}
+
+func policyFromProjectConfig(cfg projectConfig) PolicyConfig {
+	if cfg.AllowedServices == nil {
+		return PolicyConfig{}
+	}
+	return PolicyConfig{
+		AllowedServices:    normalizeStringList(*cfg.AllowedServices),
+		AllowedServicesSet: true,
+	}
+}
+
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func configFromInput(in Input) Config {

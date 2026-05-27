@@ -6,6 +6,8 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 )
 
+const defaultProjectContractCacheMax = 32
+
 // contractHolder owns the current contract store and its load error
 // behind a mutex so the MCP handlers can share one stable snapshot.
 // Readers take a snapshot via Get / LoadError; when a loader is present,
@@ -23,6 +25,8 @@ type contractHolder struct {
 	defaultRoot   string
 	projectLoader func(string) (contract.Store, error)
 	projects      map[string]*projectContractEntry
+	projectOrder  []string
+	projectMax    int
 }
 
 type contractSnapshot struct {
@@ -40,7 +44,14 @@ type projectContractEntry struct {
 }
 
 func newContractHolder(store contract.Store, loadError string, loader func() (contract.Store, error)) *contractHolder {
-	return &contractHolder{store: store, loadError: loadError, loader: loader, projects: map[string]*projectContractEntry{}}
+	return &contractHolder{
+		store:        store,
+		loadError:    loadError,
+		loader:       loader,
+		projects:     map[string]*projectContractEntry{},
+		projectMax:   defaultProjectContractCacheMax,
+		projectOrder: nil,
+	}
 }
 
 func (h *contractHolder) Get() contract.Store {
@@ -77,6 +88,10 @@ func (h *contractHolder) ForProject(projectRoot string) contractSnapshot {
 	if entry == nil {
 		entry = &projectContractEntry{root: projectRoot, loader: loader}
 		h.projects[projectRoot] = entry
+		h.projectOrder = append(h.projectOrder, projectRoot)
+		h.evictProjectContractsLocked(projectRoot)
+	} else {
+		h.touchProjectContractLocked(projectRoot)
 	}
 	h.mu.Unlock()
 
@@ -118,6 +133,51 @@ func (h *contractHolder) SetProjectLoader(loader func(string) (contract.Store, e
 	defer h.mu.Unlock()
 	h.projectLoader = loader
 	h.projects = map[string]*projectContractEntry{}
+	h.projectOrder = nil
+}
+
+func (h *contractHolder) ProjectCacheDiagnostics() map[string]any {
+	if h == nil {
+		return nil
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	max := h.projectMax
+	if max <= 0 {
+		max = defaultProjectContractCacheMax
+	}
+	return map[string]any{
+		"projectEntries": len(h.projects),
+		"projectMax":     max,
+	}
+}
+
+func (h *contractHolder) evictProjectContractsLocked(keep string) {
+	max := h.projectMax
+	if max <= 0 {
+		max = defaultProjectContractCacheMax
+	}
+	for len(h.projects) > max && len(h.projectOrder) > 0 {
+		root := h.projectOrder[0]
+		h.projectOrder = h.projectOrder[1:]
+		if root == keep {
+			h.projectOrder = append(h.projectOrder, root)
+			continue
+		}
+		delete(h.projects, root)
+	}
+}
+
+func (h *contractHolder) touchProjectContractLocked(projectRoot string) {
+	for i, root := range h.projectOrder {
+		if root != projectRoot {
+			continue
+		}
+		copy(h.projectOrder[i:], h.projectOrder[i+1:])
+		h.projectOrder[len(h.projectOrder)-1] = projectRoot
+		return
+	}
+	h.projectOrder = append(h.projectOrder, projectRoot)
 }
 
 func (h *contractHolder) ensureLoaded() {

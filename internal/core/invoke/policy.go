@@ -20,30 +20,39 @@ const (
 // enablement, service allowlisting, and target override checks behind one
 // interface so invoke and replay enforce the same rules.
 type ExecutionPolicy struct {
-	AllowInvoke         bool
-	AllowedServices     []string
-	AllowTargetOverride bool
-	AllowedTargetHosts  []string
-	Sources             target.Sources
+	AllowInvoke               bool
+	AllowedServices           []string
+	AllowedServicesConfigured bool
+	AllowedServicesSource     string
+	AllowTargetOverride       bool
+	AllowedTargetHosts        []string
+	Sources                   target.Sources
 }
 
 type ExecutionPolicyDiagnostics struct {
-	AllowInvoke         bool     `json:"allowInvoke"`
-	AllowedServices     []string `json:"allowedServices,omitempty"`
-	AllowTargetOverride bool     `json:"allowTargetOverride"`
-	AllowedTargetHosts  []string `json:"allowedTargetHosts,omitempty"`
+	AllowInvoke               bool     `json:"allowInvoke"`
+	AllowedServices           []string `json:"allowedServices,omitempty"`
+	AllowedServicesConfigured bool     `json:"allowedServicesConfigured"`
+	AllowedServicesSource     string   `json:"allowedServicesSource,omitempty"`
+	AllowTargetOverride       bool     `json:"allowTargetOverride"`
+	AllowedTargetHosts        []string `json:"allowedTargetHosts,omitempty"`
 }
 
 func (p ExecutionPolicy) Diagnostics() ExecutionPolicyDiagnostics {
 	return ExecutionPolicyDiagnostics{
-		AllowInvoke:         p.AllowInvoke,
-		AllowedServices:     append([]string(nil), p.AllowedServices...),
-		AllowTargetOverride: p.AllowTargetOverride,
-		AllowedTargetHosts:  append([]string(nil), p.AllowedTargetHosts...),
+		AllowInvoke:               p.AllowInvoke,
+		AllowedServices:           append([]string(nil), p.AllowedServices...),
+		AllowedServicesConfigured: p.serviceAllowlistConfigured(),
+		AllowedServicesSource:     strings.TrimSpace(p.AllowedServicesSource),
+		AllowTargetOverride:       p.AllowTargetOverride,
+		AllowedTargetHosts:        append([]string(nil), p.AllowedTargetHosts...),
 	}
 }
 
 func (p ExecutionPolicy) Validate(plan Plan, phase string) error {
+	if err := p.ValidateProjectConfig(phase); err != nil {
+		return err
+	}
 	if err := p.ValidateRealInvoke(plan.Service, phase); err != nil {
 		return err
 	}
@@ -57,17 +66,27 @@ func (p ExecutionPolicy) ValidateRealInvoke(service string, phase string) error 
 			"real invoke is disabled; set "+EnvAllowInvoke+"=true to enable non-dry-run calls").
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true}, "inspect the plan safely first")
 	}
-	if !p.ServiceAllowed(service) {
+	if !p.serviceAllowlistConfigured() {
 		return errcode.New(errcode.InvocationRejected, phase,
-			fmt.Sprintf("service %q is not allowed by %s", service, EnvAllowedServices)).
+			"project allowedServices is required for real invoke; configure .sofarpc/config.local.json or .sofarpc/config.json").
+			WithHint("sofarpc_init_project", map[string]any{"dryRun": true},
+				"initialize project allowedServices before enabling real invoke")
+	}
+	if !p.ServiceAllowed(service) {
+		source := strings.TrimSpace(p.AllowedServicesSource)
+		if source == "" {
+			source = "configured service allowlist"
+		}
+		return errcode.New(errcode.InvocationRejected, phase,
+			fmt.Sprintf("service %q is not allowed by %s", service, source)).
 			WithHint("sofarpc_doctor", nil, "inspect invoke safety configuration")
 	}
 	return nil
 }
 
 func (p ExecutionPolicy) ServiceAllowed(service string) bool {
-	if len(p.AllowedServices) == 0 {
-		return true
+	if !p.serviceAllowlistConfigured() {
+		return false
 	}
 	for _, allowed := range p.AllowedServices {
 		if allowed == "*" || allowed == service {
@@ -77,13 +96,14 @@ func (p ExecutionPolicy) ServiceAllowed(service string) bool {
 	return false
 }
 
+func (p ExecutionPolicy) serviceAllowlistConfigured() bool {
+	return p.AllowedServicesConfigured || len(p.AllowedServices) > 0
+}
+
 func (p ExecutionPolicy) ValidateTarget(plan Plan, phase string) error {
 	phase = normalizePolicyPhase(phase)
-	if len(p.Sources.ConfigErrors) > 0 {
-		return errcode.New(errcode.InvocationRejected, phase,
-			"project target config has errors: "+formatPolicyConfigErrors(p.Sources.ConfigErrors)).
-			WithHint("sofarpc_target", policyTargetHintArgs(p.Sources),
-				"inspect project config errors and resolved target layers")
+	if err := p.ValidateProjectConfig(phase); err != nil {
+		return err
 	}
 
 	cfg := target.Normalize(plan.Target)
@@ -96,7 +116,7 @@ func (p ExecutionPolicy) ValidateTarget(plan Plan, phase string) error {
 		switch {
 		case ambientCfg.DirectURL == "":
 			return errcode.New(errcode.InvocationRejected, phase,
-				fmt.Sprintf("direct target %q is not allowed; configure .sofarpc/config.local.json, .sofarpc/config.json, SOFARPC_DIRECT_URL, or set %s=true", cfg.DirectURL, EnvAllowTargetOverride)).
+				fmt.Sprintf("direct target %q is not allowed; configure .sofarpc/config.local.json, .sofarpc/config.json, or set %s=true", cfg.DirectURL, EnvAllowTargetOverride)).
 				WithHint("sofarpc_target", policyTargetHintArgs(p.Sources),
 					"inspect the resolved target before enabling real invoke")
 		default:
@@ -108,7 +128,7 @@ func (p ExecutionPolicy) ValidateTarget(plan Plan, phase string) error {
 			}
 			if !same {
 				return errcode.New(errcode.InvocationRejected, phase,
-					fmt.Sprintf("direct target %q does not match the resolved project/env target; set %s=true to allow per-call target overrides", cfg.DirectURL, EnvAllowTargetOverride)).
+					fmt.Sprintf("direct target %q does not match the resolved ambient target; set %s=true to allow per-call target overrides", cfg.DirectURL, EnvAllowTargetOverride)).
 					WithHint("sofarpc_target", policyTargetHintArgs(p.Sources),
 						"inspect the resolved target layers")
 			}
@@ -127,6 +147,17 @@ func (p ExecutionPolicy) ValidateTarget(plan Plan, phase string) error {
 			WithHint("sofarpc_doctor", nil, "inspect invoke safety configuration")
 	}
 	return nil
+}
+
+func (p ExecutionPolicy) ValidateProjectConfig(phase string) error {
+	phase = normalizePolicyPhase(phase)
+	if len(p.Sources.ConfigErrors) == 0 {
+		return nil
+	}
+	return errcode.New(errcode.InvocationRejected, phase,
+		"project target config has errors: "+formatPolicyConfigErrors(p.Sources.ConfigErrors)).
+		WithHint("sofarpc_target", policyTargetHintArgs(p.Sources),
+			"inspect project config errors and resolved target layers")
 }
 
 func SameDirectTarget(left, right string) (bool, error) {

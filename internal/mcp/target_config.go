@@ -14,6 +14,14 @@ func targetHintArgs(sources target.Sources) map[string]any {
 	return args
 }
 
+func initProjectPolicyHintArgs(sources target.Sources) map[string]any {
+	args := map[string]any{"dryRun": true}
+	if strings.TrimSpace(sources.ProjectRoot) != "" {
+		args["project"] = sources.ProjectRoot
+	}
+	return args
+}
+
 func targetConfigDiagnostics(sources target.Sources) map[string]any {
 	if len(sources.ConfigErrors) == 0 {
 		return nil
