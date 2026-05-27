@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>sofarpc-cli 高保真原型图</title>
+    <title>sofarpc-cli 原型图</title>
     <style>
       :root {
         --bg: #eef1f4;
@@ -777,7 +777,7 @@
 
       .flow {
         display: grid;
-        grid-template-columns: repeat(6, 1fr);
+        grid-template-columns: repeat(8, 1fr);
         gap: 8px;
       }
 
@@ -817,17 +817,18 @@
     <main class="board">
       <header class="board-header">
         <div>
-          <h1>sofarpc-cli 高保真原型图</h1>
-          <p class="subtitle">从 MCP Server 的实际使用链路抽象成控制台界面：配置、描述、计划、执行、重放、诊断。</p>
+          <h1>sofarpc-cli 原型图</h1>
+          <p class="subtitle">从 MCP Server 的实际使用链路抽象成控制台界面：分发、配置、描述、计划、执行、资源、重放、诊断。</p>
         </div>
         <div class="meta">
           <span class="badge blue"><span class="dot"></span>Desktop 1440</span>
           <span class="badge good"><span class="dot"></span>Direct + BOLT + Hessian2</span>
+          <span class="badge blue"><span class="dot"></span>MCPB macOS / Linux / Windows</span>
           <span class="badge warn"><span class="dot"></span>Real invoke locked</span>
         </div>
       </header>
 
-      <section class="app" aria-label="high fidelity prototype">
+      <section class="app" aria-label="sofarpc-cli prototype">
         <div class="topbar">
           <div class="brand">
             <div class="logo">S</div>
@@ -836,9 +837,10 @@
               <span>sofarpc-mcp · local MCP server</span>
             </div>
           </div>
-          <div class="search">⌘K · service, method, sessionId, errcode</div>
+          <div class="search">⌘K · service, method, sessionId, errcode, sofarpc:// resource</div>
           <div class="top-actions">
             <span class="badge good"><span class="dot"></span>ws_20260519_f81a</span>
+            <button class="button">Package</button>
             <button class="button">Dry-run</button>
             <button class="button primary">Describe</button>
           </div>
@@ -848,17 +850,20 @@
           <aside class="sidebar">
             <nav class="nav-group">
               <div class="nav-title">Workspace</div>
+              <div class="nav-item"><span class="icon">P</span><span>Package</span><span class="count">mcpb</span></div>
               <div class="nav-item active"><span class="icon">O</span><span>Open</span><span class="count">ready</span></div>
               <div class="nav-item"><span class="icon">T</span><span>Target</span><span class="count">direct</span></div>
               <div class="nav-item"><span class="icon">D</span><span>Describe</span><span class="count">692</span></div>
               <div class="nav-item"><span class="icon">I</span><span>Invoke</span><span class="count">dry</span></div>
+              <div class="nav-item"><span class="icon">L</span><span>Links</span><span class="count">3</span></div>
             </nav>
 
             <nav class="nav-group">
               <div class="nav-title">Recovery</div>
               <div class="nav-item"><span class="icon">R</span><span>Replay</span><span class="count">v1</span></div>
               <div class="nav-item"><span class="icon">!</span><span>Doctor</span><span class="count">1 warn</span></div>
-              <div class="nav-item"><span class="icon">P</span><span>Policy</span><span class="count">locked</span></div>
+              <div class="nav-item"><span class="icon">G</span><span>Progress</span><span class="count">token</span></div>
+              <div class="nav-item"><span class="icon">Y</span><span>Policy</span><span class="count">locked</span></div>
             </nav>
 
             <div class="sidebar-card">
@@ -871,6 +876,11 @@
               <div class="label">Resolved target</div>
               <div class="value">bolt://dev-rpc.example.com:12200</div>
             </div>
+
+            <div class="sidebar-card" style="margin-top: 14px">
+              <div class="label">Distribution</div>
+              <div class="value">6 MCPB bundles · Windows .exe included</div>
+            </div>
           </aside>
 
           <section class="main">
@@ -880,11 +890,13 @@
                 <div class="workspace-title">
                   <h2>OrderFacade.query 调用工作台</h2>
                   <span class="badge good"><span class="dot"></span>contract attached</span>
+                  <span class="badge good"><span class="dot"></span>project scoped</span>
                   <span class="badge blue"><span class="dot"></span>sourcecontract</span>
                 </div>
               </div>
               <div class="top-actions">
                 <button class="button">Target trace</button>
+                <button class="button">Resource links</button>
                 <button class="button danger">Real invoke disabled</button>
               </div>
             </div>
@@ -900,11 +912,11 @@
               </div>
               <div class="metric">
                 <div class="metric-label">Session plan</div>
-                <div class="metric-value">42KB <span>captured</span></div>
+                <div class="metric-value">42KB <span>captured + linked</span></div>
               </div>
               <div class="metric">
-                <div class="metric-label">Response cap</div>
-                <div class="metric-value">16MiB <span>policy</span></div>
+                <div class="metric-label">MCPB targets</div>
+                <div class="metric-value">6 <span>darwin/linux/win32</span></div>
               </div>
             </div>
 
@@ -1001,6 +1013,14 @@
                       </div>
                       <span class="badge good">ok</span>
                     </div>
+                    <div class="plan-row">
+                      <span class="step-mark">5</span>
+                      <div>
+                        <strong>Attach resource links</strong>
+                        <span>session, plan, and contract can be fetched by URI</span>
+                      </div>
+                      <span class="badge blue">link</span>
+                    </div>
                   </div>
 
                   <div class="code" style="margin-top: 14px; min-height: 330px">
@@ -1012,6 +1032,7 @@
   <span class="key">"service"</span>: <span class="string">"com.foo.OrderFacade"</span>,
   <span class="key">"method"</span>: <span class="string">"query"</span>,
   <span class="key">"contractSource"</span>: <span class="string">"sourcecontract"</span>,
+  <span class="key">"resource"</span>: <span class="string">"sofarpc://session/ws_20260519_f81a/plan"</span>,
   <span class="key">"target"</span>: {
     <span class="key">"mode"</span>: <span class="string">"direct"</span>,
     <span class="key">"protocol"</span>: <span class="string">"bolt"</span>,
@@ -1046,6 +1067,33 @@
                         <span class="switch on"></span>
                         <div><strong>MAX_RESPONSE_BYTES</strong><span>16 MiB cap</span></div>
                       </div>
+                      <div class="policy">
+                        <span class="switch on"></span>
+                        <div><strong>OUTPUT_SCHEMA</strong><span>Claude-compatible manual tools</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-header">
+                    <h3>MCP Resources</h3>
+                    <span class="badge blue"><span class="dot"></span>read-only</span>
+                  </div>
+                  <div class="panel-body">
+                    <div class="timeline">
+                      <div class="event">
+                        <span class="event-pin"></span>
+                        <div><strong>session</strong><span><span class="kbd">sofarpc://session/ws_20260519_f81a</span></span></div>
+                      </div>
+                      <div class="event">
+                        <span class="event-pin" style="background: var(--green); box-shadow: 0 0 0 2px #b9e4c8"></span>
+                        <div><strong>plan</strong><span><span class="kbd">/plan</span> returns captured dry-run plan</span></div>
+                      </div>
+                      <div class="event">
+                        <span class="event-pin" style="background: var(--purple); box-shadow: 0 0 0 2px #d3ccff"></span>
+                        <div><strong>contract</strong><span><span class="kbd">/contract</span> returns sourcecontract snapshot</span></div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1060,7 +1108,20 @@
                       <div class="health-card ok"><strong>Target</strong><span>direct target resolved and reachable</span></div>
                       <div class="health-card warn"><strong>Invoke policy</strong><span>real call requires opt-in</span></div>
                       <div class="health-card ok"><strong>Contract</strong><span>describe available</span></div>
-                      <div class="health-card ok"><strong>Session</strong><span>lastPlan retained</span></div>
+                      <div class="health-card ok"><strong>Session</strong><span>lastPlan retained and linked</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-header">
+                    <h3>Progress / Logging</h3>
+                    <span class="badge good"><span class="dot"></span>opt-in</span>
+                  </div>
+                  <div class="panel-body">
+                    <div class="health">
+                      <div class="health-card ok"><strong>Progress</strong><span>notifications/progress when progressToken is present</span></div>
+                      <div class="health-card ok"><strong>Logging</strong><span>notifications/message after SetLoggingLevel</span></div>
                     </div>
                   </div>
                 </div>
@@ -1098,10 +1159,12 @@
                 </div>
                 <div class="panel-body">
                   <div class="flow">
+                    <div class="flow-step active"><strong>init</strong><span>project</span></div>
                     <div class="flow-step active"><strong>open</strong><span>session</span></div>
                     <div class="flow-step active"><strong>target</strong><span>probe</span></div>
                     <div class="flow-step active"><strong>describe</strong><span>skeleton</span></div>
                     <div class="flow-step active"><strong>invoke</strong><span>dryRun</span></div>
+                    <div class="flow-step active"><strong>resources</strong><span>links</span></div>
                     <div class="flow-step"><strong>replay</strong><span>payload</span></div>
                     <div class="flow-step warn"><strong>doctor</strong><span>hint</span></div>
                   </div>
@@ -1139,9 +1202,9 @@
                         <td><span class="badge">shadowed</span></td>
                       </tr>
                       <tr>
-                        <td>process env fallback</td>
-                        <td>SOFARPC_TIMEOUT_MS=3000</td>
-                        <td><span class="badge blue">merged</span></td>
+                        <td>built-in defaults</td>
+                        <td>protocol=bolt, serialization=hessian2</td>
+                        <td><span class="badge blue">fallback</span></td>
                       </tr>
                     </tbody>
                   </table>
