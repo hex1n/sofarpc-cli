@@ -114,6 +114,9 @@ func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 		Contract: store,
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: directURL},
+			ProjectPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.example.demo.ExampleFacade"},
+			},
 		},
 	}, map[string]any{
 		"service":       "com.example.demo.ExampleFacade",

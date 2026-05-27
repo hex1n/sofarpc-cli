@@ -9,7 +9,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestNew_RegistersSixTools(t *testing.T) {
+func TestNew_RegistersSofarpcTools(t *testing.T) {
 	server := New(Options{})
 	ctx := context.Background()
 	client := connect(t, ctx, server)
@@ -27,6 +27,7 @@ func TestNew_RegistersSixTools(t *testing.T) {
 	want := []string{
 		"sofarpc_describe",
 		"sofarpc_doctor",
+		"sofarpc_init_project",
 		"sofarpc_invoke",
 		"sofarpc_open",
 		"sofarpc_replay",
@@ -39,6 +40,24 @@ func TestNew_RegistersSixTools(t *testing.T) {
 		if names[i] != want[i] {
 			t.Fatalf("tool %d: got %q want %q", i, names[i], want[i])
 		}
+	}
+}
+
+func TestNew_InitProjectSchemaAdvertisesServicesArray(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	tool := listedTool(t, client, "sofarpc_init_project")
+	schema := schemaMap(t, tool.InputSchema)
+	assertNoSchemaKeyword(t, schema, "anyOf")
+	assertNoSchemaKeyword(t, schema, "oneOf")
+
+	properties := schemaProperties(t, schema)
+	services := schemaObjectProperty(t, properties, "services")
+	if got := services["type"]; got != "array" {
+		t.Fatalf("services type: got %#v want array", got)
 	}
 }
 

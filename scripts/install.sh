@@ -21,10 +21,10 @@ echo "Register the MCP server for this user:"
 echo "  sofarpc-mcp setup --scope=user"
 echo
 echo "Write project-level target config from a Java project checkout:"
-echo "  sofarpc-mcp setup --scope=project --project-root . --local --direct-url=bolt://host:12200"
-echo "  sofarpc-mcp setup --scope=project --project-root . --shared --registry-address=zookeeper://host:2181"
+echo "  sofarpc-mcp setup --scope=project --project-root . --local --direct-url=bolt://host:12200 --allowed-services=com.foo.UserFacade"
+echo "  sofarpc-mcp setup --scope=project --project-root . --shared --registry-address=zookeeper://host:2181 --allowed-services=com.foo.UserFacade"
 echo
 echo "Real invoke is disabled by default. Enable it only for dev/test targets:"
-echo "  sofarpc-mcp setup --scope=user --allow-invoke --allowed-services=com.foo.UserFacade,com.foo.OrderFacade"
+echo "  sofarpc-mcp setup --scope=user --allow-invoke --allowed-target-hosts=127.0.0.1"
 echo
-echo "Source-contract information is loaded lazily from the project root when a tool needs it."
+echo "Source-contract information and service allowlists are loaded lazily from the resolved project root."

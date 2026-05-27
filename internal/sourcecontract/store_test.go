@@ -146,6 +146,32 @@ public class ExampleResponse {
 	}
 }
 
+func TestLoad_IndexedClassesListsDiscoveredFQNs(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/UserFacade.java", `
+package com.foo;
+public interface UserFacade {
+    String query(String id);
+}
+`)
+	writeJava(t, root, "src/main/java/com/foo/UserDTO.java", `
+package com.foo;
+public class UserDTO {
+    private String id;
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := store.IndexedClasses()
+	want := []string{"com.foo.UserDTO", "com.foo.UserFacade"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("IndexedClasses: got %#v want %#v", got, want)
+	}
+}
+
 func TestLoad_ParsesEnumConstants(t *testing.T) {
 	root := t.TempDir()
 	writeJava(t, root, "src/main/java/com/foo/Status.java", `

@@ -70,17 +70,17 @@ func TestUpsertCodexTOML_MergesExistingEnvByDefault(t *testing.T) {
 		"command = \"/old/path\"\n" +
 		"\n" +
 		"[mcp_servers.sofarpc.env]\n" +
-		"SOFARPC_DIRECT_URL = \"bolt://old:1\"\n" +
-		"SOFARPC_ALLOWED_SERVICES = \"com.foo.UserFacade\"\n"
-	got := upsertCodexTOML(existing, "/new/path", map[string]string{"SOFARPC_DIRECT_URL": "bolt://new:2"}, false)
-	if strings.Contains(got, "bolt://old") {
-		t.Fatalf("old overridden env kept:\n%s", got)
+		"SOFARPC_ALLOW_INVOKE = \"true\"\n" +
+		"SOFARPC_ALLOWED_TARGET_HOSTS = \"127.0.0.1\"\n"
+	got := upsertCodexTOML(existing, "/new/path", map[string]string{"SOFARPC_MAX_RESPONSE_BYTES": "1024"}, false)
+	if !strings.Contains(got, "SOFARPC_ALLOW_INVOKE = \"true\"") {
+		t.Fatalf("global existing env dropped:\n%s", got)
 	}
-	if !strings.Contains(got, "SOFARPC_DIRECT_URL = \"bolt://new:2\"") {
+	if !strings.Contains(got, "SOFARPC_ALLOWED_TARGET_HOSTS = \"127.0.0.1\"") {
+		t.Fatalf("global target-host guardrail dropped:\n%s", got)
+	}
+	if !strings.Contains(got, "SOFARPC_MAX_RESPONSE_BYTES = \"1024\"") {
 		t.Fatalf("new env missing:\n%s", got)
-	}
-	if !strings.Contains(got, "SOFARPC_ALLOWED_SERVICES = \"com.foo.UserFacade\"") {
-		t.Fatalf("unrelated existing env dropped:\n%s", got)
 	}
 }
 
@@ -96,6 +96,28 @@ func TestUpsertCodexTOML_ReplaceEnvDropsExistingEnv(t *testing.T) {
 	}
 	if !strings.Contains(got, "SOFARPC_DIRECT_URL = \"bolt://new:2\"") {
 		t.Fatalf("new env missing:\n%s", got)
+	}
+}
+
+func TestUpsertCodexTOML_ScrubsProjectScopedEnvByDefault(t *testing.T) {
+	existing := "[mcp_servers.sofarpc]\n" +
+		"command = \"/old/path\"\n" +
+		"\n" +
+		"[mcp_servers.sofarpc.env]\n" +
+		"SOFARPC_PROJECT_ROOT = \"C:\\\\project\"\n" +
+		"SOFARPC_DIRECT_URL = \"bolt://old:1\"\n" +
+		"SOFARPC_ALLOWED_SERVICES = \"com.foo.UserFacade\"\n" +
+		"SOFARPC_ALLOW_INVOKE = \"true\"\n"
+
+	got := upsertCodexTOML(existing, "/new/path", nil, false)
+
+	for _, removed := range []string{"SOFARPC_PROJECT_ROOT", "SOFARPC_DIRECT_URL", "SOFARPC_ALLOWED_SERVICES"} {
+		if strings.Contains(got, removed) {
+			t.Fatalf("%s should be scrubbed from user-scope env:\n%s", removed, got)
+		}
+	}
+	if !strings.Contains(got, "SOFARPC_ALLOW_INVOKE = \"true\"") {
+		t.Fatalf("global env should remain:\n%s", got)
 	}
 }
 
@@ -188,8 +210,8 @@ func TestSetupClaude_MergesExistingEnvByDefault(t *testing.T) {
 			"sofarpc": map[string]any{
 				"command": "/old/path",
 				"env": map[string]any{
-					"SOFARPC_DIRECT_URL":       "bolt://old:1",
-					"SOFARPC_ALLOWED_SERVICES": "com.foo.UserFacade",
+					"SOFARPC_ALLOW_INVOKE":         "true",
+					"SOFARPC_ALLOWED_TARGET_HOSTS": "127.0.0.1",
 				},
 			},
 		},
@@ -199,16 +221,55 @@ func TestSetupClaude_MergesExistingEnvByDefault(t *testing.T) {
 		t.Fatalf("write seed: %v", err)
 	}
 
-	if err := setupClaudeAt(path, "/bin/sofa", map[string]string{"SOFARPC_DIRECT_URL": "bolt://new:2"}, false, false); err != nil {
+	if err := setupClaudeAt(path, "/bin/sofa", map[string]string{"SOFARPC_MAX_RESPONSE_BYTES": "1024"}, false, false); err != nil {
 		t.Fatalf("setupClaudeAt: %v", err)
 	}
 
 	env := readClaudeEnvFromFile(t, path)
-	if env["SOFARPC_DIRECT_URL"] != "bolt://new:2" {
-		t.Fatalf("direct url not overridden: %#v", env)
+	if env["SOFARPC_ALLOW_INVOKE"] != "true" {
+		t.Fatalf("global existing env dropped: %#v", env)
 	}
-	if env["SOFARPC_ALLOWED_SERVICES"] != "com.foo.UserFacade" {
-		t.Fatalf("existing env dropped: %#v", env)
+	if env["SOFARPC_ALLOWED_TARGET_HOSTS"] != "127.0.0.1" {
+		t.Fatalf("target host guardrail dropped: %#v", env)
+	}
+	if env["SOFARPC_MAX_RESPONSE_BYTES"] != "1024" {
+		t.Fatalf("new env missing: %#v", env)
+	}
+}
+
+func TestSetupClaude_ScrubsProjectScopedEnvByDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	seed := map[string]any{
+		"mcpServers": map[string]any{
+			"sofarpc": map[string]any{
+				"command": "/old/path",
+				"env": map[string]any{
+					"SOFARPC_PROJECT_ROOT":     "C:\\project",
+					"SOFARPC_DIRECT_URL":       "bolt://old:1",
+					"SOFARPC_ALLOWED_SERVICES": "com.foo.UserFacade",
+					"SOFARPC_ALLOW_INVOKE":     "true",
+				},
+			},
+		},
+	}
+	body, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	if err := setupClaudeAt(path, "/bin/sofa", nil, false, false); err != nil {
+		t.Fatalf("setupClaudeAt: %v", err)
+	}
+
+	env := readClaudeEnvFromFile(t, path)
+	for _, removed := range []string{"SOFARPC_PROJECT_ROOT", "SOFARPC_DIRECT_URL", "SOFARPC_ALLOWED_SERVICES"} {
+		if _, ok := env[removed]; ok {
+			t.Fatalf("%s should be scrubbed from user-scope env: %#v", removed, env)
+		}
+	}
+	if env["SOFARPC_ALLOW_INVOKE"] != "true" {
+		t.Fatalf("global env should remain: %#v", env)
 	}
 }
 
@@ -333,16 +394,7 @@ func TestInstallSkillAt_DryRunLeavesNoFile(t *testing.T) {
 
 func TestBuildSetupEnv_OnlyIncludesProvidedKeys(t *testing.T) {
 	got, err := buildSetupEnv(setupOptions{
-		projectRoot:         " /root ",
-		registryAddr:        "zk://h:1",
-		registryProtocol:    "zookeeper",
-		protocol:            "bolt",
-		serialization:       "hessian2",
-		uniqueID:            "dev",
-		timeoutMS:           "3000",
-		connectTimeoutMS:    "1000",
 		allowInvoke:         true,
-		allowedServices:     "com.foo.UserFacade,com.foo.OrderFacade",
 		allowedTargetHosts:  "127.0.0.1,dev-rpc.example.com:12200",
 		allowTargetOverride: true,
 		argsFileRoot:        "/root/payloads",
@@ -350,17 +402,7 @@ func TestBuildSetupEnv_OnlyIncludesProvidedKeys(t *testing.T) {
 		sessionPlanMaxBytes: "2097152",
 		maxResponseBytes:    "16777216",
 		set: map[string]bool{
-			"project-root":           true,
-			"direct-url":             true,
-			"registry-address":       true,
-			"registry-protocol":      true,
-			"protocol":               true,
-			"serialization":          true,
-			"unique-id":              true,
-			"timeout-ms":             true,
-			"connect-timeout-ms":     true,
 			"allow-invoke":           true,
-			"allowed-services":       true,
 			"allowed-target-hosts":   true,
 			"allow-target-override":  true,
 			"args-file-root":         true,
@@ -372,32 +414,24 @@ func TestBuildSetupEnv_OnlyIncludesProvidedKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSetupEnv: %v", err)
 	}
-	if got["SOFARPC_PROJECT_ROOT"] != "/root" {
-		t.Fatalf("project root: %#v", got)
-	}
-	if _, ok := got["SOFARPC_DIRECT_URL"]; ok {
-		t.Fatalf("direct url should be absent: %#v", got)
-	}
-	if got["SOFARPC_REGISTRY_ADDRESS"] != "zk://h:1" {
-		t.Fatalf("registry: %#v", got)
-	}
-	if got["SOFARPC_REGISTRY_PROTOCOL"] != "zookeeper" {
-		t.Fatalf("registry protocol: %#v", got)
-	}
-	if got["SOFARPC_PROTOCOL"] != "bolt" {
-		t.Fatalf("protocol: %#v", got)
-	}
-	if got["SOFARPC_SERIALIZATION"] != "hessian2" {
-		t.Fatalf("serialization: %#v", got)
-	}
-	if got["SOFARPC_UNIQUE_ID"] != "dev" {
-		t.Fatalf("unique id: %#v", got)
+	for _, absent := range []string{
+		"SOFARPC_PROJECT_ROOT",
+		"SOFARPC_DIRECT_URL",
+		"SOFARPC_REGISTRY_ADDRESS",
+		"SOFARPC_REGISTRY_PROTOCOL",
+		"SOFARPC_PROTOCOL",
+		"SOFARPC_SERIALIZATION",
+		"SOFARPC_UNIQUE_ID",
+		"SOFARPC_TIMEOUT_MS",
+		"SOFARPC_CONNECT_TIMEOUT_MS",
+		"SOFARPC_ALLOWED_SERVICES",
+	} {
+		if _, ok := got[absent]; ok {
+			t.Fatalf("%s should be project-scoped and absent from user env: %#v", absent, got)
+		}
 	}
 	if got["SOFARPC_ALLOW_INVOKE"] != "true" {
 		t.Fatalf("allow invoke: %#v", got)
-	}
-	if got["SOFARPC_ALLOWED_SERVICES"] != "com.foo.UserFacade,com.foo.OrderFacade" {
-		t.Fatalf("allowed services: %#v", got)
 	}
 	if got["SOFARPC_ALLOWED_TARGET_HOSTS"] != "127.0.0.1,dev-rpc.example.com:12200" {
 		t.Fatalf("allowed target hosts: %#v", got)
@@ -414,12 +448,6 @@ func TestBuildSetupEnv_OnlyIncludesProvidedKeys(t *testing.T) {
 	if got["SOFARPC_SESSION_PLAN_MAX_BYTES"] != "2097152" {
 		t.Fatalf("session plan max: %#v", got)
 	}
-	if got["SOFARPC_TIMEOUT_MS"] != "3000" {
-		t.Fatalf("timeout: %#v", got)
-	}
-	if got["SOFARPC_CONNECT_TIMEOUT_MS"] != "1000" {
-		t.Fatalf("connect timeout: %#v", got)
-	}
 	if got["SOFARPC_MAX_RESPONSE_BYTES"] != "16777216" {
 		t.Fatalf("max response: %#v", got)
 	}
@@ -427,53 +455,24 @@ func TestBuildSetupEnv_OnlyIncludesProvidedKeys(t *testing.T) {
 
 func TestBuildSetupEnv_InvalidNumericFlag(t *testing.T) {
 	_, err := buildSetupEnv(setupOptions{
-		timeoutMS: "abc",
-		set:       map[string]bool{"timeout-ms": true},
+		argsFileMaxBytes: "abc",
+		set:              map[string]bool{"args-file-max-bytes": true},
 	})
 	if err == nil {
 		t.Fatal("expected invalid numeric flag to fail")
 	}
 }
 
-func TestBuildSetupEnv_ProjectRootBecomesAbsolute(t *testing.T) {
-	root := t.TempDir()
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	wantRoot, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd after chdir: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(oldWD); err != nil {
-			t.Fatalf("restore cwd: %v", err)
-		}
-	}()
-
-	got, err := buildSetupEnv(setupOptions{
-		projectRoot: ".",
-		set:         map[string]bool{"project-root": true},
-	})
-	if err != nil {
-		t.Fatalf("buildSetupEnv: %v", err)
-	}
-	if got["SOFARPC_PROJECT_ROOT"] != wantRoot {
-		t.Fatalf("project root: got %q want %q", got["SOFARPC_PROJECT_ROOT"], wantRoot)
-	}
-}
-
 func TestRunSetup_UserScopeIsDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	command := setupCommandFixture(t)
 
 	err := runSetup([]string{
-		"--command", "/bin/sh",
+		"--command", command,
 		"--install-skill=false",
-		"--direct-url", "bolt://host:12200",
+		"--allow-invoke",
 	})
 	if err != nil {
 		t.Fatalf("runSetup: %v", err)
@@ -483,6 +482,18 @@ func TestRunSetup_UserScopeIsDefault(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); err != nil {
 		t.Fatalf("codex config missing: %v", err)
+	}
+}
+
+func TestRunSetup_UserScopeRejectsProjectSpecificFlags(t *testing.T) {
+	command := setupCommandFixture(t)
+	err := runSetup([]string{
+		"--command", command,
+		"--install-skill=false",
+		"--direct-url", "bolt://host:12200",
+	})
+	if err == nil {
+		t.Fatal("expected user setup to reject project-specific direct-url")
 	}
 }
 
@@ -496,6 +507,7 @@ func TestRunSetup_ProjectLocalWritesConfigAndGitignore(t *testing.T) {
 		"--protocol", "bolt",
 		"--serialization", "hessian2",
 		"--timeout-ms", "3000",
+		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err != nil {
 		t.Fatalf("runSetup: %v", err)
@@ -518,6 +530,9 @@ func TestRunSetup_ProjectLocalWritesConfigAndGitignore(t *testing.T) {
 	if _, ok := cfg["mode"]; ok {
 		t.Fatalf("project setup wrote mode: %#v", cfg)
 	}
+	if got := cfg["allowedServices"].([]any); len(got) != 1 || got[0] != "com.foo.UserFacade" {
+		t.Fatalf("allowedServices: %#v", cfg)
+	}
 	ignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
 	if err != nil {
 		t.Fatalf("read gitignore: %v", err)
@@ -536,6 +551,7 @@ func TestRunSetup_ProjectSharedWritesSharedConfigOnly(t *testing.T) {
 		"--registry-address", "zookeeper://host:2181",
 		"--registry-protocol", "zookeeper",
 		"--connect-timeout-ms", "1000",
+		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err != nil {
 		t.Fatalf("runSetup: %v", err)
@@ -549,6 +565,50 @@ func TestRunSetup_ProjectSharedWritesSharedConfigOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
 		t.Fatalf("shared setup should not create gitignore: %v", err)
+	}
+}
+
+func TestRunSetup_ProjectRejectsTargetWithoutAllowedServices(t *testing.T) {
+	root := t.TempDir()
+	err := runSetup([]string{
+		"--scope=project",
+		"--project-root", root,
+		"--local",
+		"--direct-url", "bolt://host:12200",
+	})
+	if err == nil {
+		t.Fatal("expected project setup to require allowedServices")
+	}
+	if !strings.Contains(err.Error(), "--allowed-services") {
+		t.Fatalf("error should mention --allowed-services, got %v", err)
+	}
+}
+
+func TestRunSetup_ProjectWritesAllowedServices(t *testing.T) {
+	root := t.TempDir()
+	err := runSetup([]string{
+		"--scope=project",
+		"--project-root", root,
+		"--shared",
+		"--allowed-services", "com.foo.UserFacade, com.foo.OrderFacade",
+	})
+	if err != nil {
+		t.Fatalf("runSetup project: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, ".sofarpc", "config.json"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var cfg struct {
+		AllowedServices []string `json:"allowedServices"`
+	}
+	if err := json.Unmarshal(body, &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if len(cfg.AllowedServices) != 2 ||
+		cfg.AllowedServices[0] != "com.foo.UserFacade" ||
+		cfg.AllowedServices[1] != "com.foo.OrderFacade" {
+		t.Fatalf("allowedServices: got %#v", cfg.AllowedServices)
 	}
 }
 
@@ -566,6 +626,7 @@ func TestRunSetup_ProjectDoesNotOverwriteWithoutForce(t *testing.T) {
 		"--project-root", root,
 		"--local",
 		"--direct-url", "bolt://new:2",
+		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err == nil {
 		t.Fatal("expected overwrite without force to fail")
@@ -576,6 +637,7 @@ func TestRunSetup_ProjectDoesNotOverwriteWithoutForce(t *testing.T) {
 		"--local",
 		"--force",
 		"--direct-url", "bolt://new:2",
+		"--allowed-services", "com.foo.UserFacade",
 	}); err != nil {
 		t.Fatalf("force runSetup: %v", err)
 	}
@@ -598,6 +660,7 @@ func TestRunSetup_ProjectLocalDoesNotWriteConfigWhenGitignoreFails(t *testing.T)
 		"--project-root", root,
 		"--local",
 		"--direct-url", "bolt://host:12200",
+		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err == nil {
 		t.Fatal("expected gitignore failure")
@@ -615,6 +678,7 @@ func TestRunSetup_ProjectDryRunLeavesFilesUntouched(t *testing.T) {
 		"--local",
 		"--dry-run",
 		"--direct-url", "bolt://host:12200",
+		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err != nil {
 		t.Fatalf("runSetup dry-run: %v", err)
@@ -691,4 +755,13 @@ func readClaudeEnvFromFile(t *testing.T, path string) map[string]string {
 	}
 	servers, _ := doc["mcpServers"].(map[string]any)
 	return readClaudeEnv(servers["sofarpc"])
+}
+
+func setupCommandFixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "sofarpc-mcp-test-bin")
+	if err := os.WriteFile(path, []byte("test binary"), 0o755); err != nil {
+		t.Fatalf("write command fixture: %v", err)
+	}
+	return path
 }

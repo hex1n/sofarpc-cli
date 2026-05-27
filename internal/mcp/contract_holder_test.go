@@ -93,6 +93,31 @@ func TestContractHolder_ForProjectCachesPerProjectRoot(t *testing.T) {
 	}
 }
 
+func TestContractHolder_ForProjectCacheEvictsOldestProject(t *testing.T) {
+	calls := map[string]int{}
+	roots := make([]string, defaultProjectContractCacheMax+1)
+	for i := range roots {
+		roots[i] = t.TempDir()
+	}
+	h := newContractHolder(nil, "", nil)
+	h.SetProjectLoader(func(projectRoot string) (contract.Store, error) {
+		calls[projectRoot]++
+		return contract.NewInMemoryStore(javamodel.Class{FQN: "com.foo.Project"}), nil
+	})
+
+	for _, root := range roots {
+		h.ForProject(root)
+	}
+	h.ForProject(roots[0])
+
+	if calls[canonicalProjectRoot(roots[0])] != 2 {
+		t.Fatalf("oldest project should be evicted and reloaded, calls=%+v", calls)
+	}
+	if got := len(h.projects); got > defaultProjectContractCacheMax {
+		t.Fatalf("project cache size: got %d want <= %d", got, defaultProjectContractCacheMax)
+	}
+}
+
 func TestContractHolder_ForProjectFallsBackToDefaultStoreWithoutProjectLoader(t *testing.T) {
 	defaultRoot := t.TempDir()
 	store := contract.NewInMemoryStore(javamodel.Class{FQN: "com.foo.Default"})

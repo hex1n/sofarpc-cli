@@ -203,13 +203,24 @@ func validateRealInvoke(service string) error {
 }
 
 func executionPolicyFromEnv(sources target.Sources) invoke.ExecutionPolicy {
+	allowedServices, allowedServicesConfigured, allowedServicesSource := allowedServicesForSources(sources)
 	return invoke.ExecutionPolicy{
-		AllowInvoke:         envBool(envAllowInvoke),
-		AllowedServices:     envCSV(envAllowedServices),
-		AllowTargetOverride: envBool(envAllowTargetOverride),
-		AllowedTargetHosts:  envCSV(envAllowedTargetHosts),
-		Sources:             sources,
+		AllowInvoke:               envBool(envAllowInvoke),
+		AllowedServices:           allowedServices,
+		AllowedServicesConfigured: allowedServicesConfigured,
+		AllowedServicesSource:     allowedServicesSource,
+		AllowTargetOverride:       envBool(envAllowTargetOverride),
+		AllowedTargetHosts:        envCSV(envAllowedTargetHosts),
+		Sources:                   sources,
 	}
+}
+
+func allowedServicesForSources(sources target.Sources) ([]string, bool, string) {
+	allowlist := target.ServiceAllowlistForSources(sources)
+	if allowlist.Configured {
+		return allowlist.Services, true, allowlist.Source
+	}
+	return nil, false, ""
 }
 
 func envBool(name string) bool {

@@ -78,7 +78,13 @@ func TestReplay_SDKStructuredContentPayloadDryRunReturnsPlan(t *testing.T) {
 func TestReplay_NonDryRunRequiresAllowInvokeEnv(t *testing.T) {
 	t.Setenv(envAllowInvoke, "false")
 
-	out := callReplay(t, Options{}, map[string]any{
+	out := callReplay(t, Options{
+		TargetSources: target.Sources{
+			ProjectPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.foo.Svc"},
+			},
+		},
+	}, map[string]any{
 		"payload": samplePlan(),
 	})
 	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
@@ -97,9 +103,14 @@ func TestReplay_NonDryRunRequiresAllowInvokeEnv(t *testing.T) {
 
 func TestReplay_NonDryRunRespectsAllowedServices(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "com.foo.OtherFacade")
 
-	out := callReplay(t, Options{}, map[string]any{
+	out := callReplay(t, Options{
+		TargetSources: target.Sources{
+			ProjectLocalPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.foo.OtherFacade"},
+			},
+		},
+	}, map[string]any{
 		"payload": samplePlan(),
 	})
 	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
@@ -108,8 +119,8 @@ func TestReplay_NonDryRunRespectsAllowedServices(t *testing.T) {
 	if out.Error.Phase != "replay" {
 		t.Fatalf("phase = %q, want replay", out.Error.Phase)
 	}
-	if !strings.Contains(out.Error.Message, envAllowedServices) {
-		t.Fatalf("error message should mention %s: %q", envAllowedServices, out.Error.Message)
+	if !strings.Contains(out.Error.Message, "project allowedServices") {
+		t.Fatalf("error message should mention project allowedServices: %q", out.Error.Message)
 	}
 	if out.Plan == nil || out.Source != "payload" {
 		t.Fatalf("rejected replay should keep plan/source: plan=%+v source=%q", out.Plan, out.Source)
@@ -121,7 +132,13 @@ func TestReplay_NonDryRunRejectsTargetOverrideByDefault(t *testing.T) {
 	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowTargetOverride, "false")
 
-	out := callReplay(t, Options{}, map[string]any{
+	out := callReplay(t, Options{
+		TargetSources: target.Sources{
+			ProjectPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.foo.Svc"},
+			},
+		},
+	}, map[string]any{
 		"payload": samplePlan(),
 	})
 	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
@@ -171,7 +188,13 @@ func TestReplay_PayloadNonDryRunWithUnsupportedTargetSurfacesInvocationRejected(
 	t.Setenv(envAllowInvoke, "true")
 	t.Setenv(envAllowedServices, "")
 
-	out := callReplay(t, Options{}, map[string]any{
+	out := callReplay(t, Options{
+		TargetSources: target.Sources{
+			ProjectPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.foo.Svc"},
+			},
+		},
+	}, map[string]any{
 		"payload": sampleRegistryPlan(),
 	})
 	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
@@ -205,6 +228,9 @@ func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
 	out := callReplay(t, Options{
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: directURL},
+			ProjectPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.foo.Svc"},
+			},
 		},
 	}, map[string]any{
 		"payload": plan,
@@ -248,7 +274,7 @@ func TestReplay_PayloadUsesSessionForSafetyContext(t *testing.T) {
 	plan.Target.DirectURL = directURL
 
 	projectRoot := t.TempDir()
-	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.local.json", `{"directUrl": "`+directURL+`"}`)
+	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.local.json", `{"directUrl": "`+directURL+`", "allowedServices": ["com.foo.Svc"]}`)
 	sessions := NewSessionStore()
 	session := sessions.Create(Session{ProjectRoot: projectRoot})
 

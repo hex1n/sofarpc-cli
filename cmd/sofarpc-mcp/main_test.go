@@ -4,84 +4,23 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/hex1n/sofarpc-cli/internal/core/target"
 )
 
-func TestAtoiOrZero(t *testing.T) {
-	cases := []struct {
-		in   string
-		want int
-	}{
-		{"", 0},
-		{"0", 0},
-		{"42", 42},
-		{"-7", -7},
-		{"not-a-number", 0},
-		{"12x", 0},
-	}
-	for _, tc := range cases {
-		if got := atoiOrZero(tc.in); got != tc.want {
-			t.Errorf("atoiOrZero(%q) = %d, want %d", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestEnvConfig_DirectURLImpliesModeDirect(t *testing.T) {
+func TestEnvConfig_IgnoresProjectScopedTargetEnv(t *testing.T) {
 	clearTargetEnv(t)
 	t.Setenv("SOFARPC_DIRECT_URL", "bolt://host:12200")
+	t.Setenv("SOFARPC_REGISTRY_ADDRESS", "zookeeper://host:2181")
+	t.Setenv("SOFARPC_PROTOCOL", "bolt")
 	t.Setenv("SOFARPC_TIMEOUT_MS", "2500")
 
 	cfg := envConfig()
-	if cfg.Mode != target.ModeDirect {
-		t.Fatalf("mode: got %q want %q", cfg.Mode, target.ModeDirect)
-	}
-	if cfg.DirectURL != "bolt://host:12200" {
-		t.Fatalf("directUrl: got %q", cfg.DirectURL)
-	}
-	if cfg.TimeoutMS != 2500 {
-		t.Fatalf("timeoutMs: got %d want 2500", cfg.TimeoutMS)
+	if cfg.Mode != "" || cfg.DirectURL != "" || cfg.RegistryAddress != "" || cfg.Protocol != "" || cfg.TimeoutMS != 0 {
+		t.Fatalf("envConfig should ignore project-scoped target env, got %+v", cfg)
 	}
 }
 
-func TestEnvConfig_RegistryWithoutDirectURLImpliesModeRegistry(t *testing.T) {
-	clearTargetEnv(t)
-	t.Setenv("SOFARPC_REGISTRY_ADDRESS", "zookeeper://host:2181")
-
-	cfg := envConfig()
-	if cfg.Mode != target.ModeRegistry {
-		t.Fatalf("mode: got %q want %q", cfg.Mode, target.ModeRegistry)
-	}
-}
-
-func TestEnvConfig_EmptyEnvYieldsEmptyMode(t *testing.T) {
-	clearTargetEnv(t)
-	cfg := envConfig()
-	if cfg.Mode != "" {
-		t.Fatalf("mode should be empty without env, got %q", cfg.Mode)
-	}
-}
-
-func TestEnvConfig_DirectURLWinsOverRegistry(t *testing.T) {
-	clearTargetEnv(t)
-	t.Setenv("SOFARPC_DIRECT_URL", "bolt://host:1")
-	t.Setenv("SOFARPC_REGISTRY_ADDRESS", "zk://host:2")
-
-	cfg := envConfig()
-	if cfg.Mode != target.ModeDirect {
-		t.Fatalf("mode: got %q want direct", cfg.Mode)
-	}
-}
-
-func TestProjectRootFromEnv_PrefersExplicitOverCWD(t *testing.T) {
+func TestProjectRootFromEnv_IgnoresLegacyExplicitEnv(t *testing.T) {
 	t.Setenv("SOFARPC_PROJECT_ROOT", "/custom/root")
-	if got := projectRootFromEnv(); got != "/custom/root" {
-		t.Fatalf("got %q want /custom/root", got)
-	}
-}
-
-func TestProjectRootFromEnv_FallsBackToCWD(t *testing.T) {
-	t.Setenv("SOFARPC_PROJECT_ROOT", "")
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)

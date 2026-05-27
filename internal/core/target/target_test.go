@@ -188,11 +188,13 @@ func TestProjectSources_LoadsSharedAndLocalConfig(t *testing.T) {
 	root := t.TempDir()
 	writeProjectTargetConfig(t, root, "config.json", `{
   "directUrl": "bolt://project-host:12200",
-  "timeoutMs": 4000
+  "timeoutMs": 4000,
+  "allowedServices": ["com.foo.SharedFacade"]
 }`)
 	writeProjectTargetConfig(t, root, "config.local.json", `{
   "directUrl": "bolt://local-host:12200",
-  "connectTimeoutMs": 250
+  "connectTimeoutMs": 250,
+  "allowedServices": ["com.foo.LocalFacade", " "]
 }`)
 
 	sources := ProjectSources(root, Config{Serialization: "fastjson2"})
@@ -209,6 +211,42 @@ func TestProjectSources_LoadsSharedAndLocalConfig(t *testing.T) {
 	}
 	if report.Target.Serialization != "fastjson2" {
 		t.Fatalf("serialization: got %q", report.Target.Serialization)
+	}
+	allowed := AllowedServices(sources)
+	if len(allowed) != 1 || allowed[0] != "com.foo.LocalFacade" {
+		t.Fatalf("allowed services: got %#v", allowed)
+	}
+}
+
+func TestProjectSources_LoadsSharedAllowedServicesWhenLocalAbsent(t *testing.T) {
+	root := t.TempDir()
+	writeProjectTargetConfig(t, root, "config.json", `{
+  "allowedServices": ["com.foo.SharedFacade", "com.foo.OtherFacade"]
+}`)
+
+	sources := ProjectSources(root, Config{})
+	allowed := AllowedServices(sources)
+	if len(allowed) != 2 || allowed[0] != "com.foo.SharedFacade" || allowed[1] != "com.foo.OtherFacade" {
+		t.Fatalf("allowed services: got %#v", allowed)
+	}
+}
+
+func TestProjectSources_ExplicitEmptyLocalAllowedServicesOverridesShared(t *testing.T) {
+	root := t.TempDir()
+	writeProjectTargetConfig(t, root, "config.json", `{
+  "allowedServices": ["com.foo.SharedFacade"]
+}`)
+	writeProjectTargetConfig(t, root, "config.local.json", `{
+  "allowedServices": []
+}`)
+
+	sources := ProjectSources(root, Config{})
+	allowlist := ServiceAllowlistForSources(sources)
+	if !allowlist.Configured {
+		t.Fatalf("explicit empty allowedServices should count as configured: %#v", allowlist)
+	}
+	if len(allowlist.Services) != 0 {
+		t.Fatalf("local empty allowlist should override shared: %#v", allowlist.Services)
 	}
 }
 

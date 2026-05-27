@@ -55,6 +55,9 @@ func TestDoctor_ReachableTargetPasses(t *testing.T) {
 				DirectURL:        "bolt://" + listener.Addr().String(),
 				ConnectTimeoutMS: 500,
 			},
+			ProjectPolicy: target.PolicyConfig{
+				AllowedServices: []string{"*"},
+			},
 		},
 	}
 	out := callDoctor(t, opts, nil)
@@ -180,21 +183,43 @@ func TestDoctor_InvokePolicyReportsDisabledRealInvoke(t *testing.T) {
 	}
 }
 
-func TestDoctor_InvokePolicyChecksAllowedServiceWhenProvided(t *testing.T) {
+func TestDoctor_InvokePolicyReportsMissingProjectAllowedServices(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "com.foo.AllowedFacade")
 
 	out := callDoctor(t, Options{
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: "bolt://127.0.0.1:1"},
+		},
+	}, nil)
+	check := findCheck(t, out, "invoke-policy")
+	if check.Ok {
+		t.Fatalf("invoke-policy should fail without project allowedServices, got %+v", check)
+	}
+	if !strings.Contains(check.Detail, "project allowedServices") {
+		t.Fatalf("detail should mention project allowedServices, got %q", check.Detail)
+	}
+	if check.NextStep == nil || check.NextStep.Tool != "sofarpc_init_project" {
+		t.Fatalf("check should point at init_project, got %+v", check.NextStep)
+	}
+}
+
+func TestDoctor_InvokePolicyChecksAllowedServiceWhenProvided(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+
+	out := callDoctor(t, Options{
+		TargetSources: target.Sources{
+			Env: target.Config{DirectURL: "bolt://127.0.0.1:1"},
+			ProjectLocalPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.foo.AllowedFacade"},
+			},
 		},
 	}, map[string]any{"service": "com.foo.BlockedFacade"})
 	check := findCheck(t, out, "invoke-policy")
 	if check.Ok {
 		t.Fatalf("invoke-policy should fail for disallowed service, got %+v", check)
 	}
-	if !strings.Contains(check.Detail, envAllowedServices) {
-		t.Fatalf("detail should mention %s, got %q", envAllowedServices, check.Detail)
+	if !strings.Contains(check.Detail, "project allowedServices") {
+		t.Fatalf("detail should mention project allowedServices, got %q", check.Detail)
 	}
 }
 

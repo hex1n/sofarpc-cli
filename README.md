@@ -10,6 +10,7 @@ Agent-first local MCP server for SOFARPC generic invoke.
 
 | Tool | Purpose |
 | --- | --- |
+| `sofarpc_init_project` | Initialize `.sofarpc/config*.json` for a Java project, including discovered `allowedServices`. |
 | `sofarpc_open` | Open a workspace. Returns project root, resolved target, capabilities, and a session id. |
 | `sofarpc_target` | Resolve the effective target and probe reachability. |
 | `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. |
@@ -51,9 +52,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 Setup is split into two scopes:
 
 - User scope registers the MCP server with Claude Code and Codex and installs
-  the `sofarpc-invoke` skill for the current user.
-- Project scope writes target defaults into the Java project under
-  `.sofarpc/`.
+  the `sofarpc-invoke` skill for the current user. It keeps only global
+  execution guardrails and removes stale project-specific SOFARPC env values.
+- Project scope writes target defaults and service allowlists into the Java
+  project under `.sofarpc/`.
 
 User setup is the default. It is idempotent and merges the existing sofarpc env
 block by default, so re-running with one new flag does not drop manually added
@@ -64,8 +66,8 @@ sofarpc-mcp setup --scope=user                                      # both clien
 sofarpc-mcp setup --claude-code                                     # Claude Code only
 sofarpc-mcp setup --codex                                           # Codex only
 sofarpc-mcp setup --install-skill=false                             # MCP config only
-sofarpc-mcp setup --replace-env --direct-url=bolt://host:12200      # replace sofarpc env
-sofarpc-mcp setup --dry-run --allow-invoke --allowed-services='*'   # preview
+sofarpc-mcp setup --allow-invoke --allowed-target-hosts=127.0.0.1   # global real-call guardrails
+sofarpc-mcp setup --dry-run --allow-invoke                          # preview user config
 ```
 
 When running from source with `go run`, use `--command /abs/path/to/sofarpc-mcp`
@@ -77,17 +79,46 @@ local to a checkout:
 
 ```sh
 sofarpc-mcp setup --scope=project --project-root . --local \
-  --direct-url=bolt://dev-rpc.example.com:12200 --timeout-ms=3000
+  --direct-url=bolt://dev-rpc.example.com:12200 --timeout-ms=3000 \
+  --allowed-services=com.foo.UserFacade
 
 sofarpc-mcp setup --scope=project --project-root . --shared \
-  --registry-address=zookeeper://zk.example.com:2181 --protocol=bolt
+  --registry-address=zookeeper://zk.example.com:2181 --protocol=bolt \
+  --allowed-services=com.foo.UserFacade,com.foo.OrderFacade
 ```
 
 `--local` writes `.sofarpc/config.local.json` and ensures that path is ignored
 by the project's `.gitignore`. `--shared` writes `.sofarpc/config.json`.
 Existing project config files are not overwritten unless `--force` is passed.
-Real-invoke guardrails such as `--allow-invoke` are user-scope env settings and
-are rejected in project setup.
+Real-invoke enablement and host guardrails such as `--allow-invoke` and
+`--allowed-target-hosts` are user-scope env settings and are rejected in project
+setup. Target fields and `--allowed-services` are project-scoped and are
+rejected in user setup.
+
+Agents can do the same first-project bootstrap through MCP:
+
+```json
+{
+  "project": "/abs/path/to/java-project",
+  "config": "local",
+  "directUrl": "bolt://dev-rpc.example.com:12200"
+}
+```
+
+Call that as `sofarpc_init_project`. Agents should pass `project` or `cwd`
+when they know the workspace root. If they omit project scope, the tool only
+returns safe Java project auto-discovery evidence from the MCP process cwd; it
+does not write files until a follow-up call passes `project`, `cwd`, or
+`sessionId` explicitly. The response always includes `projectResolution` with
+`confidence`, `markers`, `scanTruncated`, and `candidates`.
+
+If `services` is omitted, the tool loads source-contract information for the
+resolved project and writes discovered `*Facade` interfaces with methods into
+`allowedServices`. It never guesses a target; pass `directUrl` or
+`registryAddress` explicitly, or let it write an allowlist-only config and
+return next steps. If service discovery cannot produce an allowlist, pass
+`services` explicitly or set `allowAllServices: true` to intentionally write
+`allowedServices: ["*"]`.
 
 The skill is baked into the binary via `//go:embed`, so a fresh
 `go install` carries it — no repo checkout required. Canonical source
@@ -130,25 +161,13 @@ sofarpc-mcp version -json
 ### Run without client config
 
 ```sh
-export SOFARPC_PROJECT_ROOT=/abs/path/to/project
-export SOFARPC_DIRECT_URL=bolt://host:12200
-
+cd /abs/path/to/project
 ./bin/sofarpc-mcp
 ```
 
-The server speaks stdio MCP. `SOFARPC_PROJECT_ROOT` falls back to the
-process CWD, and `SOFARPC_PROTOCOL` / `SOFARPC_SERIALIZATION` default
-to `bolt` / `hessian2`, so neither needs to be set unless you're
-overriding the defaults.
-
-Optional per-target tuning:
-
-```sh
-export SOFARPC_REGISTRY_ADDRESS=zookeeper://host:2181
-export SOFARPC_UNIQUE_ID=demo
-export SOFARPC_TIMEOUT_MS=3000
-export SOFARPC_CONNECT_TIMEOUT_MS=1000
-```
+The server speaks stdio MCP. The project root falls back to the process CWD,
+and `SOFARPC_PROTOCOL` / `SOFARPC_SERIALIZATION` default to `bolt` /
+`hessian2`, so neither needs to be set unless you're overriding the defaults.
 
 Project-level target config can live with the Java project. Shared defaults go
 in `.sofarpc/config.json`; machine-local values such as `directUrl` should go
@@ -161,7 +180,8 @@ in `.sofarpc/config.local.json`:
   "serialization": "hessian2",
   "timeoutMs": 3000,
   "connectTimeoutMs": 1000,
-  "uniqueId": "dev"
+  "uniqueId": "dev",
+  "allowedServices": ["com.foo.UserFacade", "com.foo.OrderFacade"]
 }
 ```
 
@@ -173,7 +193,7 @@ lower-priority layers are ignored.
 Target resolution order is:
 
 ```text
-per-call input > .sofarpc/config.local.json > .sofarpc/config.json > MCP env > defaults
+per-call input > .sofarpc/config.local.json > .sofarpc/config.json > defaults
 ```
 
 Real network calls are disabled by default. `dryRun=true` always works,
@@ -183,22 +203,29 @@ but non-dry-run `sofarpc_invoke` requires an explicit opt-in:
 export SOFARPC_ALLOW_INVOKE=true
 ```
 
-Use that only for development or test targets. For safer local setups,
-restrict callable services and cap how much plan data sessions retain for
-`sessionId` replay. Direct BOLT responses are also capped before the client
-allocates the response body:
+Use that only for development or test targets. Real invoke also requires
+project `.sofarpc/config*.json` to define `allowedServices`; use
+`["*"]` only as an explicit wildcard. User-scope env is only for global host
+and size guardrails:
 
 ```sh
-export SOFARPC_ALLOWED_SERVICES=com.foo.UserFacade,com.foo.OrderFacade
 export SOFARPC_ALLOWED_TARGET_HOSTS=127.0.0.1,dev-rpc.example.com:12200
 export SOFARPC_SESSION_PLAN_MAX_BYTES=1048576
 export SOFARPC_MAX_RESPONSE_BYTES=16777216
 ```
 
+```json
+{
+  "allowedServices": ["com.foo.UserFacade", "com.foo.OrderFacade"]
+}
+```
+
 For non-dry-run direct calls, the default policy only executes the resolved
-project/env target from `.sofarpc/config.local.json`, `.sofarpc/config.json`, or
-`SOFARPC_DIRECT_URL`. Per-call `directUrl` overrides and literal replay payload
-targets require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`. `SOFARPC_ALLOWED_TARGET_HOSTS`,
+project target from `.sofarpc/config.local.json` or `.sofarpc/config.json`.
+User setup does not install a default direct target; configure direct targets
+with project setup instead.
+Per-call `directUrl` overrides and literal replay payload targets require
+`SOFARPC_ALLOW_TARGET_OVERRIDE=true`. `SOFARPC_ALLOWED_TARGET_HOSTS`,
 when set, restricts real direct targets to a comma-separated list of host or
 host:port values; `*` allows all hosts. Invalid project target config is
 reported by `sofarpc_target` / `sofarpc_doctor` and blocks real invoke until
@@ -232,11 +259,7 @@ Codex: `~/.codex/config.toml` under `[mcp_servers.sofarpc]`):
 {
   "mcpServers": {
     "sofarpc-project": {
-      "command": "/abs/path/to/sofarpc-mcp",
-      "env": {
-        "SOFARPC_PROJECT_ROOT": "/abs/path/to/project",
-        "SOFARPC_DIRECT_URL": "bolt://host:12200"
-      }
+      "command": "/abs/path/to/sofarpc-mcp"
     }
   }
 }
@@ -244,12 +267,14 @@ Codex: `~/.codex/config.toml` under `[mcp_servers.sofarpc]`):
 
 ## Typical flow
 
-1. `sofarpc_open`
-2. `sofarpc_target` (optionally with `project` or `cwd` to inspect another project)
-3. `sofarpc_describe` with the `sessionId` if contract information is available
-4. `sofarpc_invoke` with the `sessionId`
-5. `sofarpc_replay` with the `sessionId`, or `payload` plus `sessionId` for safety context
-6. `sofarpc_doctor` when invoke cannot proceed
+1. `sofarpc_init_project` when a Java checkout has no `.sofarpc/config*.json`;
+   pass `project`/`cwd` when known, otherwise inspect `projectResolution`
+2. `sofarpc_open`
+3. `sofarpc_target` (optionally with `project` or `cwd` to inspect another project)
+4. `sofarpc_describe` with the `sessionId` if contract information is available
+5. `sofarpc_invoke` with the `sessionId`
+6. `sofarpc_replay` with the `sessionId`, or `payload` plus `sessionId` for safety context
+7. `sofarpc_doctor` when invoke cannot proceed
 
 The installed `sofarpc-invoke` skill turns this flow into a machine-
 readable playbook for Claude Code / Codex, including the errcode
@@ -276,15 +301,18 @@ source.
   supplies the project-scoped target config and contract store.
 - `version` overrides the SOFA service version for this call.
 - `targetAppName` sets the direct-transport target app header.
-- `directUrl` and `registryAddress` are per-call overrides; otherwise project
-  config wins, then MCP env.
+- `directUrl` and `registryAddress` are per-call overrides. Otherwise project
+  config wins; process env is only a legacy/manual fallback. User setup does
+  not write target defaults.
 - `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later;
   replay accepts either that plan or a dry-run output object containing `plan`.
   Literal payload replay may include `sessionId`, `project`, or `cwd` so
   execution policy uses the intended project safety context.
 - Real invocation requires `SOFARPC_ALLOW_INVOKE=true`; keep the default disabled
   when you only want planning, skeletons, and diagnostics.
-- Non-dry-run direct calls default to the resolved project/env direct target;
+- Service allowlists come from project `.sofarpc/config*.json`
+  `allowedServices`, not user-scope setup env.
+- Non-dry-run direct calls default to the resolved ambient direct target;
   per-call target overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true` and can
   be bounded with `SOFARPC_ALLOWED_TARGET_HOSTS`.
 - If `sessionId` is provided, the plan is retained for session replay only when

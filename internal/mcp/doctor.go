@@ -71,7 +71,10 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		var wg sync.WaitGroup
 		wg.Add(4)
 		go func() { defer wg.Done(); checks[0] = checkTarget(in, scope.Sources) }()
-		go func() { defer wg.Done(); checks[1] = checkContract(contractSnapshot, scope.ProjectRoot) }()
+		go func() {
+			defer wg.Done()
+			checks[1] = checkContract(contractSnapshot, scope.ProjectRoot, holder.ProjectCacheDiagnostics())
+		}()
 		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
 		go func() { defer wg.Done(); checks[3] = checkInvokePolicy(in, scope.Sources) }()
 		wg.Wait()
@@ -145,9 +148,10 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 
 func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 	policy := executionPolicyFromEnv(sources)
+	policyDiagnostics := policy.Diagnostics()
 	report := target.Resolve(target.Input{Service: in.Service}, sources)
 	data := map[string]any{
-		"policy":             policy.Diagnostics(),
+		"policy":             policyDiagnostics,
 		"supportsDirectBolt": target.SupportsDirectBolt(report.Target),
 	}
 	if strings.TrimSpace(sources.ProjectRoot) != "" {
@@ -169,17 +173,6 @@ func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 			},
 		}
 	}
-	if strings.TrimSpace(in.Service) != "" && !policy.ServiceAllowed(in.Service) {
-		return DoctorCheck{
-			Name:   "invoke-policy",
-			Ok:     false,
-			Detail: fmt.Sprintf("service %q is not allowed by %s", in.Service, invoke.EnvAllowedServices),
-			Data:   data,
-			NextStep: &DoctorAction{
-				Tool: "sofarpc_doctor",
-			},
-		}
-	}
 	if len(report.ConfigErrors) > 0 {
 		return DoctorCheck{
 			Name:   "invoke-policy",
@@ -189,6 +182,33 @@ func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 			NextStep: &DoctorAction{
 				Tool: "sofarpc_target",
 				Args: targetHintArgs(sources),
+			},
+		}
+	}
+	if !policyDiagnostics.AllowedServicesConfigured {
+		return DoctorCheck{
+			Name:   "invoke-policy",
+			Ok:     false,
+			Detail: "project allowedServices is required for real invoke",
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_init_project",
+				Args: initProjectPolicyHintArgs(sources),
+			},
+		}
+	}
+	if strings.TrimSpace(in.Service) != "" && !policy.ServiceAllowed(in.Service) {
+		source := strings.TrimSpace(policy.AllowedServicesSource)
+		if source == "" {
+			source = "configured service allowlist"
+		}
+		return DoctorCheck{
+			Name:   "invoke-policy",
+			Ok:     false,
+			Detail: fmt.Sprintf("service %q is not allowed by %s", in.Service, source),
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_doctor",
 			},
 		}
 	}
@@ -240,11 +260,14 @@ func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 	}
 }
 
-func checkContract(snapshot contractSnapshot, targetRoot string) DoctorCheck {
+func checkContract(snapshot contractSnapshot, targetRoot string, cache map[string]any) DoctorCheck {
 	store := snapshot.store
 	loadErr := snapshot.loadError
 	contractRoot := snapshot.root
 	data := contractRootData(targetRoot, contractRoot)
+	if len(cache) > 0 {
+		data["cache"] = cache
+	}
 	if rootsMismatch(targetRoot, contractRoot) {
 		return DoctorCheck{
 			Name:   "contract",
