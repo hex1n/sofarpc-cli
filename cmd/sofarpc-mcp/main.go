@@ -64,6 +64,13 @@ func run(ctx context.Context) error {
 			}
 			return store, err
 		},
+		ProjectContractLoader: func(projectRoot string) (contract.Store, error) {
+			store, err := loadContractStore(projectRoot)
+			if store == nil {
+				return nil, err
+			}
+			return store, err
+		},
 	})
 	return server.Run(ctx, &sdkmcp.StdioTransport{})
 }

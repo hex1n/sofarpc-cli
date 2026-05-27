@@ -48,7 +48,13 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 			return invokeToolResult(out, summarizeReplay(plan, source, true), false), nil
 		}
 
-		toolSources := sourcesForSession(sources, sessions, in.SessionID)
+		scope, scopeErr := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
+		if scopeErr != nil {
+			ecerr := errcode.New(errcode.ArgsInvalid, "replay", scopeErr.Error())
+			out := ReplayOutput{Plan: plan, Source: source, Error: ecerr}
+			return invokeToolResult(out, errorText("replay failed", ecerr), true), nil
+		}
+		toolSources := scope.Sources
 		if err := validateExecutionPolicy(*plan, "replay", toolSources); err != nil {
 			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: targetConfigDiagnostics(toolSources), Error: asErrcodeError(err)}
 			return invokeToolResult(out, errorText("replay rejected", err), true), nil
@@ -72,6 +78,8 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 
 type rawReplayInput struct {
 	SessionID string          `json:"sessionId,omitempty"`
+	Cwd       string          `json:"cwd,omitempty"`
+	Project   string          `json:"project,omitempty"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	DryRun    bool            `json:"dryRun,omitempty"`
 }
@@ -89,20 +97,22 @@ func decodeReplayInput(req *sdkmcp.CallToolRequest) (ReplayInput, json.RawMessag
 	}
 	return ReplayInput{
 		SessionID: raw.SessionID,
+		Cwd:       raw.Cwd,
+		Project:   raw.Project,
 		DryRun:    raw.DryRun,
 	}, raw.Payload, nil
 }
 
 // extractPlan decides whether to load the plan from a session or from
-// the supplied payload. Exactly one source must be set.
+// the supplied payload. When both are present, payload supplies the plan
+// and sessionId supplies workspace/safety context.
 func extractPlan(in ReplayInput, payload json.RawMessage, sessions *SessionStore) (*invoke.Plan, string, error) {
 	hasSession := in.SessionID != ""
 	hasPayload := len(bytes.TrimSpace(payload)) > 0 && !bytes.Equal(bytes.TrimSpace(payload), []byte("null"))
 	switch {
 	case hasSession && hasPayload:
-		return nil, "", errcode.New(errcode.ArgsInvalid, "replay",
-			"sessionId and payload are mutually exclusive").
-			WithHint("sofarpc_replay", nil, "pass exactly one of sessionId / payload")
+		plan, err := planFromPayload(payload)
+		return plan, "payload", err
 	case !hasSession && !hasPayload:
 		return nil, "", errcode.New(errcode.ArgsInvalid, "replay",
 			"provide either sessionId or payload").

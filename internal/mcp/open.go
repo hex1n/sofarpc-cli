@@ -40,6 +40,7 @@ type Capabilities struct {
 type ContractBanner struct {
 	Attached       bool              `json:"attached"`
 	Source         string            `json:"source,omitempty"`
+	ContractRoot   string            `json:"contractRoot,omitempty"`
 	IndexedClasses int               `json:"indexedClasses,omitempty"`
 	IndexedFiles   int               `json:"indexedFiles,omitempty"`
 	ParsedClasses  int               `json:"parsedClasses,omitempty"`
@@ -55,8 +56,6 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 		Name:        "sofarpc_open",
 		Description: "Open a sofarpc workspace. Returns the resolved target, a capability banner, and a session id the agent can reuse in subsequent calls.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in OpenInput) (*sdkmcp.CallToolResult, OpenOutput, error) {
-		store := holder.Get()
-		loadErr := holder.LoadError()
 		ws, err := workspace.Resolve(workspace.Input{
 			Cwd:     in.Cwd,
 			Project: in.Project,
@@ -68,6 +67,7 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 			}, OpenOutput{}, nil
 		}
 
+		contractSnapshot := holder.ForProject(ws.ProjectRoot)
 		report := target.Resolve(target.Input{}, ws.Sources(envCfg))
 
 		session := sessions.Create(Session{
@@ -83,10 +83,10 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 			ConfigErrors: report.ConfigErrors,
 			Capabilities: Capabilities{
 				DirectInvoke: true,
-				Describe:     store != nil,
+				Describe:     contractSnapshot.store != nil,
 				Replay:       sessions != nil,
 			},
-			Contract: buildContractBanner(store, loadErr),
+			Contract: buildContractBanner(contractSnapshot.store, contractSnapshot.loadError, contractSnapshot.root),
 		}
 
 		result := &sdkmcp.CallToolResult{
@@ -106,14 +106,15 @@ func summarizeOpen(out OpenOutput) string {
 	return fmt.Sprintf("%s project=%s %s", out.SessionID, out.ProjectRoot, targetState)
 }
 
-func buildContractBanner(store any, loadErr string) ContractBanner {
+func buildContractBanner(store any, loadErr, contractRoot string) ContractBanner {
 	if store == nil {
-		return ContractBanner{LoadError: loadErr}
+		return ContractBanner{LoadError: loadErr, ContractRoot: contractRoot}
 	}
 	banner := ContractBanner{
-		Attached:  true,
-		Source:    "contract-store",
-		LoadError: loadErr,
+		Attached:     true,
+		Source:       "contract-store",
+		ContractRoot: contractRoot,
+		LoadError:    loadErr,
 	}
 	if sized, ok := store.(interface{ Size() int }); ok {
 		banner.ParsedClasses = sized.Size()

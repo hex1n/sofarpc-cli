@@ -67,3 +67,44 @@ func TestContractHolder_LazyLoaderRunsOnce(t *testing.T) {
 		t.Fatal("loaded store should contain com.foo.Lazy")
 	}
 }
+
+func TestContractHolder_ForProjectCachesPerProjectRoot(t *testing.T) {
+	calls := map[string]int{}
+	projectA := t.TempDir()
+	projectB := t.TempDir()
+	h := newContractHolder(nil, "", nil)
+	h.SetProjectLoader(func(projectRoot string) (contract.Store, error) {
+		calls[projectRoot]++
+		return contract.NewInMemoryStore(javamodel.Class{FQN: "com.foo.Project"}), nil
+	})
+
+	firstA := h.ForProject(projectA)
+	secondA := h.ForProject(projectA)
+	firstB := h.ForProject(projectB)
+
+	if firstA.root != canonicalProjectRoot(projectA) || secondA.root != canonicalProjectRoot(projectA) || firstB.root != canonicalProjectRoot(projectB) {
+		t.Fatalf("unexpected roots: firstA=%q secondA=%q firstB=%q", firstA.root, secondA.root, firstB.root)
+	}
+	if calls[canonicalProjectRoot(projectA)] != 1 || calls[canonicalProjectRoot(projectB)] != 1 {
+		t.Fatalf("project loader calls = %+v, want one call per project", calls)
+	}
+	if firstA.store == firstB.store {
+		t.Fatal("different projects should not share a contract store")
+	}
+}
+
+func TestContractHolder_ForProjectFallsBackToDefaultStoreWithoutProjectLoader(t *testing.T) {
+	defaultRoot := t.TempDir()
+	store := contract.NewInMemoryStore(javamodel.Class{FQN: "com.foo.Default"})
+	h := newContractHolder(store, "", nil)
+	h.SetDefaultRoot(defaultRoot)
+
+	snapshot := h.ForProject("other-root")
+
+	if snapshot.store != store {
+		t.Fatal("ForProject should return the default store when no project loader is configured")
+	}
+	if snapshot.root != canonicalProjectRoot(defaultRoot) {
+		t.Fatalf("root: got %q want %q", snapshot.root, canonicalProjectRoot(defaultRoot))
+	}
+}

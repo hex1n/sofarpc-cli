@@ -12,9 +12,9 @@ Agent playbook for the `sofarpc-mcp` tools: `sofarpc_open`,
 1. Call `sofarpc_open` once for a new project/session. Keep the `sessionId`.
 2. Read `capabilities` and `contract` from `sofarpc_open`.
 3. If `capabilities.describe == true`, call `sofarpc_describe` with
-   `service` and `method`; reuse the returned `types`.
+   `sessionId`, `service`, and `method`; reuse the returned `types`.
 4. Call `sofarpc_invoke` with `dryRun: true` unless the user explicitly asked
-   to send a real request.
+   to send a real request. Include the `sessionId`.
 5. Inspect `plan.target`, `plan.paramTypes`, `plan.args`, and `contractSource`.
 6. For real calls, invoke without `dryRun` only after the plan matches intent.
 7. On failure, follow `hint.nextTool` / `hint.nextArgs` before guessing.
@@ -23,8 +23,13 @@ Agent playbook for the `sofarpc-mcp` tools: `sofarpc_open`,
 - Server registered: `sofarpc-mcp setup --scope=user`.
 - Target resolution: per-call input, `.sofarpc/config.local.json`,
   `.sofarpc/config.json`, MCP env, defaults. Project config must not set `mode`.
-- Contract data comes from `SOFARPC_PROJECT_ROOT` or project CWD. If no contract
-  is available, use trusted mode.
+- Contract data is loaded lazily per resolved project root. `project` / `cwd`
+  selects a project explicitly; otherwise `sessionId` selects the project opened
+  by `sofarpc_open`.
+- If no contract is available, use trusted mode. If a stale contract cannot
+  resolve a complete user-supplied tuple, use `contractMode: "trusted"` or
+  `trusted: true`. Use `contractMode: "strict"` only when falling back would be
+  unsafe.
 - Real calls require `SOFARPC_ALLOW_INVOKE=true`; per-call `directUrl`
   overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`.
 
@@ -58,7 +63,8 @@ Trusted mode, for no contract or exact user-supplied Java shape:
   "method": "query",
   "types": ["com.foo.OrderQueryRequest"],
   "args": [{ "@type": "com.foo.OrderQueryRequest", "orderId": 42 }],
-  "directUrl": "bolt://host:12200"
+  "directUrl": "bolt://host:12200",
+  "contractMode": "trusted"
 }
 ```
 
@@ -73,7 +79,8 @@ a one-item array.
 
 Same payload: `sofarpc_replay` with captured `sessionId`. Changed payload:
 dry-run replay by `sessionId`, edit the returned full plan, then send it back
-as `payload`. Payload replay requires `schemaVersion:
+as `payload` together with the same `sessionId` so replay policy uses the
+session project context. Payload replay requires `schemaVersion:
 "sofarpc.invoke.plan/v1"`; unsupported versions require a fresh dry-run invoke.
 If `diagnostics.sessionPlanCapture.reason == "plan-too-large"`, replay with the
 returned literal plan payload.
@@ -89,7 +96,9 @@ Every failure returns `{code, message, phase, hint?}`. Treat `hint.nextTool` and
   `runtime.protocol-failed`: call `sofarpc_doctor`.
 - `contract.method-not-found` or `runtime.serialize-failed`: call
   `sofarpc_describe`; inspect overloads, args, and `@type` shape.
-- `workspace.facade-not-configured`: confirm project root or use trusted mode.
+- `workspace.facade-not-configured`: confirm `projectRoot` / `contractRoot` in
+  `sofarpc_open` or `sofarpc_doctor`, then use trusted mode only with a complete
+  service/method/types/args tuple.
 - `replay.plan-version-unsupported`: rebuild a fresh dry-run plan.
 - `runtime.rejected`: report the guardrail message; do not retry blindly.
 

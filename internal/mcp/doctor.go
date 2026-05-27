@@ -45,15 +45,35 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		Name:        "sofarpc_doctor",
 		Description: "Run end-to-end self-diagnosis: target resolution, reachability, workspace state, and session readiness.",
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DoctorInput) (*sdkmcp.CallToolResult, DoctorOutput, error) {
-		store := holder.Get()
-		loadErr := holder.LoadError()
+		scope, err := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
+		if err != nil {
+			out := DoctorOutput{
+				Checks: []DoctorCheck{{
+					Name:   "scope",
+					Ok:     false,
+					Detail: err.Error(),
+					NextStep: &DoctorAction{
+						Tool: "sofarpc_open",
+					},
+				}},
+			}
+			out.Ok = false
+			out.Summary = summarizeDoctor(out.Checks)
+			return &sdkmcp.CallToolResult{
+				IsError: true,
+				Content: []sdkmcp.Content{
+					&sdkmcp.TextContent{Text: out.Summary},
+				},
+			}, out, nil
+		}
+		contractSnapshot := holder.ForProject(scope.ProjectRoot)
 		checks := make([]DoctorCheck, 4)
 		var wg sync.WaitGroup
 		wg.Add(4)
-		go func() { defer wg.Done(); checks[0] = checkTarget(in, sources) }()
-		go func() { defer wg.Done(); checks[1] = checkContract(store, loadErr) }()
+		go func() { defer wg.Done(); checks[0] = checkTarget(in, scope.Sources) }()
+		go func() { defer wg.Done(); checks[1] = checkContract(contractSnapshot, scope.ProjectRoot) }()
 		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
-		go func() { defer wg.Done(); checks[3] = checkInvokePolicy(in, sources) }()
+		go func() { defer wg.Done(); checks[3] = checkInvokePolicy(in, scope.Sources) }()
 		wg.Wait()
 		out := DoctorOutput{Checks: checks}
 		out.Ok = allOk(out.Checks)
@@ -75,15 +95,20 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 // collapses the result into two checks: resolution and reachability.
 func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 	report := target.Resolve(target.Input{Service: in.Service}, sources)
+	data := map[string]any{}
+	if strings.TrimSpace(sources.ProjectRoot) != "" {
+		data["targetRoot"] = sources.ProjectRoot
+	}
 	if len(report.ConfigErrors) > 0 {
+		data["configErrors"] = report.ConfigErrors
 		return DoctorCheck{
 			Name:   "target",
 			Ok:     false,
 			Detail: "project target config could not be loaded",
-			Data:   map[string]any{"configErrors": report.ConfigErrors},
+			Data:   data,
 			NextStep: &DoctorAction{
 				Tool: "sofarpc_target",
-				Args: map[string]any{"explain": true},
+				Args: targetHintArgs(sources),
 			},
 		}
 	}
@@ -94,7 +119,7 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 			Detail: "no layer supplied a target mode (direct or registry)",
 			NextStep: &DoctorAction{
 				Tool: "sofarpc_target",
-				Args: map[string]any{"explain": true},
+				Args: targetHintArgs(sources),
 			},
 		}
 	}
@@ -106,7 +131,7 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 			Detail: fmt.Sprintf("mode=%s target=%s unreachable: %s", report.Target.Mode, probe.Target, probe.Message),
 			NextStep: &DoctorAction{
 				Tool: "sofarpc_target",
-				Args: map[string]any{"explain": true},
+				Args: targetHintArgs(sources),
 			},
 		}
 	}
@@ -114,6 +139,7 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 		Name:   "target",
 		Ok:     true,
 		Detail: fmt.Sprintf("mode=%s target=%s reachable", report.Target.Mode, probe.Target),
+		Data:   data,
 	}
 }
 
@@ -123,6 +149,9 @@ func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 	data := map[string]any{
 		"policy":             policy.Diagnostics(),
 		"supportsDirectBolt": target.SupportsDirectBolt(report.Target),
+	}
+	if strings.TrimSpace(sources.ProjectRoot) != "" {
+		data["targetRoot"] = sources.ProjectRoot
 	}
 	if report.Target.Mode != "" {
 		data["target"] = report.Target
@@ -211,16 +240,34 @@ func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 	}
 }
 
-func checkContract(store contract.Store, loadErr string) DoctorCheck {
+func checkContract(snapshot contractSnapshot, targetRoot string) DoctorCheck {
+	store := snapshot.store
+	loadErr := snapshot.loadError
+	contractRoot := snapshot.root
+	data := contractRootData(targetRoot, contractRoot)
+	if rootsMismatch(targetRoot, contractRoot) {
+		return DoctorCheck{
+			Name:   "contract",
+			Ok:     false,
+			Detail: fmt.Sprintf("target root %s does not match contract root %s", targetRoot, contractRoot),
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_open",
+				Args: openHintArgs(targetRoot),
+			},
+		}
+	}
 	if store == nil {
 		if loadErr != "" {
+			data["loadError"] = loadErr
 			return DoctorCheck{
 				Name:   "contract",
 				Ok:     false,
 				Detail: "contract store failed to load: " + loadErr + "; trusted-mode invoke still works",
-				Data:   map[string]any{"loadError": loadErr},
+				Data:   data,
 				NextStep: &DoctorAction{
 					Tool: "sofarpc_open",
+					Args: openHintArgs(targetRoot),
 				},
 			}
 		}
@@ -228,6 +275,7 @@ func checkContract(store contract.Store, loadErr string) DoctorCheck {
 			Name:   "contract",
 			Ok:     true,
 			Detail: "no contract information attached; describe is unavailable, trusted-mode invoke still works",
+			Data:   data,
 		}
 	}
 	banner, ok := store.(interface{ Size() int })
@@ -236,17 +284,16 @@ func checkContract(store contract.Store, loadErr string) DoctorCheck {
 			Name:   "contract",
 			Ok:     true,
 			Detail: "contract information attached",
+			Data:   data,
 		}
 	}
 	size := banner.Size()
 	diagProvider, hasDiagnostics := store.(contract.DiagnosticStore)
 	if hasDiagnostics {
 		diag := diagProvider.Diagnostics()
-		data := map[string]any{
-			"indexedClasses": diag.IndexedClasses,
-			"indexedFiles":   diag.IndexedFiles,
-			"parsedClasses":  diag.ParsedClasses,
-		}
+		data["indexedClasses"] = diag.IndexedClasses
+		data["indexedFiles"] = diag.IndexedFiles
+		data["parsedClasses"] = diag.ParsedClasses
 		if len(diag.IndexFailures) > 0 {
 			data["indexFailures"] = diag.IndexFailures
 		}
@@ -272,13 +319,42 @@ func checkContract(store contract.Store, loadErr string) DoctorCheck {
 			Name:   "contract",
 			Ok:     true,
 			Detail: "contract information attached but empty; describe may not return overloads",
+			Data:   data,
 		}
 	}
 	return DoctorCheck{
 		Name:   "contract",
 		Ok:     true,
 		Detail: fmt.Sprintf("contract information attached (%d class(es))", size),
+		Data:   data,
 	}
+}
+
+func contractRootData(targetRoot, contractRoot string) map[string]any {
+	data := map[string]any{}
+	if strings.TrimSpace(targetRoot) != "" {
+		data["targetRoot"] = targetRoot
+	}
+	if strings.TrimSpace(contractRoot) != "" {
+		data["contractRoot"] = contractRoot
+	}
+	return data
+}
+
+func rootsMismatch(targetRoot, contractRoot string) bool {
+	targetRoot = strings.TrimSpace(targetRoot)
+	contractRoot = strings.TrimSpace(contractRoot)
+	if targetRoot == "" || contractRoot == "" {
+		return false
+	}
+	return !sameProjectRoot(targetRoot, contractRoot)
+}
+
+func openHintArgs(projectRoot string) map[string]any {
+	if strings.TrimSpace(projectRoot) == "" {
+		return nil
+	}
+	return map[string]any{"project": projectRoot}
 }
 
 // checkSessions reports the session store's current load relative to its

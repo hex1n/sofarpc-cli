@@ -49,11 +49,19 @@ type DescribeDiagnostics struct {
 }
 
 func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolder) {
+	sources := opts.TargetSources
+	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_describe",
 		Description: "Describe a service method: resolve overloads, list param/return types, and return a JSON skeleton when contract information is available.",
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DescribeInput) (*sdkmcp.CallToolResult, DescribeOutput, error) {
-		store := holder.Get()
+		scope, err := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
+		if err != nil {
+			out := DescribeOutput{Service: in.Service, Method: in.Method, Error: errcode.New(errcode.ArgsInvalid, "describe", err.Error())}
+			return errorResult(out), out, nil
+		}
+		contractSnapshot := holder.ForProject(scope.ProjectRoot)
+		store := contractSnapshot.store
 		if store == nil {
 			out := DescribeOutput{
 				Service: in.Service,
@@ -70,10 +78,7 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolde
 		}
 
 		skeleton := contract.BuildSkeleton(result.Method.ParamTypes, store)
-		// describe runs only when a contract store is attached, so any
-		// pre-startup load error is moot here — pass an empty loadErr
-		// and let open / doctor own the load-error surface.
-		contractBanner := buildContractBanner(store, "")
+		contractBanner := buildContractBanner(store, contractSnapshot.loadError, contractSnapshot.root)
 		out := DescribeOutput{
 			Service:   in.Service,
 			Method:    in.Method,

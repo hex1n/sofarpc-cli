@@ -95,6 +95,31 @@ func TestDoctor_ContractCheckReportsAttachedStore(t *testing.T) {
 	}
 }
 
+func TestDoctor_ContractCheckFlagsTargetContractRootMismatch(t *testing.T) {
+	contractRoot := t.TempDir()
+	targetRoot := t.TempDir()
+	store := contract.NewInMemoryStore(javamodel.Class{FQN: "com.foo.Svc", Kind: javamodel.KindInterface})
+
+	out := callDoctor(t, Options{
+		TargetSources: target.ProjectSources(contractRoot, target.Config{}),
+		Contract:      store,
+	}, map[string]any{"project": targetRoot})
+
+	check := findCheck(t, out, "contract")
+	if check.Ok {
+		t.Fatalf("contract check should fail on root mismatch, got %+v", check)
+	}
+	if got, _ := check.Data["targetRoot"].(string); got != targetRoot {
+		t.Fatalf("targetRoot: got %q want %q", got, targetRoot)
+	}
+	if got, _ := check.Data["contractRoot"].(string); got != contractRoot {
+		t.Fatalf("contractRoot: got %q want %q", got, contractRoot)
+	}
+	if check.NextStep == nil || check.NextStep.Tool != "sofarpc_open" {
+		t.Fatalf("check should point at sofarpc_open, got %+v", check.NextStep)
+	}
+}
+
 func TestDoctor_ContractCheckIncludesSourceDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeDoctorJava(t, root, "src/main/java/com/foo/Svc.java", `

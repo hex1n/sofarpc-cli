@@ -227,13 +227,70 @@ func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
 	}
 }
 
-func TestReplay_BothSessionAndPayloadIsArgsInvalid(t *testing.T) {
-	out := callReplay(t, Options{}, map[string]any{
-		"sessionId": "ws_anything",
-		"payload":   samplePlan(),
+func TestReplay_PayloadUsesSessionForSafetyContext(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowedServices, "")
+	t.Setenv(envAllowTargetOverride, "false")
+
+	plan := samplePlan()
+	appResponse := sofarpcwire.NormalizeArgs([]any{
+		map[string]any{
+			"@type": "com.example.demo.Result",
+			"ok":    true,
+		},
+	})[0]
+	responseBytes, err := sofarpcwire.BuildSuccessResponse(appResponse)
+	if err != nil {
+		t.Fatalf("BuildSuccessResponse: %v", err)
+	}
+	directURL, stop := fakeDirectServer(t, responseBytes)
+	defer stop()
+	plan.Target.DirectURL = directURL
+
+	projectRoot := t.TempDir()
+	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.local.json", `{"directUrl": "`+directURL+`"}`)
+	sessions := NewSessionStore()
+	session := sessions.Create(Session{ProjectRoot: projectRoot})
+
+	out := callReplay(t, Options{
+		Sessions: sessions,
+		TargetSources: target.Sources{
+			Env: target.Config{DirectURL: "bolt://wrong-host:12200"},
+		},
+	}, map[string]any{
+		"sessionId": session.ID,
+		"payload":   plan,
 	})
-	if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
-		t.Fatalf("expected ArgsInvalid, got %+v", out.Error)
+
+	if !out.Ok {
+		t.Fatalf("replay should use session safety context; got error=%+v diagnostics=%+v", out.Error, out.Diagnostics)
+	}
+	if out.Source != "payload" {
+		t.Fatalf("source: got %q want payload", out.Source)
+	}
+}
+
+func TestReplay_BothSessionAndPayloadUsesPayloadPlan(t *testing.T) {
+	sessions := NewSessionStore()
+	sessionPlan := samplePlan()
+	sessionPlan.Method = "fromSession"
+	session := sessions.Create(Session{ProjectRoot: t.TempDir(), LastPlan: &sessionPlan})
+	payloadPlan := samplePlan()
+	payloadPlan.Method = "fromPayload"
+
+	out := callReplay(t, Options{Sessions: sessions}, map[string]any{
+		"sessionId": session.ID,
+		"payload":   payloadPlan,
+		"dryRun":    true,
+	})
+	if !out.Ok {
+		t.Fatalf("dry-run replay should allow sessionId plus payload; got error=%+v", out.Error)
+	}
+	if out.Source != "payload" {
+		t.Fatalf("source: got %q want payload", out.Source)
+	}
+	if out.Plan == nil || out.Plan.Method != "fromPayload" {
+		t.Fatalf("plan should come from payload, got %+v", out.Plan)
 	}
 }
 

@@ -183,6 +183,106 @@ func TestInvoke_ConfigErrorDiagnosticsUseSessionProject(t *testing.T) {
 	assertConfigDiagnostics(t, out.Diagnostics, projectRoot)
 }
 
+func TestInvoke_UsesSessionProjectContract(t *testing.T) {
+	projectRoot := t.TempDir()
+	sessions := NewSessionStore()
+	session := sessions.Create(Session{ProjectRoot: projectRoot})
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.SessionFacade",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"com.foo.SessionRequest"}},
+			},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.SessionRequest",
+			Kind: javamodel.KindClass,
+			Fields: []javamodel.Field{
+				{Name: "id", JavaType: "java.lang.Long"},
+			},
+		},
+	)
+
+	out := callInvoke(t, Options{
+		Sessions: sessions,
+		ProjectContractLoader: func(root string) (contract.Store, error) {
+			if root != projectRoot {
+				t.Fatalf("loader projectRoot: got %q want %q", root, projectRoot)
+			}
+			return store, nil
+		},
+	}, map[string]any{
+		"service":   "com.foo.SessionFacade",
+		"method":    "query",
+		"directUrl": "bolt://host:12200",
+		"sessionId": session.ID,
+		"dryRun":    true,
+	})
+
+	if !out.Ok {
+		t.Fatalf("dry-run should succeed; got error=%+v", out.Error)
+	}
+	if out.Plan == nil || out.Plan.ArgSource != "skeleton" {
+		t.Fatalf("expected skeleton plan, got %+v", out.Plan)
+	}
+	if got := out.Plan.ParamTypes[0]; got != "com.foo.SessionRequest" {
+		t.Fatalf("paramTypes[0]: got %q", got)
+	}
+}
+
+func TestInvoke_AutoFallsBackToTrustedWhenContractMissesCompleteTuple(t *testing.T) {
+	out := callInvoke(t, Options{
+		Contract: contract.NewInMemoryStore(),
+	}, map[string]any{
+		"service":   "com.foo.MissingFacade",
+		"method":    "query",
+		"directUrl": "bolt://host:12200",
+		"types":     []any{"java.lang.String"},
+		"args":      []any{"hello"},
+		"dryRun":    true,
+	})
+
+	if !out.Ok {
+		t.Fatalf("auto trusted fallback should succeed; got error=%+v", out.Error)
+	}
+	if out.Plan == nil || out.Plan.ContractSource != "trusted" {
+		t.Fatalf("contractSource: got %+v", out.Plan)
+	}
+}
+
+func TestInvoke_StrictModeDoesNotFallbackOnContractMiss(t *testing.T) {
+	out := callInvoke(t, Options{
+		Contract: contract.NewInMemoryStore(),
+	}, map[string]any{
+		"service":      "com.foo.MissingFacade",
+		"method":       "query",
+		"directUrl":    "bolt://host:12200",
+		"types":        []any{"java.lang.String"},
+		"args":         []any{"hello"},
+		"contractMode": "strict",
+		"dryRun":       true,
+	})
+
+	if out.Error == nil || out.Error.Code != errcode.ContractUnresolvable {
+		t.Fatalf("expected ContractUnresolvable, got %+v", out.Error)
+	}
+}
+
+func TestInvoke_RejectsInvalidContractMode(t *testing.T) {
+	out := callInvoke(t, Options{}, map[string]any{
+		"service":      "com.foo.Svc",
+		"method":       "query",
+		"directUrl":    "bolt://host:12200",
+		"contractMode": "loose",
+		"dryRun":       true,
+	})
+
+	if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
+		t.Fatalf("expected ArgsInvalid, got %+v", out.Error)
+	}
+}
+
 func TestInvoke_FacadeNilWithoutParamTypesSurfacesErrcode(t *testing.T) {
 	out := callInvoke(t, Options{}, map[string]any{
 		"service":   "com.foo.Svc",
