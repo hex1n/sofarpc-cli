@@ -259,6 +259,31 @@ func TestInitProject_ExistingConfigRequiresForce(t *testing.T) {
 	}
 }
 
+func TestInitProject_ValidationErrorReportsExistingConfig(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".sofarpc", "config.local.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("{\"allowedServices\":[\"old\"]}\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	out, result := callInitProject(t, Options{}, map[string]any{
+		"project":   root,
+		"directUrl": "bolt://dev-rpc.example.com:12200",
+	})
+	if !result.IsError || out.Error == nil {
+		t.Fatalf("expected validation rejection: result=%+v out=%+v", result, out)
+	}
+	if !out.Existing {
+		t.Fatalf("expected existing config to be reported: %+v", out)
+	}
+	if !strings.Contains(out.Error.Message, "allowedServices is required") {
+		t.Fatalf("error should explain allowedServices requirement: %+v", out.Error)
+	}
+}
+
 func TestInitProject_SharedConfigDoesNotTouchGitignore(t *testing.T) {
 	root := t.TempDir()
 	out, result := callInitProject(t, Options{}, map[string]any{

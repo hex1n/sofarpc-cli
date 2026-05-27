@@ -3,9 +3,11 @@
 package projectconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -31,6 +33,26 @@ type Config struct {
 	TimeoutMS        int      `json:"timeoutMs,omitempty"`
 	ConnectTimeoutMS int      `json:"connectTimeoutMs,omitempty"`
 	AllowedServices  []string `json:"allowedServices,omitempty"`
+}
+
+type ReadResult struct {
+	Path               string
+	Kind               Kind
+	Exists             bool
+	Config             Config
+	AllowedServicesSet bool
+}
+
+type fileConfig struct {
+	DirectURL        string    `json:"directUrl,omitempty"`
+	RegistryAddress  string    `json:"registryAddress,omitempty"`
+	RegistryProtocol string    `json:"registryProtocol,omitempty"`
+	Protocol         string    `json:"protocol,omitempty"`
+	Serialization    string    `json:"serialization,omitempty"`
+	UniqueID         string    `json:"uniqueId,omitempty"`
+	TimeoutMS        int       `json:"timeoutMs,omitempty"`
+	ConnectTimeoutMS int       `json:"connectTimeoutMs,omitempty"`
+	AllowedServices  *[]string `json:"allowedServices,omitempty"`
 }
 
 type WriteResult struct {
@@ -64,7 +86,31 @@ func ConfigPath(projectRoot string, kind Kind) string {
 	return filepath.Join(projectRoot, ".sofarpc", name)
 }
 
+func Read(projectRoot string, kind Kind) (ReadResult, error) {
+	result := ReadResult{
+		Path: ConfigPath(projectRoot, kind),
+		Kind: kind,
+	}
+	body, err := os.ReadFile(result.Path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return result, nil
+		}
+		return result, err
+	}
+	result.Exists = true
+
+	cfg, allowedServicesSet, err := parse(body)
+	if err != nil {
+		return result, err
+	}
+	result.Config = cfg
+	result.AllowedServicesSet = allowedServicesSet
+	return result, nil
+}
+
 func Marshal(cfg Config) ([]byte, error) {
+	cfg = Normalize(cfg)
 	if err := Validate(cfg); err != nil {
 		return nil, err
 	}
@@ -80,6 +126,66 @@ func Validate(cfg Config) error {
 		return fmt.Errorf("directUrl and registryAddress are mutually exclusive")
 	}
 	return nil
+}
+
+func Normalize(cfg Config) Config {
+	cfg.DirectURL = strings.TrimSpace(cfg.DirectURL)
+	cfg.RegistryAddress = strings.TrimSpace(cfg.RegistryAddress)
+	cfg.RegistryProtocol = strings.TrimSpace(cfg.RegistryProtocol)
+	cfg.Protocol = strings.TrimSpace(cfg.Protocol)
+	cfg.Serialization = strings.TrimSpace(cfg.Serialization)
+	cfg.UniqueID = strings.TrimSpace(cfg.UniqueID)
+	cfg.AllowedServices = normalizeStringList(cfg.AllowedServices)
+	return cfg
+}
+
+func parse(body []byte) (Config, bool, error) {
+	var raw fileConfig
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&raw); err != nil {
+		return Config{}, false, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("contains multiple JSON values")
+		}
+		return Config{}, false, err
+	}
+
+	cfg := configFromFile(raw)
+	if err := Validate(cfg); err != nil {
+		return Config{}, false, err
+	}
+	return cfg, raw.AllowedServices != nil, nil
+}
+
+func configFromFile(raw fileConfig) Config {
+	cfg := Config{
+		DirectURL:        strings.TrimSpace(raw.DirectURL),
+		RegistryAddress:  strings.TrimSpace(raw.RegistryAddress),
+		RegistryProtocol: strings.TrimSpace(raw.RegistryProtocol),
+		Protocol:         strings.TrimSpace(raw.Protocol),
+		Serialization:    strings.TrimSpace(raw.Serialization),
+		UniqueID:         strings.TrimSpace(raw.UniqueID),
+		TimeoutMS:        raw.TimeoutMS,
+		ConnectTimeoutMS: raw.ConnectTimeoutMS,
+	}
+	if raw.AllowedServices != nil {
+		cfg.AllowedServices = normalizeStringList(*raw.AllowedServices)
+	}
+	return Normalize(cfg)
+}
+
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func Write(projectRoot string, kind Kind, cfg Config, force bool) (WriteResult, error) {

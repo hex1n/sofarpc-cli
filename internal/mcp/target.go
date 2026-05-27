@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
-	"github.com/hex1n/sofarpc-cli/internal/core/workspace"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -14,6 +13,7 @@ import (
 type TargetInput struct {
 	Cwd              string `json:"cwd,omitempty"`
 	Project          string `json:"project,omitempty"`
+	SessionID        string `json:"sessionId,omitempty"`
 	Service          string `json:"service,omitempty"`
 	DirectURL        string `json:"directUrl,omitempty"`
 	RegistryAddress  string `json:"registryAddress,omitempty"`
@@ -44,22 +44,20 @@ type TargetOutput struct {
 
 func registerTarget(server *sdkmcp.Server, opts Options) {
 	sources := opts.TargetSources
-	envCfg := opts.TargetSources.Env
+	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_target",
+		Title:       "Resolve SOFARPC Target",
 		Description: "Resolve the invocation target without executing a request. Returns the merged target, the config layers that produced it, and a reachability probe.",
-	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in TargetInput) (*sdkmcp.CallToolResult, TargetOutput, error) {
-		toolSources := sources
-		if in.Cwd != "" || in.Project != "" {
-			ws, err := workspace.Resolve(workspace.Input{Cwd: in.Cwd, Project: in.Project})
-			if err != nil {
-				return &sdkmcp.CallToolResult{
-					IsError: true,
-					Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: err.Error()}},
-				}, TargetOutput{}, nil
-			}
-			toolSources = ws.Sources(envCfg)
+		Annotations: networkReadOnlyAnnotations("Resolve SOFARPC Target"),
+	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in TargetInput) (*sdkmcp.CallToolResult, TargetOutput, error) {
+		notifyToolProgress(ctx, req, 0, 2, "resolving target scope")
+		scope, err := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
+		if err != nil {
+			out := TargetOutput{}
+			return toolResult(out, err.Error(), true), out, nil
 		}
+		toolSources := scope.Sources
 		input := target.Input{
 			Service:          in.Service,
 			DirectURL:        in.DirectURL,
@@ -71,11 +69,12 @@ func registerTarget(server *sdkmcp.Server, opts Options) {
 			ConnectTimeoutMS: in.ConnectTimeoutMS,
 			Explain:          in.Explain,
 		}
+		notifyToolProgress(ctx, req, 1, 2, "probing target")
 		report := target.Resolve(input, toolSources)
 		probe := target.Probe(report.Target)
 
 		out := TargetOutput{
-			ProjectRoot:  toolSources.ProjectRoot,
+			ProjectRoot:  scope.ProjectRoot,
 			Target:       report.Target,
 			Service:      report.Service,
 			Layers:       report.Layers,
@@ -85,14 +84,11 @@ func registerTarget(server *sdkmcp.Server, opts Options) {
 			Trace:        report.Trace,
 		}
 
-		result := &sdkmcp.CallToolResult{
-			Content: []sdkmcp.Content{
-				&sdkmcp.TextContent{Text: summarizeTarget(out)},
-			},
-		}
+		result := toolResult(out, summarizeTarget(out), false)
 		if report.Target.Mode == "" || len(report.ConfigErrors) > 0 {
 			result.IsError = true
 		}
+		notifyToolProgress(ctx, req, 2, 2, "target resolved")
 		return result, out, nil
 	})
 }

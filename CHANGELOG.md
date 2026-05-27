@@ -19,6 +19,7 @@ All notable changes to this project are recorded here.
 - Added optional `e2e` build-tagged direct BOLT/Hessian2 smoke test covering the real `invoke.Execute -> sofarpcwire -> boltclient` path.
 - Added a manual GitHub Actions `e2e` workflow for optional smoke validation.
 - Added `sofarpc-mcp setup --scope=user|project`, including project config writing for `.sofarpc/config.json` and `.sofarpc/config.local.json`.
+- Added MCPB bundle packaging for macOS, Linux, and Windows, including a local build script and manual GitHub Actions workflow.
 
 ### Changed
 

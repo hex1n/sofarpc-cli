@@ -53,15 +53,17 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolde
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_describe",
+		Title:       "Describe SOFARPC Method",
 		Description: "Describe a service method: resolve overloads, list param/return types, and return a JSON skeleton when contract information is available.",
-	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in DescribeInput) (*sdkmcp.CallToolResult, DescribeOutput, error) {
-		scope, err := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
+		Annotations: localReadOnlyAnnotations("Describe SOFARPC Method"),
+	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in DescribeInput) (*sdkmcp.CallToolResult, DescribeOutput, error) {
+		notifyToolProgress(ctx, req, 0, 3, "loading contract context")
+		toolCtx, err := resolveToolContext(sources, sessions, holder, in.SessionID, in.Cwd, in.Project)
 		if err != nil {
 			out := DescribeOutput{Service: in.Service, Method: in.Method, Error: errcode.New(errcode.ArgsInvalid, "describe", err.Error())}
 			return errorResult(out), out, nil
 		}
-		contractSnapshot := holder.ForProject(scope.ProjectRoot)
-		store := contractSnapshot.store
+		store := toolCtx.Contract.store
 		if store == nil {
 			out := DescribeOutput{
 				Service: in.Service,
@@ -71,14 +73,16 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolde
 			return errorResult(out), out, nil
 		}
 
+		notifyToolProgress(ctx, req, 1, 3, "resolving method")
 		result, err := contract.ResolveMethod(store, in.Service, in.Method, in.Types)
 		if err != nil {
 			out := DescribeOutput{Service: in.Service, Method: in.Method, Error: asErrcodeError(err)}
 			return errorResult(out), out, nil
 		}
 
+		notifyToolProgress(ctx, req, 2, 3, "building argument skeleton")
 		skeleton := contract.BuildSkeleton(result.Method.ParamTypes, store)
-		contractBanner := buildContractBanner(store, contractSnapshot.loadError, contractSnapshot.root)
+		contractBanner := buildContractBannerForSnapshot(toolCtx.Contract)
 		out := DescribeOutput{
 			Service:   in.Service,
 			Method:    in.Method,
@@ -90,11 +94,8 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolde
 				Contract:       contractBanner,
 			},
 		}
-		return &sdkmcp.CallToolResult{
-			Content: []sdkmcp.Content{
-				&sdkmcp.TextContent{Text: summarizeDescribe(out)},
-			},
-		}, out, nil
+		notifyToolProgress(ctx, req, 3, 3, "method described")
+		return toolResult(out, summarizeDescribe(out), false), out, nil
 	})
 }
 
@@ -103,10 +104,7 @@ func errorResult(out DescribeOutput) *sdkmcp.CallToolResult {
 	if out.Error != nil {
 		text = fmt.Sprintf("%s: %s", out.Error.Code, out.Error.Message)
 	}
-	return &sdkmcp.CallToolResult{
-		IsError: true,
-		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: text}},
-	}
+	return toolResult(out, text, true)
 }
 
 func contractNotConfiguredError() *errcode.Error {

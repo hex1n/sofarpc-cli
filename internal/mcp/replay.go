@@ -27,16 +27,21 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 	sessions := opts.Sessions
 	sources := opts.TargetSources
 	server.AddTool(&sdkmcp.Tool{
-		Name:        "sofarpc_replay",
-		Description: "Replay a captured invocation. Accepts a payload from sofarpc_invoke's dryRun output, or a sessionId to look up a captured plan. Replay requires a supported plan schemaVersion.",
-		InputSchema: replayInputSchema(),
+		Name:         "sofarpc_replay",
+		Title:        "Replay SOFARPC Invocation",
+		Description:  "Replay a captured invocation. Accepts a payload from sofarpc_invoke's dryRun output, or a sessionId to look up a captured plan. Replay requires a supported plan schemaVersion.",
+		Annotations:  remoteInvokeAnnotations("Replay SOFARPC Invocation"),
+		InputSchema:  replayInputSchema(),
+		OutputSchema: replayOutputSchema(),
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		notifyToolProgress(ctx, req, 0, 4, "decoding replay input")
 		in, payload, err := decodeReplayInput(req)
 		if err != nil {
 			out := ReplayOutput{Error: asErrcodeError(err)}
 			return invokeToolResult(out, errorText("replay failed", err), true), nil
 		}
 
+		notifyToolProgress(ctx, req, 1, 4, "extracting replay plan")
 		plan, source, err := extractPlan(in, payload, sessions)
 		if err != nil {
 			out := ReplayOutput{Error: asErrcodeError(err)}
@@ -45,9 +50,11 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 
 		if in.DryRun {
 			out := ReplayOutput{Ok: true, Plan: plan, Source: source}
-			return invokeToolResult(out, summarizeReplay(plan, source, true), false), nil
+			notifyToolProgress(ctx, req, 4, 4, "replay dry-run complete")
+			return invokeToolResultWithLinks(out, summarizeReplay(plan, source, true), false, replayResourceLinks(in.SessionID, source)...), nil
 		}
 
+		notifyToolProgress(ctx, req, 2, 4, "resolving replay safety scope")
 		scope, scopeErr := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
 		if scopeErr != nil {
 			ecerr := errcode.New(errcode.ArgsInvalid, "replay", scopeErr.Error())
@@ -55,24 +62,21 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 			return invokeToolResult(out, errorText("replay failed", ecerr), true), nil
 		}
 		toolSources := scope.Sources
-		if err := validateExecutionPolicy(*plan, "replay", toolSources); err != nil {
-			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: targetConfigDiagnostics(toolSources), Error: asErrcodeError(err)}
-			return invokeToolResult(out, errorText("replay rejected", err), true), nil
-		}
-
-		outcome, execErr := invoke.Execute(ctx, *plan, "replay")
-		if execErr != nil {
-			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: outcome.Diagnostics, Error: asErrcodeError(execErr)}
-			return invokeToolResult(out, errorText("replay failed", execErr), true), nil
+		notifyToolProgress(ctx, req, 3, 4, "executing replay plan")
+		execution := executePlanWithPolicy(ctx, *plan, "replay", toolSources, nil)
+		if execution.Err != nil {
+			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: execution.Outcome.Diagnostics, Error: asErrcodeError(execution.Err)}
+			return invokeToolResultWithLinks(out, planExecutionErrorText("replay", execution), true, replayResourceLinks(in.SessionID, source)...), nil
 		}
 		out := ReplayOutput{
 			Ok:          true,
 			Plan:        plan,
 			Source:      source,
-			Result:      outcome.Result,
-			Diagnostics: outcome.Diagnostics,
+			Result:      execution.Outcome.Result,
+			Diagnostics: execution.Outcome.Diagnostics,
 		}
-		return invokeToolResult(out, summarizeReplay(plan, source, false), false), nil
+		notifyToolProgress(ctx, req, 4, 4, "replay complete")
+		return invokeToolResultWithLinks(out, summarizeReplay(plan, source, false), false, replayResourceLinks(in.SessionID, source)...), nil
 	})
 }
 

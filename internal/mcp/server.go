@@ -60,6 +60,7 @@ func New(opts Options) *sdkmcp.Server {
 		Name:    serverName,
 		Version: normalizeServerVersion(opts.ServerVersion),
 	}, nil)
+	registerResources(server, opts, holder)
 	registerInitProject(server, opts, holder)
 	registerOpen(server, opts, holder)
 	registerDescribe(server, opts, holder)

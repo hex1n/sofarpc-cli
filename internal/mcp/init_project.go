@@ -2,15 +2,17 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	"github.com/hex1n/sofarpc-cli/internal/core/projectbootstrap"
 	"github.com/hex1n/sofarpc-cli/internal/core/projectconfig"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/core/workspace"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -66,18 +68,17 @@ type InitProjectGitignore struct {
 	WouldChange bool   `json:"wouldChange,omitempty"`
 }
 
-type indexedClassStore interface {
-	IndexedClasses() []string
-}
-
 func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_init_project",
+		Title:       "Initialize SOFARPC Project",
 		Description: "Initialize a Java project's .sofarpc config. It can discover facade services from source contracts, write allowedServices, and optionally persist an explicit direct or registry target.",
+		Annotations: localWriteAnnotations("Initialize SOFARPC Project"),
 		InputSchema: initProjectInputSchema(),
-	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in InitProjectInput) (*sdkmcp.CallToolResult, InitProjectOutput, error) {
+	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in InitProjectInput) (*sdkmcp.CallToolResult, InitProjectOutput, error) {
+		notifyToolProgress(ctx, req, 0, 4, "resolving project scope")
 		scope, projectResolution, err := resolveInitProjectScope(sources, sessions, in)
 		if err != nil {
 			out := InitProjectOutput{ProjectResolution: projectResolution, Error: errcode.New(errcode.ArgsInvalid, "init-project", err.Error())}
@@ -104,70 +105,41 @@ func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHo
 			out := InitProjectOutput{ProjectRoot: scope.ProjectRoot, ProjectResolution: projectResolution, Error: errcode.New(errcode.ArgsInvalid, "init-project", err.Error())}
 			return initProjectResult(out), out, nil
 		}
-		cfg, discovery, err := buildInitProjectConfig(in, holder.ForProject(scope.ProjectRoot))
+		notifyToolProgress(ctx, req, 1, 4, "building project config")
+		toolCtx := attachContractContext(scope, holder)
+		cfg, discovery, err := buildInitProjectConfig(in, toolCtx.Contract)
 		if err != nil {
 			out := InitProjectOutput{ProjectRoot: scope.ProjectRoot, ProjectResolution: projectResolution, ConfigFile: string(kind), Error: errcode.New(errcode.ArgsInvalid, "init-project", err.Error())}
-			return initProjectResult(out), out, nil
-		}
-		path := projectconfig.ConfigPath(scope.ProjectRoot, kind)
-		exists, err := projectconfig.Existing(path)
-		if err != nil {
-			out := InitProjectOutput{ProjectRoot: scope.ProjectRoot, ProjectResolution: projectResolution, ConfigFile: string(kind), ConfigPath: path, Error: errcode.New(errcode.ArgsInvalid, "init-project", err.Error())}
 			return initProjectResult(out), out, nil
 		}
 		out := InitProjectOutput{
 			ProjectRoot:       scope.ProjectRoot,
 			ConfigFile:        string(kind),
-			ConfigPath:        path,
+			ConfigPath:        projectconfig.ConfigPath(scope.ProjectRoot, kind),
 			DryRun:            in.DryRun,
-			Existing:          exists,
 			ProjectConfig:     cfg,
 			ProjectResolution: projectResolution,
 			Discovery:         discovery,
 			NextSteps:         initProjectNextSteps(cfg, kind),
 		}
-		if !hasProjectConfigFields(cfg) {
-			out.Error = errcode.New(errcode.ArgsInvalid, "init-project",
-				"no project config fields resolved; pass a target, explicit services, or use serviceNameSuffixes that match facade interfaces").
-				WithHint("sofarpc_init_project", map[string]any{"project": scope.ProjectRoot, "dryRun": true},
-					"preview project initialization after providing target or service discovery inputs")
-			return initProjectResult(out), out, nil
-		}
-		if len(cfg.AllowedServices) == 0 {
-			out.Error = errcode.New(errcode.ArgsInvalid, "init-project",
-				"allowedServices is required for project initialization; pass services, adjust serviceNameSuffixes, or set allowAllServices=true intentionally").
-				WithHint("sofarpc_init_project", map[string]any{"project": scope.ProjectRoot, "dryRun": true, "serviceNameSuffixes": []string{"Facade"}},
-					"preview service allowlist discovery before writing project config")
-			return initProjectResult(out), out, nil
-		}
-		if exists && !in.Force {
-			out.Error = errcode.New(errcode.ArgsInvalid, "init-project",
-				fmt.Sprintf("%s already exists; pass force=true to overwrite", path)).
-				WithHint("sofarpc_target", map[string]any{"project": scope.ProjectRoot, "explain": true},
-					"inspect existing project config before overwriting it")
-			return initProjectResult(out), out, nil
-		}
-		if kind == projectconfig.KindLocal {
-			status, err := initProjectGitignore(scope.ProjectRoot, in.DryRun)
-			if err != nil {
-				out.Error = errcode.New(errcode.ArgsInvalid, "init-project", err.Error())
-				return initProjectResult(out), out, nil
-			}
-			out.Gitignore = status
-		}
-		if in.DryRun {
-			out.Ok = true
-			return initProjectResult(out), out, nil
-		}
-		written, err := projectconfig.Write(scope.ProjectRoot, kind, cfg, in.Force)
+		notifyToolProgress(ctx, req, 2, 4, "validating project bootstrap")
+		notifyToolProgress(ctx, req, 3, 4, "applying project bootstrap")
+		bootstrapResult, err := projectbootstrap.Run(projectbootstrap.Input{
+			ProjectRoot:            scope.ProjectRoot,
+			Kind:                   kind,
+			Config:                 cfg,
+			Force:                  in.Force,
+			DryRun:                 in.DryRun,
+			RequireConfigFields:    true,
+			RequireAllowedServices: true,
+		})
+		applyInitProjectBootstrapResult(&out, bootstrapResult)
 		if err != nil {
-			out.Error = errcode.New(errcode.ArgsInvalid, "init-project", err.Error())
+			out.Error = initProjectBootstrapError(err, scope.ProjectRoot)
 			return initProjectResult(out), out, nil
 		}
 		out.Ok = true
-		out.Wrote = true
-		out.ConfigPath = written.Path
-		out.Overwrote = written.Overwrote
+		notifyToolProgress(ctx, req, 4, 4, "project initialization complete")
 		return initProjectResult(out), out, nil
 	})
 }
@@ -188,11 +160,10 @@ func resolveInitProjectScope(base target.Sources, sessions *SessionStore, in Ini
 	if strings.TrimSpace(scope.ProjectRoot) != "" {
 		return scope, resolution, nil
 	}
-	ws, err := workspace.Resolve(workspace.Input{Cwd: in.Cwd, Project: in.Project})
+	scope, err = resolveWorkspaceScope(base, in.Cwd, in.Project)
 	if err != nil {
-		return toolScope{}, nil, fmt.Errorf("resolve workspace: %w", err)
+		return toolScope{}, nil, err
 	}
-	scope = toolScope{ProjectRoot: ws.ProjectRoot, Sources: ws.Sources(base.Env), Source: "project"}
 	return scope, initProjectExplicitResolution(scope), nil
 }
 
@@ -272,7 +243,11 @@ func buildInitProjectConfig(in InitProjectInput, snapshot contractSnapshot) (pro
 	case len(services) > 0:
 		discovery.Source = "input"
 	default:
-		discovery = discoverInitProjectServices(snapshot, initProjectSuffixes(in.ServiceNameSuffixes))
+		discovery = initProjectDiscoveryFromServices(snapshot, contract.DiscoverServiceInterfaces(snapshot.store, contract.ServiceDiscoveryOptions{
+			Suffixes:      in.ServiceNameSuffixes,
+			IndexedSource: "sourcecontract",
+			StoreSource:   "contract-store",
+		}))
 		services = discovery.SelectedServices
 	}
 
@@ -293,111 +268,14 @@ func buildInitProjectConfig(in InitProjectInput, snapshot contractSnapshot) (pro
 	return cfg, discovery, nil
 }
 
-func discoverInitProjectServices(snapshot contractSnapshot, suffixes []string) InitProjectDiscovery {
-	out := InitProjectDiscovery{Suffixes: suffixes}
-	store := snapshot.store
-	if store == nil {
-		out.Contract = buildContractBanner(snapshot.store, snapshot.loadError, snapshot.root)
-		return out
+func initProjectDiscoveryFromServices(snapshot contractSnapshot, services contract.ServiceDiscovery) InitProjectDiscovery {
+	return InitProjectDiscovery{
+		Source:            services.Source,
+		SelectedServices:  services.SelectedServices,
+		CandidateServices: services.CandidateServices,
+		Suffixes:          services.Suffixes,
+		Contract:          buildContractBanner(snapshot.store, snapshot.loadError, snapshot.root),
 	}
-	indexed, ok := store.(indexedClassStore)
-	if !ok {
-		out.Source = "contract-store"
-		out.Contract = buildContractBanner(snapshot.store, snapshot.loadError, snapshot.root)
-		return out
-	}
-	out.Source = "sourcecontract"
-	var candidates []string
-	var selected []string
-	for _, fqn := range indexed.IndexedClasses() {
-		if !initProjectFQNMatchesSuffix(fqn, suffixes) {
-			continue
-		}
-		cls, ok := store.Class(fqn)
-		if !ok || cls.Kind != javamodel.KindInterface || len(cls.Methods) == 0 {
-			continue
-		}
-		candidates = append(candidates, cls.FQN)
-		if initProjectServiceMatches(cls, suffixes) {
-			selected = append(selected, cls.FQN)
-		}
-	}
-	out.CandidateServices = normalizeUniqueStrings(candidates)
-	out.SelectedServices = normalizeUniqueStrings(selected)
-	out.Contract = buildContractBanner(snapshot.store, snapshot.loadError, snapshot.root)
-	return out
-}
-
-func initProjectFQNMatchesSuffix(fqn string, suffixes []string) bool {
-	name := strings.TrimSpace(fqn)
-	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
-		name = name[dot+1:]
-	}
-	for _, suffix := range suffixes {
-		if suffix == "*" || strings.HasSuffix(name, suffix) {
-			return true
-		}
-	}
-	return false
-}
-
-func initProjectServiceMatches(cls javamodel.Class, suffixes []string) bool {
-	name := strings.TrimSpace(cls.SimpleName)
-	if name == "" {
-		name = cls.FQN
-		if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
-			name = name[dot+1:]
-		}
-	}
-	for _, suffix := range suffixes {
-		if suffix == "*" || strings.HasSuffix(name, suffix) {
-			return true
-		}
-	}
-	return false
-}
-
-func initProjectSuffixes(raw []string) []string {
-	out := normalizeUniqueStrings(raw)
-	if len(out) == 0 {
-		return []string{"Facade"}
-	}
-	return out
-}
-
-func hasProjectConfigFields(cfg projectconfig.Config) bool {
-	return strings.TrimSpace(cfg.DirectURL) != "" ||
-		strings.TrimSpace(cfg.RegistryAddress) != "" ||
-		strings.TrimSpace(cfg.RegistryProtocol) != "" ||
-		strings.TrimSpace(cfg.Protocol) != "" ||
-		strings.TrimSpace(cfg.Serialization) != "" ||
-		strings.TrimSpace(cfg.UniqueID) != "" ||
-		cfg.TimeoutMS > 0 ||
-		cfg.ConnectTimeoutMS > 0 ||
-		len(cfg.AllowedServices) > 0
-}
-
-func initProjectGitignore(projectRoot string, dryRun bool) (*InitProjectGitignore, error) {
-	if dryRun {
-		status, err := projectconfig.LocalConfigIgnoreStatus(projectRoot)
-		if err != nil {
-			return nil, err
-		}
-		return &InitProjectGitignore{
-			Path:        status.Path,
-			Entry:       status.Entry,
-			WouldChange: status.Changed,
-		}, nil
-	}
-	status, err := projectconfig.EnsureLocalConfigIgnored(projectRoot)
-	if err != nil {
-		return nil, err
-	}
-	return &InitProjectGitignore{
-		Path:    status.Path,
-		Entry:   status.Entry,
-		Changed: status.Changed,
-	}, nil
 }
 
 func initProjectNextSteps(cfg projectconfig.Config, kind projectconfig.Kind) []string {
@@ -415,13 +293,49 @@ func initProjectNextSteps(cfg projectconfig.Config, kind projectconfig.Kind) []s
 	return out
 }
 
-func initProjectResult(out InitProjectOutput) *sdkmcp.CallToolResult {
-	return &sdkmcp.CallToolResult{
-		IsError: out.Error != nil,
-		Content: []sdkmcp.Content{
-			&sdkmcp.TextContent{Text: summarizeInitProject(out)},
-		},
+func applyInitProjectBootstrapResult(out *InitProjectOutput, result projectbootstrap.Result) {
+	if strings.TrimSpace(result.ConfigPath) != "" {
+		out.ConfigPath = result.ConfigPath
 	}
+	out.Existing = result.Existing
+	out.Wrote = result.Wrote
+	out.Overwrote = result.Overwrote
+	if result.Gitignore != nil {
+		out.Gitignore = &InitProjectGitignore{
+			Path:        result.Gitignore.Path,
+			Entry:       result.Gitignore.Entry,
+			Changed:     result.Gitignore.Changed,
+			WouldChange: result.Gitignore.WouldChange,
+		}
+	}
+}
+
+func initProjectBootstrapError(err error, projectRoot string) *errcode.Error {
+	switch {
+	case errors.Is(err, projectbootstrap.ErrNoConfigFields):
+		return errcode.New(errcode.ArgsInvalid, "init-project",
+			"no project config fields resolved; pass a target, explicit services, or use serviceNameSuffixes that match facade interfaces").
+			WithHint("sofarpc_init_project", map[string]any{"project": projectRoot, "dryRun": true},
+				"preview project initialization after providing target or service discovery inputs")
+	case errors.Is(err, projectbootstrap.ErrAllowedServicesMissing):
+		return errcode.New(errcode.ArgsInvalid, "init-project",
+			"allowedServices is required for project initialization; pass services, adjust serviceNameSuffixes, or set allowAllServices=true intentionally").
+			WithHint("sofarpc_init_project", map[string]any{"project": projectRoot, "dryRun": true, "serviceNameSuffixes": []string{"Facade"}},
+				"preview service allowlist discovery before writing project config")
+	default:
+		var existing projectbootstrap.ExistingConfigError
+		if errors.As(err, &existing) {
+			return errcode.New(errcode.ArgsInvalid, "init-project",
+				fmt.Sprintf("%s already exists; pass force=true to overwrite", existing.Path)).
+				WithHint("sofarpc_target", map[string]any{"project": projectRoot, "explain": true},
+					"inspect existing project config before overwriting it")
+		}
+		return errcode.New(errcode.ArgsInvalid, "init-project", err.Error())
+	}
+}
+
+func initProjectResult(out InitProjectOutput) *sdkmcp.CallToolResult {
+	return toolResult(out, summarizeInitProject(out), out.Error != nil)
 }
 
 func summarizeInitProject(out InitProjectOutput) string {

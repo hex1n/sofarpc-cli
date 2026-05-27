@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"strconv"
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
@@ -41,10 +39,14 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 	sources := opts.TargetSources
 	sessions := opts.Sessions
 	server.AddTool(&sdkmcp.Tool{
-		Name:        "sofarpc_invoke",
-		Description: "Plan and execute a SOFARPC generic invocation. args is a JSON array argument vector; single-parameter methods still use a one-item array. dryRun=true returns the plan without executing the request. Real invokes require SOFARPC_ALLOW_INVOKE=true.",
-		InputSchema: invokeInputSchema(),
+		Name:         "sofarpc_invoke",
+		Title:        "Invoke SOFARPC Method",
+		Description:  "Plan and execute a SOFARPC generic invocation. args is a JSON array argument vector; single-parameter methods still use a one-item array. dryRun=true returns the plan without executing the request. Real invokes require SOFARPC_ALLOW_INVOKE=true.",
+		Annotations:  remoteInvokeAnnotations("Invoke SOFARPC Method"),
+		InputSchema:  invokeInputSchema(),
+		OutputSchema: invokeOutputSchema(),
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		notifyToolProgress(ctx, req, 0, 5, "decoding invoke input")
 		decoded, args, err := decodeInvokeInput(req)
 		if err != nil {
 			return invokeToolResult(InvokeOutput{Error: asErrcodeError(err)}, errorText("invoke failed", err), true), nil
@@ -54,17 +56,19 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			ecerr := errcode.New(errcode.ArgsInvalid, "invoke", err.Error())
 			return invokeToolResult(InvokeOutput{Error: ecerr}, errorText("invoke failed", ecerr), true), nil
 		}
-		scope, err := resolveToolScope(sources, sessions, decoded.SessionID, decoded.Cwd, decoded.Project)
+		notifyToolProgress(ctx, req, 1, 5, "loading invoke context")
+		toolCtx, err := resolveToolContext(sources, sessions, holder, decoded.SessionID, decoded.Cwd, decoded.Project)
 		if err != nil {
 			ecerr := errcode.New(errcode.ArgsInvalid, "invoke", err.Error())
 			return invokeToolResult(InvokeOutput{Error: ecerr}, errorText("invoke failed", ecerr), true), nil
 		}
-		toolSources := scope.Sources
+		toolSources := toolCtx.Sources
+		notifyToolProgress(ctx, req, 2, 5, "normalizing arguments")
 		args, err = normalizeArgs(decoded.Service, decoded.Method, args, toolSources.ProjectRoot)
 		if err != nil {
 			return invokeToolResult(InvokeOutput{Error: asErrcodeError(err)}, errorText("invoke failed", err), true), nil
 		}
-		contractSnapshot := holder.ForProject(scope.ProjectRoot)
+		contractSnapshot := toolCtx.Contract
 		store := contractSnapshot.store
 		if contractMode == contractModeStrict && store == nil {
 			ecerr := strictContractUnavailableError(contractSnapshot)
@@ -74,6 +78,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			store = nil
 		}
 
+		notifyToolProgress(ctx, req, 3, 5, "building invoke plan")
 		plan, err := invoke.BuildPlan(invoke.Input{
 			Service:       decoded.Service,
 			Method:        decoded.Method,
@@ -112,29 +117,28 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		}
 
 		capture := capturePlanForSession(sessions, decoded.SessionID, plan)
+		links := planCaptureResourceLinks(decoded.SessionID, capture)
 
 		if decoded.DryRun {
 			out := InvokeOutput{Ok: true, Plan: &plan, Diagnostics: diagnosticsWithCapture(nil, capture)}
-			return invokeToolResult(out, summarizeInvokePlan(plan, true), false), nil
+			notifyToolProgress(ctx, req, 5, 5, "invoke dry-run complete")
+			return invokeToolResultWithLinks(out, summarizeInvokePlan(plan, true), false, links...), nil
 		}
 
-		if err := validateExecutionPolicy(plan, "invoke", toolSources); err != nil {
-			out := InvokeOutput{Plan: &plan, Diagnostics: diagnosticsWithCapture(targetConfigDiagnostics(toolSources), capture), Error: asErrcodeError(err)}
-			return invokeToolResult(out, errorText("invoke rejected", err), true), nil
-		}
-
-		outcome, execErr := invoke.Execute(ctx, plan, "invoke")
-		if execErr != nil {
-			out := InvokeOutput{Plan: &plan, Diagnostics: diagnosticsWithCapture(outcome.Diagnostics, capture), Error: asErrcodeError(execErr)}
-			return invokeToolResult(out, errorText("invoke failed", execErr), true), nil
+		notifyToolProgress(ctx, req, 4, 5, "executing invoke plan")
+		execution := executePlanWithPolicy(ctx, plan, "invoke", toolSources, capture)
+		if execution.Err != nil {
+			out := InvokeOutput{Plan: &plan, Diagnostics: execution.Outcome.Diagnostics, Error: asErrcodeError(execution.Err)}
+			return invokeToolResultWithLinks(out, planExecutionErrorText("invoke", execution), true, links...), nil
 		}
 		out := InvokeOutput{
 			Ok:          true,
 			Plan:        &plan,
-			Result:      outcome.Result,
-			Diagnostics: diagnosticsWithCapture(outcome.Diagnostics, capture),
+			Result:      execution.Outcome.Result,
+			Diagnostics: execution.Outcome.Diagnostics,
 		}
-		return invokeToolResult(out, summarizeInvokePlan(plan, false), false), nil
+		notifyToolProgress(ctx, req, 5, 5, "invoke complete")
+		return invokeToolResultWithLinks(out, summarizeInvokePlan(plan, false), false, links...), nil
 	})
 }
 
@@ -192,79 +196,6 @@ func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
 		ContractMode:     raw.ContractMode,
 		SessionID:        raw.SessionID,
 	}, args, nil
-}
-
-func validateExecutionPolicy(plan invoke.Plan, phase string, sources target.Sources) error {
-	return executionPolicyFromEnv(sources).Validate(plan, phase)
-}
-
-func validateRealInvoke(service string) error {
-	return executionPolicyFromEnv(target.Sources{}).ValidateRealInvoke(service, "invoke")
-}
-
-func executionPolicyFromEnv(sources target.Sources) invoke.ExecutionPolicy {
-	allowedServices, allowedServicesConfigured, allowedServicesSource := allowedServicesForSources(sources)
-	return invoke.ExecutionPolicy{
-		AllowInvoke:               envBool(envAllowInvoke),
-		AllowedServices:           allowedServices,
-		AllowedServicesConfigured: allowedServicesConfigured,
-		AllowedServicesSource:     allowedServicesSource,
-		AllowTargetOverride:       envBool(envAllowTargetOverride),
-		AllowedTargetHosts:        envCSV(envAllowedTargetHosts),
-		Sources:                   sources,
-	}
-}
-
-func allowedServicesForSources(sources target.Sources) ([]string, bool, string) {
-	allowlist := target.ServiceAllowlistForSources(sources)
-	if allowlist.Configured {
-		return allowlist.Services, true, allowlist.Source
-	}
-	return nil, false, ""
-}
-
-func envBool(name string) bool {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return false
-	}
-	value, err := strconv.ParseBool(raw)
-	return err == nil && value
-}
-
-func envCSV(name string) []string {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return nil
-	}
-	var out []string
-	for _, item := range strings.Split(raw, ",") {
-		value := strings.TrimSpace(item)
-		if value != "" {
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
-func capturePlanForSession(sessions *SessionStore, sessionID string, plan invoke.Plan) *PlanCaptureResult {
-	if sessions == nil || sessionID == "" {
-		return nil
-	}
-	capture := sessions.CapturePlan(sessionID, plan)
-	return &capture
-}
-
-func diagnosticsWithCapture(base map[string]any, capture *PlanCaptureResult) map[string]any {
-	if capture == nil || capture.Captured {
-		return base
-	}
-	out := map[string]any{}
-	for k, v := range base {
-		out[k] = v
-	}
-	out["sessionPlanCapture"] = capture
-	return out
 }
 
 func resolveContractMode(in InvokeInput) (string, error) {
@@ -342,14 +273,11 @@ func describeHintArgs(service, method string) map[string]any {
 }
 
 func invokeToolResult(out any, text string, isError bool) *sdkmcp.CallToolResult {
-	result := &sdkmcp.CallToolResult{
-		IsError: isError,
-		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: text}},
-	}
-	if body, err := json.Marshal(out); err == nil {
-		result.StructuredContent = json.RawMessage(body)
-	}
-	return result
+	return structuredToolResult(out, text, isError)
+}
+
+func invokeToolResultWithLinks(out any, text string, isError bool, links ...sdkmcp.Content) *sdkmcp.CallToolResult {
+	return structuredToolResultWithLinks(out, text, isError, links...)
 }
 
 func errorText(prefix string, err error) string {

@@ -1,0 +1,48 @@
+name: mcpb
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Binary version injected into sofarpc-mcp, for example v0.1.0"
+        required: false
+        type: string
+      mcpb_version:
+        description: "Manifest semver, for example 0.1.0. Defaults from version."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build MCPB bundles
+        run: |
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="${GITHUB_REF_NAME}"
+          fi
+          export VERSION="$version"
+          export MCPB_VERSION="${{ inputs.mcpb_version }}"
+          bash scripts/build-mcpb.sh
+
+      - name: Upload MCPB bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: sofarpc-mcpb
+          path: dist/mcpb/*.mcpb
+          if-no-files-found: error

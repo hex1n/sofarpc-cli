@@ -49,6 +49,26 @@ Repo-local helper scripts:
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
+MCPB one-click bundles can be built for macOS, Linux, and Windows without
+requiring users to install Go:
+
+```sh
+VERSION=v0.1.0 MCPB_VERSION=0.1.0 bash scripts/build-mcpb.sh
+```
+
+The default target matrix is:
+
+```text
+darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
+```
+
+Artifacts are written to `dist/mcpb/*.mcpb`. Each bundle contains a single
+platform-specific binary under `server/` and a MCPB `manifest.json`; Windows
+artifacts contain `server/sofarpc-mcp.exe`. The manifest exposes safe user
+configuration for real-invoke enablement, target override, allowed target
+hosts, session plan retention, and max response size. The manual GitHub
+Actions `mcpb` workflow runs the same script and uploads the generated bundles.
+
 Setup is split into two scopes:
 
 - User scope registers the MCP server with Claude Code and Codex and installs
@@ -405,8 +425,20 @@ an external SOFARPC service. The GitHub Actions `e2e` workflow is manual
 
 SOFARPC/Hessian wire compatibility is guarded by committed fixtures under
 `internal/sofarpcwire/testdata/golden`. Default Go tests consume those fixtures
-without Java. Before release, run the manual GitHub Actions `wire-fixtures`
-workflow; it regenerates the baseline Java fixtures and verifies the declared
+without Java. To regenerate and verify the Java-backed baseline locally:
+
+```sh
+bash scripts/verify-wire-fixtures.sh
+```
+
+To check runtime compatibility without changing committed fixtures:
+
+```sh
+bash scripts/verify-wire-fixtures.sh --matrix 5.4.0,5.7.6,5.8.0
+```
+
+Before release, run the manual GitHub Actions `wire-fixtures` workflow; it uses
+the same script to regenerate the baseline Java fixtures and verify the declared
 SOFARPC version matrix.
 
 ## Release checklist
@@ -416,8 +448,10 @@ SOFARPC version matrix.
 3. Update `CHANGELOG.md`.
 4. Create a version tag such as `v0.1.0`.
 5. Build with version metadata injected through `-ldflags`.
-6. Verify `sofarpc-mcp version` and `sofarpc-mcp version -json`.
-7. Install from the tag with `go install ...@v0.1.0`.
+6. Build MCPB bundles with `VERSION=v0.1.0 MCPB_VERSION=0.1.0 bash scripts/build-mcpb.sh`, or run the manual
+   `mcpb` workflow.
+7. Verify `sofarpc-mcp version` and `sofarpc-mcp version -json`.
+8. Install from the tag with `go install ...@v0.1.0`.
 
 ## Repo layout
 
