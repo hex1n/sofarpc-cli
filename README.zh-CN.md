@@ -21,6 +21,17 @@
 所有失败都会返回稳定的 `errcode.Code`，并且可能带有结构化的
 `nextTool` 提示。Agent 应该直接跟随这个提示，而不是从错误文案里自己推导。
 
+## MCP prompts
+
+Server 也暴露少量用户主动触发的 prompt，用作常见工作流入口。Prompt 只返回
+使用 tools 的指令，不会自己执行 SOFARPC 调用。
+
+| Prompt | 用途 |
+| --- | --- |
+| `sofarpc_bootstrap_project` | 引导首次安全写入 `.sofarpc/config*.json`。 |
+| `sofarpc_dry_run_facade_call` | 引导 `open -> describe -> invoke dryRun=true` 的 facade 方法调用计划，包含可选 args 和 `invocationProperties`。 |
+| `sofarpc_diagnose_failure` | 引导基于 errcode 的 `target`、`doctor`、`describe`、`replay` 诊断流程，并利用 session/plan resources。 |
+
 ## 安装
 
 新机器上直接在线安装，不需要 Java 运行时：
@@ -223,6 +234,10 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
   "args": [{ "userId": 1 }],
   "version": "2.0",
   "targetAppName": "foo-app",
+  "invocationProperties": {
+    "tenant": { "value": "dev" },
+    "authToken": { "env": "SOFARPC_AUTH_TOKEN" }
+  },
   "directUrl": "bolt://host:12200",
   "sessionId": "ws_...",
   "dryRun": true
@@ -233,6 +248,11 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
   project-scoped target config 和 contract store。
 - `version` 会覆盖本次调用的 SOFA service version。
 - `targetAppName` 会设置 direct transport 的 target app header。
+- `invocationProperties` 是随网关透传的 SOFARPC request baggage。direct
+  invoke 会把它编码成 `SofaRequest.requestProps["rpc_req_baggage"]`，下游 Java
+  服务在 provider baggage 启用时可用 `RpcInvokeContext.getRequestBaggage(...)`
+  读取。`value` 是字面值；`env` 只在真实 invoke/replay 时解析，并在 plan 中保持
+  redacted。
 - `directUrl` / `registryAddress` 是单次覆盖。否则先使用项目配置；进程 env
   只作为旧用法/手工运行兜底。用户级 setup 不再写 target 默认值。
 - `dryRun=true` 返回的 plan 可以直接交给 `sofarpc_replay`；replay 也接受包含

@@ -6,6 +6,7 @@ import com.alipay.hessian.generic.model.GenericObject;
 import com.alipay.hessian.generic.util.GenericUtils;
 import com.alipay.sofa.rpc.codec.Serializer;
 import com.alipay.sofa.rpc.codec.SerializerFactory;
+import com.alipay.sofa.rpc.common.RemotingConstants;
 import com.alipay.sofa.rpc.common.RpcConstants;
 import com.alipay.sofa.rpc.core.request.SofaRequest;
 import com.alipay.sofa.rpc.transport.ByteArrayWrapperByteBuf;
@@ -82,6 +83,13 @@ public final class WireFixtureVerifier {
         JsonNode expectedParamTypes = want.path("paramTypes");
         JsonNode actualParamTypes = MAPPER.valueToTree(Arrays.asList(request.getMethodArgSigs()));
         assertJsonEquals(fixturePath, "want.paramTypes", expectedParamTypes, actualParamTypes);
+
+        JsonNode expectedRequestBaggage = want.path("requestBaggage");
+        if (!expectedRequestBaggage.isMissingNode()) {
+            JsonNode actualRequestBaggage = MAPPER.valueToTree(
+                    canonicalize(request.getRequestProp(RemotingConstants.RPC_REQUEST_BAGGAGE)));
+            assertJsonEquals(fixturePath, "want.requestBaggage", expectedRequestBaggage, actualRequestBaggage);
+        }
 
         JsonNode expectedArgs = want.path("argsJson");
         if (expectedArgs.isMissingNode()) {

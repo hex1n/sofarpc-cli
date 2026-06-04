@@ -418,6 +418,18 @@ func TestReplay_PayloadUnsupportedSchemaVersionIsRejected(t *testing.T) {
 	}
 }
 
+func TestReplay_PayloadV1SchemaVersionIsRejected(t *testing.T) {
+	plan := samplePlan()
+	plan.SchemaVersion = "sofarpc.invoke.plan/v1"
+	out := callReplay(t, Options{}, map[string]any{
+		"payload": plan,
+		"dryRun":  true,
+	})
+	if out.Error == nil || out.Error.Code != errcode.PlanVersionUnsupported {
+		t.Fatalf("expected PlanVersionUnsupported, got %+v", out.Error)
+	}
+}
+
 func TestReplay_SessionUnsupportedSchemaVersionIsRejected(t *testing.T) {
 	sessions := NewSessionStore()
 	plan := samplePlan()
@@ -488,7 +500,7 @@ func TestReplay_DecodePayloadPreservesLargeLongString(t *testing.T) {
 			Arguments: json.RawMessage(`{
 				"dryRun": true,
 				"payload": {
-					"schemaVersion": "sofarpc.invoke.plan/v1",
+					"schemaVersion": "sofarpc.invoke.plan/v2",
 					"service": "com.foo.Svc",
 					"method": "doThing",
 					"paramTypes": ["com.foo.Req"],

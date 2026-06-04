@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/projectconfig"
 )
 
@@ -52,13 +53,15 @@ type Config struct {
 // to resolution. ProjectLocal and Project are loaded from
 // .sofarpc/config.local.json and .sofarpc/config.json respectively.
 type Sources struct {
-	Env                Config
-	Project            Config
-	ProjectLocal       Config
-	ProjectPolicy      PolicyConfig
-	ProjectLocalPolicy PolicyConfig
-	ProjectRoot        string
-	ConfigErrors       []ConfigError
+	Env                              Config
+	Project                          Config
+	ProjectLocal                     Config
+	ProjectPolicy                    PolicyConfig
+	ProjectLocalPolicy               PolicyConfig
+	ProjectInvocationProperties      invocationprops.Declarations
+	ProjectLocalInvocationProperties invocationprops.Declarations
+	ProjectRoot                      string
+	ConfigErrors                     []ConfigError
 }
 
 // PolicyConfig contains project-scoped execution policy. It is parsed from
@@ -246,9 +249,11 @@ func applyProjectConfig(src *Sources, kind projectconfig.Kind) {
 	case projectconfig.KindShared:
 		src.Project = configFromProjectConfig(loaded.Config)
 		src.ProjectPolicy = policyFromProjectConfig(loaded)
+		src.ProjectInvocationProperties = loaded.Config.InvocationProperties
 	case projectconfig.KindLocal:
 		src.ProjectLocal = configFromProjectConfig(loaded.Config)
 		src.ProjectLocalPolicy = policyFromProjectConfig(loaded)
+		src.ProjectLocalInvocationProperties = loaded.Config.InvocationProperties
 	}
 }
 

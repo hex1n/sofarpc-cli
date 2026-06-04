@@ -59,6 +59,46 @@ func TestInvoke_DryRunReturnsPlan(t *testing.T) {
 	}
 }
 
+func TestInvoke_DryRunRedactsInvocationPropertyEnv(t *testing.T) {
+	t.Setenv("SOFARPC_AUTH_TOKEN", "secret-token")
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
+			},
+		},
+	)
+	out := callInvoke(t, Options{Contract: store}, map[string]any{
+		"service":   "com.foo.Svc",
+		"method":    "doThing",
+		"directUrl": "bolt://host:12200",
+		"dryRun":    true,
+		"invocationProperties": map[string]any{
+			"authToken": map[string]any{"env": "SOFARPC_AUTH_TOKEN"},
+			"tenant":    map[string]any{"value": "dev"},
+		},
+	})
+	if !out.Ok {
+		t.Fatalf("dry-run should succeed; got error=%+v", out.Error)
+	}
+	if out.Plan == nil {
+		t.Fatal("plan should be populated")
+	}
+	auth := out.Plan.InvocationProperties["authToken"]
+	if auth.Env != "SOFARPC_AUTH_TOKEN" || !auth.Redacted || auth.Value != nil {
+		t.Fatalf("authToken should be a redacted env reference: %+v", auth)
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal output: %v", err)
+	}
+	if bytes.Contains(body, []byte("secret-token")) {
+		t.Fatalf("dry-run output leaked env value: %s", body)
+	}
+}
+
 func TestInvoke_UnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 	store := contract.NewInMemoryStore(
 		javamodel.Class{

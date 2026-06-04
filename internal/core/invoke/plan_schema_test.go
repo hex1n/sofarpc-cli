@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 )
@@ -28,6 +29,13 @@ func TestValidatePlanSchemaRejectsUnsupportedVersion(t *testing.T) {
 	t.Parallel()
 
 	err := ValidatePlanSchema(Plan{SchemaVersion: "sofarpc.invoke.plan/v999"}, "replay")
+	assertPlanVersionUnsupported(t, err)
+}
+
+func TestValidatePlanSchemaRejectsV1Version(t *testing.T) {
+	t.Parallel()
+
+	err := ValidatePlanSchema(Plan{SchemaVersion: "sofarpc.invoke.plan/v1"}, "replay")
 	assertPlanVersionUnsupported(t, err)
 }
 
@@ -68,6 +76,29 @@ func TestValidateReplayPlanRejectsMissingTargetMode(t *testing.T) {
 	plan.Target.Mode = ""
 	err := ValidateReplayPlan(plan, "replay")
 	assertErrcode(t, err, errcode.TargetMissing)
+}
+
+func TestValidateReplayPlanAcceptsRedactedEnvInvocationProperties(t *testing.T) {
+	t.Parallel()
+
+	plan := replayablePlan()
+	plan.InvocationProperties = invocationprops.Declarations{
+		"authToken": {Env: "SOFARPC_AUTH_TOKEN", Redacted: true},
+	}
+	if err := ValidateReplayPlan(plan, "replay"); err != nil {
+		t.Fatalf("ValidateReplayPlan: %v", err)
+	}
+}
+
+func TestValidateReplayPlanRejectsUnsetInvocationProperties(t *testing.T) {
+	t.Parallel()
+
+	plan := replayablePlan()
+	plan.InvocationProperties = invocationprops.Declarations{
+		"tenant": {Unset: true},
+	}
+	err := ValidateReplayPlan(plan, "replay")
+	assertErrcode(t, err, errcode.ArgsInvalid)
 }
 
 func TestValidateExecutablePlanRejectsUnsupportedTarget(t *testing.T) {

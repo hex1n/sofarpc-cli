@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
@@ -350,6 +351,53 @@ func TestBuildPlan_TrustedMode_HappyPath(t *testing.T) {
 	}
 	if len(plan.Overloads) != 0 {
 		t.Fatalf("overloads should be empty in trusted mode, got %d", len(plan.Overloads))
+	}
+}
+
+func TestBuildPlan_MergesInvocationPropertiesIntoRedactedPlan(t *testing.T) {
+	inputTenant := "call"
+	projectTenant := "shared"
+	projectRoute := "blue"
+
+	plan, err := BuildPlan(
+		Input{
+			Service:    "com.foo.Svc",
+			Method:     "doThing",
+			ParamTypes: []string{"java.lang.String"},
+			Args:       []any{"hello"},
+			Target:     target.Input{DirectURL: "bolt://h:1"},
+			InvocationProperties: invocationprops.Declarations{
+				"tenant": {Value: &inputTenant},
+			},
+		},
+		nil,
+		target.Sources{
+			ProjectInvocationProperties: invocationprops.Declarations{
+				"tenant": {Value: &projectTenant},
+				"auth":   {Env: "PROJECT_TOKEN"},
+				"route":  {Value: &projectRoute},
+			},
+			ProjectLocalInvocationProperties: invocationprops.Declarations{
+				"auth":  {Env: "LOCAL_TOKEN"},
+				"route": {Unset: true},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	if plan.SchemaVersion != PlanSchemaVersion {
+		t.Fatalf("schemaVersion: got %q", plan.SchemaVersion)
+	}
+	if got := plan.InvocationProperties["tenant"].Value; got == nil || *got != "call" {
+		t.Fatalf("tenant should come from input: %#v", plan.InvocationProperties["tenant"])
+	}
+	auth := plan.InvocationProperties["auth"]
+	if auth.Env != "LOCAL_TOKEN" || !auth.Redacted {
+		t.Fatalf("auth should come from local env reference and be redacted: %+v", auth)
+	}
+	if _, ok := plan.InvocationProperties["route"]; ok {
+		t.Fatalf("route should be masked by local unset: %#v", plan.InvocationProperties["route"])
 	}
 }
 

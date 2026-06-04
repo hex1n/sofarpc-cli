@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 )
 
 type Kind string
@@ -24,15 +26,16 @@ const (
 const LocalGitignoreEntry = ".sofarpc/config.local.json"
 
 type Config struct {
-	DirectURL        string   `json:"directUrl,omitempty"`
-	RegistryAddress  string   `json:"registryAddress,omitempty"`
-	RegistryProtocol string   `json:"registryProtocol,omitempty"`
-	Protocol         string   `json:"protocol,omitempty"`
-	Serialization    string   `json:"serialization,omitempty"`
-	UniqueID         string   `json:"uniqueId,omitempty"`
-	TimeoutMS        int      `json:"timeoutMs,omitempty"`
-	ConnectTimeoutMS int      `json:"connectTimeoutMs,omitempty"`
-	AllowedServices  []string `json:"allowedServices,omitempty"`
+	DirectURL            string                       `json:"directUrl,omitempty"`
+	RegistryAddress      string                       `json:"registryAddress,omitempty"`
+	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
+	Protocol             string                       `json:"protocol,omitempty"`
+	Serialization        string                       `json:"serialization,omitempty"`
+	UniqueID             string                       `json:"uniqueId,omitempty"`
+	TimeoutMS            int                          `json:"timeoutMs,omitempty"`
+	ConnectTimeoutMS     int                          `json:"connectTimeoutMs,omitempty"`
+	AllowedServices      []string                     `json:"allowedServices,omitempty"`
+	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
 }
 
 type ReadResult struct {
@@ -44,15 +47,16 @@ type ReadResult struct {
 }
 
 type fileConfig struct {
-	DirectURL        string    `json:"directUrl,omitempty"`
-	RegistryAddress  string    `json:"registryAddress,omitempty"`
-	RegistryProtocol string    `json:"registryProtocol,omitempty"`
-	Protocol         string    `json:"protocol,omitempty"`
-	Serialization    string    `json:"serialization,omitempty"`
-	UniqueID         string    `json:"uniqueId,omitempty"`
-	TimeoutMS        int       `json:"timeoutMs,omitempty"`
-	ConnectTimeoutMS int       `json:"connectTimeoutMs,omitempty"`
-	AllowedServices  *[]string `json:"allowedServices,omitempty"`
+	DirectURL            string                       `json:"directUrl,omitempty"`
+	RegistryAddress      string                       `json:"registryAddress,omitempty"`
+	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
+	Protocol             string                       `json:"protocol,omitempty"`
+	Serialization        string                       `json:"serialization,omitempty"`
+	UniqueID             string                       `json:"uniqueId,omitempty"`
+	TimeoutMS            int                          `json:"timeoutMs,omitempty"`
+	ConnectTimeoutMS     int                          `json:"connectTimeoutMs,omitempty"`
+	AllowedServices      *[]string                    `json:"allowedServices,omitempty"`
+	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
 }
 
 type WriteResult struct {
@@ -111,6 +115,11 @@ func Read(projectRoot string, kind Kind) (ReadResult, error) {
 
 func Marshal(cfg Config) ([]byte, error) {
 	cfg = Normalize(cfg)
+	props, err := invocationprops.NormalizeInput(cfg.InvocationProperties)
+	if err != nil {
+		return nil, err
+	}
+	cfg.InvocationProperties = props
 	if err := Validate(cfg); err != nil {
 		return nil, err
 	}
@@ -124,6 +133,9 @@ func Marshal(cfg Config) ([]byte, error) {
 func Validate(cfg Config) error {
 	if strings.TrimSpace(cfg.DirectURL) != "" && strings.TrimSpace(cfg.RegistryAddress) != "" {
 		return fmt.Errorf("directUrl and registryAddress are mutually exclusive")
+	}
+	if _, err := invocationprops.NormalizeInput(cfg.InvocationProperties); err != nil {
+		return err
 	}
 	return nil
 }
@@ -154,6 +166,11 @@ func parse(body []byte) (Config, bool, error) {
 	}
 
 	cfg := configFromFile(raw)
+	props, err := invocationprops.NormalizeInput(cfg.InvocationProperties)
+	if err != nil {
+		return Config{}, false, err
+	}
+	cfg.InvocationProperties = props
 	if err := Validate(cfg); err != nil {
 		return Config{}, false, err
 	}
@@ -162,14 +179,15 @@ func parse(body []byte) (Config, bool, error) {
 
 func configFromFile(raw fileConfig) Config {
 	cfg := Config{
-		DirectURL:        strings.TrimSpace(raw.DirectURL),
-		RegistryAddress:  strings.TrimSpace(raw.RegistryAddress),
-		RegistryProtocol: strings.TrimSpace(raw.RegistryProtocol),
-		Protocol:         strings.TrimSpace(raw.Protocol),
-		Serialization:    strings.TrimSpace(raw.Serialization),
-		UniqueID:         strings.TrimSpace(raw.UniqueID),
-		TimeoutMS:        raw.TimeoutMS,
-		ConnectTimeoutMS: raw.ConnectTimeoutMS,
+		DirectURL:            strings.TrimSpace(raw.DirectURL),
+		RegistryAddress:      strings.TrimSpace(raw.RegistryAddress),
+		RegistryProtocol:     strings.TrimSpace(raw.RegistryProtocol),
+		Protocol:             strings.TrimSpace(raw.Protocol),
+		Serialization:        strings.TrimSpace(raw.Serialization),
+		UniqueID:             strings.TrimSpace(raw.UniqueID),
+		TimeoutMS:            raw.TimeoutMS,
+		ConnectTimeoutMS:     raw.ConnectTimeoutMS,
+		InvocationProperties: raw.InvocationProperties,
 	}
 	if raw.AllowedServices != nil {
 		cfg.AllowedServices = normalizeStringList(*raw.AllowedServices)

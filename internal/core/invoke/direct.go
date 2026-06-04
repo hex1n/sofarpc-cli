@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/boltclient"
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
@@ -52,6 +53,11 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		return DirectExecution{}, nil
 	}
 
+	requestBaggage, err := invocationprops.Resolve(plan.InvocationProperties, os.LookupEnv)
+	if err != nil {
+		return DirectExecution{Handled: true}, invocationPropertiesInvalidError(phase, err)
+	}
+
 	addr, err := target.ParseDirectDialAddress(plan.Target.DirectURL)
 	if err != nil {
 		return DirectExecution{Handled: true}, targetInvalidError(phase,
@@ -65,13 +71,14 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 	maxResponseBytes := maxResponseBytesFromEnv()
 
 	result, err := sofarpcwire.InvokeDirect(ctx, sofarpcwire.RequestSpec{
-		Service:       plan.Service,
-		Method:        plan.Method,
-		ParamTypes:    plan.ParamTypes,
-		Args:          plan.Args,
-		Version:       plan.Version,
-		UniqueID:      plan.Target.UniqueID,
-		TargetAppName: plan.TargetAppName,
+		Service:        plan.Service,
+		Method:         plan.Method,
+		ParamTypes:     plan.ParamTypes,
+		Args:           plan.Args,
+		Version:        plan.Version,
+		UniqueID:       plan.Target.UniqueID,
+		TargetAppName:  plan.TargetAppName,
+		RequestBaggage: requestBaggage,
 	}, sofarpcwire.DirectInvokeOptions{
 		Addr:             addr,
 		Codec:            boltclient.CodecHessian2,

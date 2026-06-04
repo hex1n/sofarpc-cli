@@ -118,7 +118,8 @@ func HasConfigFields(cfg projectconfig.Config) bool {
 		strings.TrimSpace(cfg.UniqueID) != "" ||
 		cfg.TimeoutMS > 0 ||
 		cfg.ConnectTimeoutMS > 0 ||
-		len(cfg.AllowedServices) > 0
+		len(cfg.AllowedServices) > 0 ||
+		len(cfg.InvocationProperties) > 0
 }
 
 func prepareLocalGitignore(projectRoot string, dryRun bool) (*GitignoreResult, error) {

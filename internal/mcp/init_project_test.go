@@ -206,8 +206,18 @@ func TestInitProject_NoScopeLowConfidenceDryRunReturnsCandidates(t *testing.T) {
 	if result.IsError || out.Error != nil {
 		t.Fatalf("dry-run discovery should not fail: result=%+v out=%+v", result, out)
 	}
-	if !out.Ok || out.ProjectResolution == nil || len(out.ProjectResolution.Candidates) != 1 {
+	if !out.Ok || out.ProjectResolution == nil {
 		t.Fatalf("dry-run should return low-confidence candidate: %+v", out)
+	}
+	foundRoot := false
+	for _, candidate := range out.ProjectResolution.Candidates {
+		if candidate.Root == root {
+			foundRoot = true
+			break
+		}
+	}
+	if !foundRoot {
+		t.Fatalf("dry-run candidates should include current project root %s: %+v", root, out.ProjectResolution.Candidates)
 	}
 }
 

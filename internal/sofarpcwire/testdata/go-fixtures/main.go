@@ -19,12 +19,13 @@ type goldenWireFixture struct {
 }
 
 type goldenFixtureWant struct {
-	Service                 string          `json:"service,omitempty"`
-	Method                  string          `json:"method,omitempty"`
-	ParamTypes              []string        `json:"paramTypes,omitempty"`
-	TargetServiceUniqueName string          `json:"targetServiceUniqueName,omitempty"`
-	ArgsJSON                json.RawMessage `json:"argsJson,omitempty"`
-	RealizedArgsJSON        json.RawMessage `json:"realizedArgsJson,omitempty"`
+	Service                 string            `json:"service,omitempty"`
+	Method                  string            `json:"method,omitempty"`
+	ParamTypes              []string          `json:"paramTypes,omitempty"`
+	TargetServiceUniqueName string            `json:"targetServiceUniqueName,omitempty"`
+	RequestBaggage          map[string]string `json:"requestBaggage,omitempty"`
+	ArgsJSON                json.RawMessage   `json:"argsJson,omitempty"`
+	RealizedArgsJSON        json.RawMessage   `json:"realizedArgsJson,omitempty"`
 }
 
 func main() {
@@ -137,6 +138,10 @@ func requestContentFixture() (goldenWireFixture, error) {
 				},
 			},
 		},
+		RequestBaggage: map[string]string{
+			"tenant": "dev",
+			"route":  "blue",
+		},
 	})
 	if err != nil {
 		return goldenWireFixture{}, err
@@ -151,6 +156,7 @@ func requestContentFixture() (goldenWireFixture, error) {
 			Method:                  "query",
 			ParamTypes:              []string{"com.example.FixtureRequest"},
 			TargetServiceUniqueName: "com.example.FixtureFacade:1.0",
+			RequestBaggage:          map[string]string{"route": "blue", "tenant": "dev"},
 			ArgsJSON:                json.RawMessage(argsJSON),
 			RealizedArgsJSON:        json.RawMessage(realizedArgsJSON),
 		},

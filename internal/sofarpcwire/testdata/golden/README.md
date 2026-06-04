@@ -54,6 +54,10 @@ is missing, when `contentHex` is empty, or when an unknown field/kind appears.
     "method": "query",
     "paramTypes": ["com.example.FixtureRequest"],
     "targetServiceUniqueName": "com.example.FixtureFacade:1.0",
+    "requestBaggage": {
+      "route": "blue",
+      "tenant": "dev"
+    },
     "argsJson": [
       {
         "type": "com.example.FixtureRequest",

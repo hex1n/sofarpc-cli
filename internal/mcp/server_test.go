@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,6 +149,172 @@ func TestNew_AdvertisesResourceTemplates(t *testing.T) {
 		if template.Title == "" || template.Description == "" {
 			t.Fatalf("%s should advertise title and description: %+v", uriTemplate, template)
 		}
+	}
+}
+
+func TestNew_AdvertisesWorkflowPrompts(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	listed, err := client.ListPrompts(ctx, &sdkmcp.ListPromptsParams{})
+	if err != nil {
+		t.Fatalf("list prompts: %v", err)
+	}
+	got := map[string]*sdkmcp.Prompt{}
+	for _, prompt := range listed.Prompts {
+		got[prompt.Name] = prompt
+	}
+	want := []string{
+		promptBootstrapProject,
+		promptDiagnoseFailure,
+		promptDryRunFacadeCall,
+	}
+	for _, name := range want {
+		prompt := got[name]
+		if prompt == nil {
+			t.Fatalf("prompt %q not listed; got %v", name, keys(got))
+		}
+		if prompt.Title == "" || prompt.Description == "" {
+			t.Fatalf("%s should advertise title and description: %+v", name, prompt)
+		}
+		if len(prompt.Arguments) == 0 {
+			t.Fatalf("%s should advertise workflow arguments", name)
+		}
+	}
+
+	dryRun := got[promptDryRunFacadeCall]
+	dryRunArgs := map[string]bool{}
+	required := map[string]bool{}
+	for _, arg := range dryRun.Arguments {
+		dryRunArgs[arg.Name] = true
+		if arg.Required {
+			required[arg.Name] = true
+		}
+	}
+	for _, name := range []string{"service", "method"} {
+		if !required[name] {
+			t.Fatalf("dry-run prompt argument %q should be required; args=%+v", name, dryRun.Arguments)
+		}
+	}
+	for _, name := range []string{"args", "argsFile", "invocationProperties"} {
+		if !dryRunArgs[name] {
+			t.Fatalf("dry-run prompt argument %q should be advertised; args=%+v", name, dryRun.Arguments)
+		}
+	}
+
+	diagnoseArgs := map[string]bool{}
+	for _, arg := range got[promptDiagnoseFailure].Arguments {
+		diagnoseArgs[arg.Name] = true
+	}
+	for _, name := range []string{"message", "nextTool", "nextArgs"} {
+		if !diagnoseArgs[name] {
+			t.Fatalf("diagnose prompt argument %q should be advertised; args=%+v", name, got[promptDiagnoseFailure].Arguments)
+		}
+	}
+}
+
+func TestPrompts_ReturnWorkflowMessages(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	result, err := client.GetPrompt(ctx, &sdkmcp.GetPromptParams{
+		Name: promptDryRunFacadeCall,
+		Arguments: map[string]string{
+			"service":              "com.foo.OrderFacade",
+			"method":               "query",
+			"sessionId":            "ws_1",
+			"args":                 `[{"orderId":42}]`,
+			"argsFile":             "payloads/order-query.json",
+			"invocationProperties": `{"tenant":{"value":"dev"},"authToken":{"env":"SOFARPC_AUTH_TOKEN"}}`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("get dry-run prompt: %v", err)
+	}
+	if len(result.Messages) != 1 {
+		t.Fatalf("prompt message count: got %d want 1", len(result.Messages))
+	}
+	if result.Messages[0].Role != "user" {
+		t.Fatalf("prompt role: got %q want user", result.Messages[0].Role)
+	}
+	text := contentText(t, result.Messages[0].Content)
+	for _, want := range []string{
+		"com.foo.OrderFacade",
+		"query",
+		"sofarpc_open",
+		"sofarpc_describe",
+		"sofarpc_invoke",
+		"dryRun=true",
+		"real invoke",
+		`[{"orderId":42}]`,
+		"payloads/order-query.json",
+		"SOFARPC_ARGS_FILE_ROOT",
+		"invocationProperties",
+		"rpc_req_baggage",
+		"plan.invocationProperties",
+		"invoke.baggage.enable",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("prompt text missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestDiagnosePrompt_GuidesResourcesAndInvocationPropertiesRecovery(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	result, err := client.GetPrompt(ctx, &sdkmcp.GetPromptParams{
+		Name: promptDiagnoseFailure,
+		Arguments: map[string]string{
+			"sessionId": "ws_1",
+			"code":      "input.args-invalid",
+			"phase":     "invoke",
+			"message":   "invalid invocationProperties: invocation property authToken env SOFARPC_AUTH_TOKEN is missing or empty",
+			"nextTool":  "sofarpc_doctor",
+			"nextArgs":  `{"sessionId":"ws_1"}`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("get diagnose prompt: %v", err)
+	}
+	text := contentText(t, result.Messages[0].Content)
+	for _, want := range []string{
+		"hint.nextTool",
+		"sofarpc_doctor",
+		`{"sessionId":"ws_1"}`,
+		"sofarpc://session/{sessionId}",
+		"sofarpc://session/{sessionId}/plan",
+		"contract.method-ambiguous",
+		"invocationProperties",
+		"request baggage",
+		"invocation-properties check",
+		"Missing or empty env references",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("diagnose prompt text missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestPrompts_ValidateRequiredArguments(t *testing.T) {
+	server := New(Options{})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+
+	_, err := client.GetPrompt(ctx, &sdkmcp.GetPromptParams{
+		Name:      promptDryRunFacadeCall,
+		Arguments: map[string]string{"method": "query"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "service argument is required") {
+		t.Fatalf("missing service error: %v", err)
 	}
 }
 
@@ -311,6 +478,10 @@ func TestNew_InvokeSchemaAdvertisesArgsArray(t *testing.T) {
 	args := schemaObjectProperty(t, properties, "args")
 	if got := args["type"]; got != "array" {
 		t.Fatalf("args type: got %#v want array", got)
+	}
+	invocationProperties := schemaObjectProperty(t, properties, "invocationProperties")
+	if got := invocationProperties["type"]; got != "object" {
+		t.Fatalf("invocationProperties type: got %#v want object", got)
 	}
 }
 

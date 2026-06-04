@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
@@ -80,12 +81,13 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 
 		notifyToolProgress(ctx, req, 3, 5, "building invoke plan")
 		plan, err := invoke.BuildPlan(invoke.Input{
-			Service:       decoded.Service,
-			Method:        decoded.Method,
-			ParamTypes:    decoded.Types,
-			Args:          args,
-			Version:       decoded.Version,
-			TargetAppName: decoded.TargetAppName,
+			Service:              decoded.Service,
+			Method:               decoded.Method,
+			ParamTypes:           decoded.Types,
+			Args:                 args,
+			Version:              decoded.Version,
+			TargetAppName:        decoded.TargetAppName,
+			InvocationProperties: decoded.InvocationProperties,
 			Target: target.Input{
 				Service:          decoded.Service,
 				DirectURL:        decoded.DirectURL,
@@ -96,12 +98,13 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		}, store, toolSources)
 		if err != nil && shouldAutoTrustedFallback(decoded, args, err, contractMode) {
 			plan, err = invoke.BuildPlan(invoke.Input{
-				Service:       decoded.Service,
-				Method:        decoded.Method,
-				ParamTypes:    decoded.Types,
-				Args:          args,
-				Version:       decoded.Version,
-				TargetAppName: decoded.TargetAppName,
+				Service:              decoded.Service,
+				Method:               decoded.Method,
+				ParamTypes:           decoded.Types,
+				Args:                 args,
+				Version:              decoded.Version,
+				TargetAppName:        decoded.TargetAppName,
+				InvocationProperties: decoded.InvocationProperties,
 				Target: target.Input{
 					Service:          decoded.Service,
 					DirectURL:        decoded.DirectURL,
@@ -143,22 +146,23 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 }
 
 type rawInvokeInput struct {
-	Cwd              string          `json:"cwd,omitempty"`
-	Project          string          `json:"project,omitempty"`
-	Service          string          `json:"service,omitempty"`
-	Method           string          `json:"method,omitempty"`
-	Types            []string        `json:"types,omitempty"`
-	Args             json.RawMessage `json:"args,omitempty"`
-	Version          string          `json:"version,omitempty"`
-	TargetAppName    string          `json:"targetAppName,omitempty"`
-	DirectURL        string          `json:"directUrl,omitempty"`
-	RegistryAddress  string          `json:"registryAddress,omitempty"`
-	RegistryProtocol string          `json:"registryProtocol,omitempty"`
-	TimeoutMS        int             `json:"timeoutMs,omitempty"`
-	DryRun           bool            `json:"dryRun,omitempty"`
-	Trusted          bool            `json:"trusted,omitempty"`
-	ContractMode     string          `json:"contractMode,omitempty"`
-	SessionID        string          `json:"sessionId,omitempty"`
+	Cwd                  string                       `json:"cwd,omitempty"`
+	Project              string                       `json:"project,omitempty"`
+	Service              string                       `json:"service,omitempty"`
+	Method               string                       `json:"method,omitempty"`
+	Types                []string                     `json:"types,omitempty"`
+	Args                 json.RawMessage              `json:"args,omitempty"`
+	Version              string                       `json:"version,omitempty"`
+	TargetAppName        string                       `json:"targetAppName,omitempty"`
+	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
+	DirectURL            string                       `json:"directUrl,omitempty"`
+	RegistryAddress      string                       `json:"registryAddress,omitempty"`
+	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
+	TimeoutMS            int                          `json:"timeoutMs,omitempty"`
+	DryRun               bool                         `json:"dryRun,omitempty"`
+	Trusted              bool                         `json:"trusted,omitempty"`
+	ContractMode         string                       `json:"contractMode,omitempty"`
+	SessionID            string                       `json:"sessionId,omitempty"`
 }
 
 func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
@@ -180,21 +184,22 @@ func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
 				"send args as a JSON array")
 	}
 	return InvokeInput{
-		Cwd:              raw.Cwd,
-		Project:          raw.Project,
-		Service:          raw.Service,
-		Method:           raw.Method,
-		Types:            raw.Types,
-		Version:          raw.Version,
-		TargetAppName:    raw.TargetAppName,
-		DirectURL:        raw.DirectURL,
-		RegistryAddress:  raw.RegistryAddress,
-		RegistryProtocol: raw.RegistryProtocol,
-		TimeoutMS:        raw.TimeoutMS,
-		DryRun:           raw.DryRun,
-		Trusted:          raw.Trusted,
-		ContractMode:     raw.ContractMode,
-		SessionID:        raw.SessionID,
+		Cwd:                  raw.Cwd,
+		Project:              raw.Project,
+		Service:              raw.Service,
+		Method:               raw.Method,
+		Types:                raw.Types,
+		Version:              raw.Version,
+		TargetAppName:        raw.TargetAppName,
+		InvocationProperties: raw.InvocationProperties,
+		DirectURL:            raw.DirectURL,
+		RegistryAddress:      raw.RegistryAddress,
+		RegistryProtocol:     raw.RegistryProtocol,
+		TimeoutMS:            raw.TimeoutMS,
+		DryRun:               raw.DryRun,
+		Trusted:              raw.Trusted,
+		ContractMode:         raw.ContractMode,
+		SessionID:            raw.SessionID,
 	}, args, nil
 }
 

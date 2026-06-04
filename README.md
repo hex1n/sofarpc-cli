@@ -22,6 +22,18 @@ Every failure returns a stable `errcode.Code` and may include a structured
 `nextTool` hint. Agents are expected to follow that hint directly instead of
 re-deriving the next action from prose.
 
+## MCP prompts
+
+The server also exposes a small prompt surface for user-invoked workflow
+shortcuts. Prompts return instructions for using the tools; they do not execute
+SOFARPC calls themselves.
+
+| Prompt | Purpose |
+| --- | --- |
+| `sofarpc_bootstrap_project` | Guide safe first-time `.sofarpc/config*.json` setup. |
+| `sofarpc_dry_run_facade_call` | Guide `open -> describe -> invoke dryRun=true` for a facade method, including optional args and `invocationProperties`. |
+| `sofarpc_diagnose_failure` | Guide structured errcode recovery with `target`, `doctor`, `describe`, `replay`, and session/plan resources. |
+
 ## Install
 
 Fresh machine, no Java runtime required:
@@ -311,6 +323,10 @@ source.
   "args": [{ "userId": 1 }],
   "version": "2.0",
   "targetAppName": "foo-app",
+  "invocationProperties": {
+    "tenant": { "value": "dev" },
+    "authToken": { "env": "SOFARPC_AUTH_TOKEN" }
+  },
   "directUrl": "bolt://host:12200",
   "sessionId": "ws_...",
   "dryRun": true
@@ -321,6 +337,11 @@ source.
   supplies the project-scoped target config and contract store.
 - `version` overrides the SOFA service version for this call.
 - `targetAppName` sets the direct-transport target app header.
+- `invocationProperties` are gateway-carried SOFARPC request baggage. Direct
+  invoke encodes them as `SofaRequest.requestProps["rpc_req_baggage"]`, so Java
+  services read them with `RpcInvokeContext.getRequestBaggage(...)` when
+  provider baggage is enabled (`invoke.baggage.enable`). `value` is literal;
+  `env` is resolved only for real invoke/replay and stays redacted in plans.
 - `directUrl` and `registryAddress` are per-call overrides. Otherwise project
   config wins; process env is only a legacy/manual fallback. User setup does
   not write target defaults.

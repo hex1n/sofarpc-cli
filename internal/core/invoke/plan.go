@@ -11,44 +11,47 @@ import (
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/javatype"
 )
 
-const PlanSchemaVersion = "sofarpc.invoke.plan/v1"
+const PlanSchemaVersion = "sofarpc.invoke.plan/v2"
 
 // Input is what sofarpc_invoke passes in. Target fields are merged into
 // target.Sources via target.Resolve — BuildPlan does that internally.
 type Input struct {
-	Service       string
-	Method        string
-	ParamTypes    []string
-	Args          any
-	Version       string
-	TargetAppName string
-	Target        target.Input
+	Service              string
+	Method               string
+	ParamTypes           []string
+	Args                 any
+	Version              string
+	TargetAppName        string
+	Target               target.Input
+	InvocationProperties invocationprops.Declarations
 }
 
-// Plan is the wire-ready payload plus diagnostics. When dryRun is
-// requested, sofarpc_invoke returns this verbatim; otherwise it hands
-// the wire fields to the direct transport.
+// Plan is the replayable invocation payload plus diagnostics. Env-backed
+// InvocationProperties stay redacted in the plan and are resolved immediately
+// before a real invoke/replay touches the wire.
 type Plan struct {
-	SchemaVersion  string             `json:"schemaVersion"`
-	Service        string             `json:"service"`
-	Method         string             `json:"method"`
-	ParamTypes     []string           `json:"paramTypes"`
-	ReturnType     string             `json:"returnType,omitempty"`
-	Args           []any              `json:"args"`
-	Version        string             `json:"version,omitempty"`
-	TargetAppName  string             `json:"targetAppName,omitempty"`
-	Target         target.Config      `json:"target"`
-	Overloads      []javamodel.Method `json:"overloads,omitempty"`
-	Selected       int                `json:"selected"`
-	ContractSource string             `json:"contractSource,omitempty"`
-	TargetLayers   []target.Layer     `json:"targetLayers,omitempty"`
-	ArgSource      string             `json:"argSource,omitempty"`
+	SchemaVersion        string                       `json:"schemaVersion"`
+	Service              string                       `json:"service"`
+	Method               string                       `json:"method"`
+	ParamTypes           []string                     `json:"paramTypes"`
+	ReturnType           string                       `json:"returnType,omitempty"`
+	Args                 []any                        `json:"args"`
+	Version              string                       `json:"version,omitempty"`
+	TargetAppName        string                       `json:"targetAppName,omitempty"`
+	Target               target.Config                `json:"target"`
+	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
+	Overloads            []javamodel.Method           `json:"overloads,omitempty"`
+	Selected             int                          `json:"selected"`
+	ContractSource       string                       `json:"contractSource,omitempty"`
+	TargetLayers         []target.Layer               `json:"targetLayers,omitempty"`
+	ArgSource            string                       `json:"argSource,omitempty"`
 }
 
 // ValidatePlanSchema rejects payload/session plans produced by incompatible
@@ -95,6 +98,9 @@ func ValidateReplayPlan(plan Plan, phase string) error {
 			WithHint("sofarpc_target", map[string]any{"explain": true},
 				"resolve the target and re-plan")
 	}
+	if _, err := invocationprops.NormalizePlan(plan.InvocationProperties); err != nil {
+		return invocationPropertiesInvalidError(phase, err)
+	}
 	return nil
 }
 
@@ -136,8 +142,12 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 			WithHint("sofarpc_target", map[string]any{"explain": true},
 				"inspect config layers to see which field is missing")
 	}
+	plannedInvocationProperties, err := planInvocationProperties(in, sources)
+	if err != nil {
+		return Plan{}, err
+	}
 	if facade == nil {
-		return buildTrustedPlan(in, report)
+		return buildTrustedPlan(in, report, plannedInvocationProperties)
 	}
 
 	resolved, err := contract.ResolveMethod(facade, in.Service, in.Method, in.ParamTypes)
@@ -151,20 +161,21 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 	}
 
 	return Plan{
-		SchemaVersion:  PlanSchemaVersion,
-		Service:        in.Service,
-		Method:         in.Method,
-		ParamTypes:     resolved.Method.ParamTypes,
-		ReturnType:     resolved.Method.ReturnType,
-		Args:           args,
-		Version:        strings.TrimSpace(in.Version),
-		TargetAppName:  strings.TrimSpace(in.TargetAppName),
-		Target:         report.Target,
-		Overloads:      resolved.Overloads,
-		Selected:       resolved.Selected,
-		ContractSource: "facade-store",
-		TargetLayers:   report.Layers,
-		ArgSource:      argSource,
+		SchemaVersion:        PlanSchemaVersion,
+		Service:              in.Service,
+		Method:               in.Method,
+		ParamTypes:           resolved.Method.ParamTypes,
+		ReturnType:           resolved.Method.ReturnType,
+		Args:                 args,
+		Version:              strings.TrimSpace(in.Version),
+		TargetAppName:        strings.TrimSpace(in.TargetAppName),
+		Target:               report.Target,
+		InvocationProperties: plannedInvocationProperties,
+		Overloads:            resolved.Overloads,
+		Selected:             resolved.Selected,
+		ContractSource:       "facade-store",
+		TargetLayers:         report.Layers,
+		ArgSource:            argSource,
 	}, nil
 }
 
@@ -173,7 +184,7 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 // a skeleton or disambiguate overloads without an index. The error
 // shapes deliberately mirror the facade-mode errors so MCP callers
 // branch on the same codes regardless of which mode ran.
-func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
+func buildTrustedPlan(in Input, report target.Report, plannedInvocationProperties invocationprops.Declarations) (Plan, error) {
 	if strings.TrimSpace(in.Service) == "" {
 		return Plan{}, errcode.New(errcode.ServiceMissing, "invoke",
 			"service is required").
@@ -223,18 +234,37 @@ func buildTrustedPlan(in Input, report target.Report) (Plan, error) {
 				"align args length with paramTypes")
 	}
 	return Plan{
-		SchemaVersion:  PlanSchemaVersion,
-		Service:        in.Service,
-		Method:         in.Method,
-		ParamTypes:     in.ParamTypes,
-		Args:           args,
-		Version:        strings.TrimSpace(in.Version),
-		TargetAppName:  strings.TrimSpace(in.TargetAppName),
-		Target:         report.Target,
-		ContractSource: "trusted",
-		TargetLayers:   report.Layers,
-		ArgSource:      "user",
+		SchemaVersion:        PlanSchemaVersion,
+		Service:              in.Service,
+		Method:               in.Method,
+		ParamTypes:           in.ParamTypes,
+		Args:                 args,
+		Version:              strings.TrimSpace(in.Version),
+		TargetAppName:        strings.TrimSpace(in.TargetAppName),
+		Target:               report.Target,
+		InvocationProperties: plannedInvocationProperties,
+		ContractSource:       "trusted",
+		TargetLayers:         report.Layers,
+		ArgSource:            "user",
 	}, nil
+}
+
+func planInvocationProperties(in Input, sources target.Sources) (invocationprops.Declarations, error) {
+	props, err := invocationprops.Merge(
+		invocationprops.Source{Name: "input", Declarations: in.InvocationProperties},
+		invocationprops.Source{Name: "project-local", Declarations: sources.ProjectLocalInvocationProperties},
+		invocationprops.Source{Name: "project", Declarations: sources.ProjectInvocationProperties},
+	)
+	if err != nil {
+		return nil, invocationPropertiesInvalidError("invoke", err)
+	}
+	return props, nil
+}
+
+func invocationPropertiesInvalidError(phase string, err error) *errcode.Error {
+	return errcode.New(errcode.ArgsInvalid, phase, fmt.Sprintf("invalid invocationProperties: %v", err)).
+		WithHint("sofarpc_doctor", nil,
+			"inspect invocationProperties declarations and missing environment references")
 }
 
 // resolveArgs chooses the arg vector that will go on the wire.

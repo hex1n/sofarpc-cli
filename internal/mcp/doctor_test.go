@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
@@ -220,6 +221,50 @@ func TestDoctor_InvokePolicyChecksAllowedServiceWhenProvided(t *testing.T) {
 	}
 	if !strings.Contains(check.Detail, "project allowedServices") {
 		t.Fatalf("detail should mention project allowedServices, got %q", check.Detail)
+	}
+}
+
+func TestDoctor_InvocationPropertiesChecksEnvWithoutLeakingValue(t *testing.T) {
+	t.Setenv("SOFARPC_AUTH_TOKEN", "secret-token")
+	out := callDoctor(t, Options{
+		TargetSources: target.Sources{
+			ProjectInvocationProperties: invocationprops.Declarations{
+				"authToken": {Env: "SOFARPC_AUTH_TOKEN"},
+			},
+		},
+	}, nil)
+
+	check := findCheck(t, out, "invocation-properties")
+	if !check.Ok {
+		t.Fatalf("invocation-properties should pass when env exists, got %+v", check)
+	}
+	data, err := json.Marshal(check.Data)
+	if err != nil {
+		t.Fatalf("marshal check data: %v", err)
+	}
+	if !strings.Contains(string(data), "SOFARPC_AUTH_TOKEN") {
+		t.Fatalf("check data should include env reference name, got %s", data)
+	}
+	if strings.Contains(string(data), "secret-token") {
+		t.Fatalf("check data leaked env value: %s", data)
+	}
+}
+
+func TestDoctor_InvocationPropertiesFailsMissingEnv(t *testing.T) {
+	out := callDoctor(t, Options{
+		TargetSources: target.Sources{
+			ProjectInvocationProperties: invocationprops.Declarations{
+				"authToken": {Env: "SOFARPC_DOCTOR_MISSING_TOKEN"},
+			},
+		},
+	}, nil)
+
+	check := findCheck(t, out, "invocation-properties")
+	if check.Ok {
+		t.Fatalf("invocation-properties should fail when env is missing, got %+v", check)
+	}
+	if !strings.Contains(check.Detail, "SOFARPC_DOCTOR_MISSING_TOKEN") {
+		t.Fatalf("detail should mention missing env reference, got %q", check.Detail)
 	}
 }
 

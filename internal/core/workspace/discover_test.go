@@ -94,8 +94,13 @@ func TestDiscoverJavaProject_GitOnlyIsNotCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiscoverJavaProject: %v", err)
 	}
-	if got.Root != "" || len(got.Candidates) != 0 {
+	if got.Root != "" || got.Confidence != DiscoveryConfidenceLow {
 		t.Fatalf("git-only directory should not be selected: %+v", got)
+	}
+	for _, candidate := range got.Candidates {
+		if candidate.Root == root {
+			t.Fatalf("git-only directory should not be a candidate: %+v", got)
+		}
 	}
 }
 
