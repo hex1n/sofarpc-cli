@@ -89,7 +89,9 @@ The architectural split is:
 
 ## 4. Public MCP surface
 
-The public API is intentionally small and project-scoped.
+The public API is intentionally small and project-scoped. Tools are the
+execution surface; prompts are user-invoked workflow shortcuts that tell an
+agent how to use the tools and resources safely.
 
 | Tool | Purpose |
 | --- | --- |
@@ -103,6 +105,12 @@ The public API is intentionally small and project-scoped.
 
 All tools speak JSON. All tool failures use stable `errcode` values and may
 include a machine-usable recovery hint.
+
+| Prompt | Purpose |
+| --- | --- |
+| `sofarpc_bootstrap_project` | Safe first-project bootstrap workflow. |
+| `sofarpc_dry_run_facade_call` | Standard dry-run facade invocation workflow, including optional args and invocation properties. |
+| `sofarpc_diagnose_failure` | Structured errcode recovery workflow with session/plan resource guidance. |
 
 Example:
 
@@ -388,6 +396,8 @@ Both are owned by `internal/core/invoke`.
 - contract resolution, if contract information exists
 - argument normalization
 - invoke-level fields such as `version` and `targetAppName`
+- gateway-carried `invocationProperties`, with per-call input overriding
+  `.sofarpc/config.local.json` and `.sofarpc/config.json`
 
 The plan is the stable unit shared by:
 
@@ -426,6 +436,7 @@ Key plan fields:
 - `args`
 - `version`
 - `targetAppName`
+- `invocationProperties`
 - `target`
 - `overloads`
 - `selected`
@@ -506,6 +517,10 @@ sequenceDiagram
 - `targetServiceUniqueName = service:version[:uniqueId]`
 - SOFA header fields such as method name, target service, generic type, and
   optional target app
+- SOFARPC request baggage encoding as
+  `SofaRequest.requestProps["rpc_req_baggage"]`, which downstream Java code can
+  read through `RpcInvokeContext.getRequestBaggage(...)` when provider baggage
+  is enabled
 - `SofaResponse` decoding into JSON-friendly data
 
 Direct-path diagnostics include:
@@ -576,6 +591,8 @@ The important property is not only stable codes, but stable recovery hints.
 - is the current workspace/session state usable for invoke or replay
 - is real invoke allowed by execution policy and compatible with the resolved
   direct transport shape
+- are invocation-property declarations valid and are their env references
+  present; remote `invoke.baggage.enable` remains a service-side prerequisite
 
 Each check returns:
 

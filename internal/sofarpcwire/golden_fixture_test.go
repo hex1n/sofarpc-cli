@@ -36,6 +36,7 @@ type goldenFixtureWant struct {
 	Method              string            `json:"method,omitempty"`
 	ParamTypes          []string          `json:"paramTypes,omitempty"`
 	TargetServiceUnique string            `json:"targetServiceUniqueName,omitempty"`
+	RequestBaggage      map[string]string `json:"requestBaggage,omitempty"`
 	ArgsJSON            json.RawMessage   `json:"argsJson,omitempty"`
 	RealizedArgsJSON    json.RawMessage   `json:"realizedArgsJson,omitempty"`
 }

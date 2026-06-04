@@ -14,9 +14,10 @@ const (
 	ResponseClass = "com.alipay.sofa.rpc.core.response.SofaResponse"
 	javaTypeKey   = "@type"
 
-	DefaultVersion = "1.0"
-	GenericType    = "2"
-	InvokeTypeSync = "sync"
+	DefaultVersion    = "1.0"
+	GenericType       = "2"
+	InvokeTypeSync    = "sync"
+	RequestBaggageKey = "rpc_req_baggage"
 )
 
 type RequestSpec struct {
@@ -25,10 +26,11 @@ type RequestSpec struct {
 	ParamTypes []string
 	// Args are contract-normalized JSON-like values. BuildGenericRequest calls
 	// PrepareArgs to adapt typed maps and collections for Hessian encoding.
-	Args          []any
-	Version       string
-	UniqueID      string
-	TargetAppName string
+	Args           []any
+	Version        string
+	UniqueID       string
+	TargetAppName  string
+	RequestBaggage map[string]string
 }
 
 type EncodedRequest struct {
@@ -86,10 +88,9 @@ func BuildGenericRequest(spec RequestSpec) (EncodedRequest, error) {
 	header := requestHeader(spec.Method, targetServiceUniqueName, spec.TargetAppName)
 
 	preparedArgs := PrepareArgs(spec.Args)
-	requestProps := map[string]interface{}{
-		"sofa_head_generic_type": GenericType,
-		"type":                   InvokeTypeSync,
-		"generic.revise":         "true",
+	requestProps := fixedGenericRequestProps()
+	if err := addRequestBaggage(requestProps, spec.RequestBaggage); err != nil {
+		return EncodedRequest{}, err
 	}
 	var targetAppName *string
 	if strings.TrimSpace(spec.TargetAppName) != "" {
@@ -113,6 +114,47 @@ func BuildGenericRequest(spec RequestSpec) (EncodedRequest, error) {
 		Content:                 enc.Bytes(),
 		TargetServiceUniqueName: targetServiceUniqueName,
 	}, nil
+}
+
+func fixedGenericRequestProps() map[string]interface{} {
+	return map[string]interface{}{
+		"sofa_head_generic_type": GenericType,
+		"type":                   InvokeTypeSync,
+		"generic.revise":         "true",
+	}
+}
+
+func addRequestBaggage(requestProps map[string]interface{}, baggage map[string]string) error {
+	if len(baggage) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(baggage))
+	for key := range baggage {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	seen := map[string]struct{}{}
+	requestBaggage := make(map[string]interface{}, len(baggage))
+	for _, rawKey := range keys {
+		key := strings.TrimSpace(rawKey)
+		if err := validateRequestBaggageKey(key); err != nil {
+			return err
+		}
+		if _, ok := seen[key]; ok {
+			return fmt.Errorf("request baggage key %q is duplicated after trimming", key)
+		}
+		seen[key] = struct{}{}
+		requestBaggage[key] = baggage[rawKey]
+	}
+	requestProps[RequestBaggageKey] = requestBaggage
+	return nil
+}
+
+func validateRequestBaggageKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("request baggage key must not be empty")
+	}
+	return nil
 }
 
 func DecodeResponse(content []byte) (DecodedResponse, error) {

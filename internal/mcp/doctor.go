@@ -3,10 +3,12 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -65,9 +67,9 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			return toolResult(out, out.Summary, true), out, nil
 		}
 		notifyToolProgress(ctx, req, 1, 3, "running diagnostic checks")
-		checks := make([]DoctorCheck, 4)
+		checks := make([]DoctorCheck, 5)
 		var wg sync.WaitGroup
-		wg.Add(4)
+		wg.Add(5)
 		go func() { defer wg.Done(); checks[0] = checkTarget(in, toolCtx.Sources) }()
 		go func() {
 			defer wg.Done()
@@ -75,6 +77,7 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		}()
 		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
 		go func() { defer wg.Done(); checks[3] = checkInvokePolicy(in, toolCtx.Sources) }()
+		go func() { defer wg.Done(); checks[4] = checkInvocationProperties(in, toolCtx.Sources) }()
 		wg.Wait()
 		out := DoctorOutput{Checks: checks}
 		out.Ok = allOk(out.Checks)
@@ -87,6 +90,112 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		notifyToolProgress(ctx, req, 3, 3, "diagnostics complete")
 		return result, out, nil
 	})
+}
+
+func checkInvocationProperties(in DoctorInput, sources target.Sources) DoctorCheck {
+	props, err := invocationprops.Merge(
+		invocationprops.Source{Name: "input", Declarations: in.InvocationProperties},
+		invocationprops.Source{Name: "project-local", Declarations: sources.ProjectLocalInvocationProperties},
+		invocationprops.Source{Name: "project", Declarations: sources.ProjectInvocationProperties},
+	)
+	data := map[string]any{}
+	if strings.TrimSpace(sources.ProjectRoot) != "" {
+		data["targetRoot"] = sources.ProjectRoot
+	}
+	if err != nil {
+		return DoctorCheck{
+			Name:   "invocation-properties",
+			Ok:     false,
+			Detail: err.Error(),
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_doctor",
+			},
+		}
+	}
+	data["properties"] = invocationPropertySummary(props)
+	data["wireCarrier"] = "SofaRequest.requestProps[\"rpc_req_baggage\"]"
+	data["servicePrerequisite"] = "target SOFARPC runtime must have invoke.baggage.enable enabled for RpcInvokeContext.getRequestBaggage(...)"
+	statuses, err := invocationprops.CheckEnv(props, os.LookupEnv)
+	if err != nil {
+		return DoctorCheck{
+			Name:   "invocation-properties",
+			Ok:     false,
+			Detail: err.Error(),
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_doctor",
+			},
+		}
+	}
+	if len(statuses) > 0 {
+		data["env"] = statuses
+	}
+	missing := missingInvocationPropertyEnv(statuses)
+	if len(missing) > 0 {
+		return DoctorCheck{
+			Name:   "invocation-properties",
+			Ok:     false,
+			Detail: "env references are missing or empty: " + strings.Join(missing, ", "),
+			Data:   data,
+			NextStep: &DoctorAction{
+				Tool: "sofarpc_doctor",
+			},
+		}
+	}
+	if len(props) == 0 {
+		return DoctorCheck{
+			Name:   "invocation-properties",
+			Ok:     true,
+			Detail: "no invocation properties configured",
+			Data:   data,
+		}
+	}
+	detail := fmt.Sprintf("%d invocation property key(s) configured for SOFARPC request baggage", len(props))
+	if len(statuses) > 0 {
+		detail += fmt.Sprintf("; %d env reference(s) resolvable", len(statuses))
+	}
+	detail += "; target service must have invoke.baggage.enable enabled"
+	return DoctorCheck{
+		Name:   "invocation-properties",
+		Ok:     true,
+		Detail: detail,
+		Data:   data,
+	}
+}
+
+func invocationPropertySummary(props invocationprops.Declarations) map[string]any {
+	summary := map[string]any{
+		"count": len(props),
+	}
+	var literalKeys []string
+	var envKeys []string
+	for _, key := range invocationprops.SortedKeys(props) {
+		decl := props[key]
+		switch {
+		case decl.Value != nil:
+			literalKeys = append(literalKeys, key)
+		case strings.TrimSpace(decl.Env) != "":
+			envKeys = append(envKeys, key)
+		}
+	}
+	if len(literalKeys) > 0 {
+		summary["literalKeys"] = literalKeys
+	}
+	if len(envKeys) > 0 {
+		summary["envKeys"] = envKeys
+	}
+	return summary
+}
+
+func missingInvocationPropertyEnv(statuses []invocationprops.EnvStatus) []string {
+	var missing []string
+	for _, status := range statuses {
+		if !status.Present || status.Empty {
+			missing = append(missing, status.Key+"="+status.Env)
+		}
+	}
+	return missing
 }
 
 // checkTarget runs the same resolver+probe chain as sofarpc_target and

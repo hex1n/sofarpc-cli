@@ -5,15 +5,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 )
 
 func TestRead_LoadsAndNormalizesProjectConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, KindLocal, `{
   "directUrl": " bolt://project-host:12200 ",
-  "protocol": " bolt ",
-  "allowedServices": [" com.foo.UserFacade ", " "]
-}`)
+	  "protocol": " bolt ",
+	  "allowedServices": [" com.foo.UserFacade ", " "],
+	  "invocationProperties": {
+	    " tenant ": {"value": "dev"},
+	    " authToken ": {"env": " SOFARPC_AUTH_TOKEN "}
+	  }
+	}`)
 
 	result, err := Read(root, KindLocal)
 	if err != nil {
@@ -34,6 +40,15 @@ func TestRead_LoadsAndNormalizesProjectConfig(t *testing.T) {
 	if len(result.Config.AllowedServices) != 1 || result.Config.AllowedServices[0] != "com.foo.UserFacade" {
 		t.Fatalf("allowedServices: %#v", result.Config.AllowedServices)
 	}
+	if got := result.Config.InvocationProperties["tenant"].Value; got == nil || *got != "dev" {
+		t.Fatalf("tenant invocation property: %#v", result.Config.InvocationProperties["tenant"])
+	}
+	if got := result.Config.InvocationProperties["authToken"]; got.Env != "SOFARPC_AUTH_TOKEN" || got.Redacted {
+		t.Fatalf("authToken invocation property: %#v", got)
+	}
+	if _, ok := result.Config.InvocationProperties[" tenant "]; ok {
+		t.Fatalf("invocation property keys should be normalized: %#v", result.Config.InvocationProperties)
+	}
 }
 
 func TestRead_ExplicitEmptyAllowedServicesIsConfigured(t *testing.T) {
@@ -53,10 +68,12 @@ func TestRead_ExplicitEmptyAllowedServicesIsConfigured(t *testing.T) {
 }
 
 func TestMarshal_NormalizesProjectConfig(t *testing.T) {
+	tenant := "dev"
 	body, err := Marshal(Config{
-		DirectURL:       " bolt://project-host:12200 ",
-		Protocol:        " bolt ",
-		AllowedServices: []string{" com.foo.UserFacade ", " "},
+		DirectURL:            " bolt://project-host:12200 ",
+		Protocol:             " bolt ",
+		AllowedServices:      []string{" com.foo.UserFacade ", " "},
+		InvocationProperties: declarationsForTest(" tenant ", tenant, " authToken ", " SOFARPC_AUTH_TOKEN "),
 	})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -71,6 +88,12 @@ func TestMarshal_NormalizesProjectConfig(t *testing.T) {
 	if strings.Contains(text, `" "`) || !strings.Contains(text, `"com.foo.UserFacade"`) {
 		t.Fatalf("allowedServices were not normalized:\n%s", text)
 	}
+	if !strings.Contains(text, `"tenant"`) || !strings.Contains(text, `"authToken"`) || !strings.Contains(text, `"env": "SOFARPC_AUTH_TOKEN"`) {
+		t.Fatalf("invocationProperties were not normalized:\n%s", text)
+	}
+	if strings.Contains(text, `"redacted"`) {
+		t.Fatalf("project config should not persist plan-only redaction:\n%s", text)
+	}
 }
 
 func TestRead_RejectsInvalidProjectConfig(t *testing.T) {
@@ -78,6 +101,7 @@ func TestRead_RejectsInvalidProjectConfig(t *testing.T) {
 		"unknown field":        `{"mode":"direct"}`,
 		"multiple json values": `{"directUrl":"bolt://a:1"} {}`,
 		"direct and registry":  `{"directUrl":"bolt://a:1","registryAddress":"zookeeper://zk:2181"}`,
+		"redacted env input":   `{"invocationProperties":{"authToken":{"env":"TOKEN","redacted":true}}}`,
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -92,6 +116,13 @@ func TestRead_RejectsInvalidProjectConfig(t *testing.T) {
 				t.Fatalf("invalid existing file should report Exists: %+v", result)
 			}
 		})
+	}
+}
+
+func declarationsForTest(valueKey, value, envKey, env string) invocationprops.Declarations {
+	return invocationprops.Declarations{
+		valueKey: {Value: &value},
+		envKey:   {Env: env},
 	}
 }
 

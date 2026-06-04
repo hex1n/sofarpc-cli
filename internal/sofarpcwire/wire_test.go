@@ -218,6 +218,78 @@ func TestBuildGenericRequest_EncodesBigDecimalTypedObject(t *testing.T) {
 	}
 }
 
+func TestBuildGenericRequest_EncodesRequestBaggage(t *testing.T) {
+	t.Parallel()
+
+	req, err := BuildGenericRequest(RequestSpec{
+		Service:        "com.example.Facade",
+		Method:         "doThing",
+		ParamTypes:     []string{"java.lang.String"},
+		Args:           []any{"hello"},
+		RequestBaggage: map[string]string{"tenant": "dev", "route": "blue"},
+	})
+	if err != nil {
+		t.Fatalf("BuildGenericRequest() error = %v", err)
+	}
+	for _, needle := range [][]byte{
+		[]byte(RequestBaggageKey),
+		[]byte("tenant"),
+		[]byte("dev"),
+		[]byte("route"),
+		[]byte("blue"),
+		[]byte("sofa_head_generic_type"),
+		[]byte("generic.revise"),
+	} {
+		if !bytes.Contains(req.Content, needle) {
+			t.Fatalf("content missing %q", needle)
+		}
+	}
+}
+
+func TestBuildGenericRequest_AllowsSOFALookingRequestBaggageKeys(t *testing.T) {
+	t.Parallel()
+
+	req, err := BuildGenericRequest(RequestSpec{
+		Service:    "com.example.Facade",
+		Method:     "doThing",
+		ParamTypes: []string{"java.lang.String"},
+		Args:       []any{"hello"},
+		RequestBaggage: map[string]string{
+			"type":            "business-type",
+			"generic.revise":  "business-revise",
+			"sofa_head_route": "gray",
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildGenericRequest() error = %v", err)
+	}
+	for _, needle := range [][]byte{
+		[]byte(RequestBaggageKey),
+		[]byte("business-type"),
+		[]byte("business-revise"),
+		[]byte("sofa_head_route"),
+	} {
+		if !bytes.Contains(req.Content, needle) {
+			t.Fatalf("content missing %q", needle)
+		}
+	}
+}
+
+func TestBuildGenericRequest_RejectsInvalidRequestBaggageKeys(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildGenericRequest(RequestSpec{
+		Service:        "com.example.Facade",
+		Method:         "doThing",
+		ParamTypes:     []string{"java.lang.String"},
+		Args:           []any{"hello"},
+		RequestBaggage: map[string]string{" ": "x"},
+	})
+	if err == nil {
+		t.Fatal("expected invalid request baggage key error")
+	}
+}
+
 func TestBuildGenericRequest_PreparesContractNormalizedValuesBeforeEncoding(t *testing.T) {
 	t.Parallel()
 

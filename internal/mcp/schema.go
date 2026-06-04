@@ -2,22 +2,23 @@ package mcp
 
 func invokeInputSchema() map[string]any {
 	return objectSchema(map[string]any{
-		"cwd":              stringSchema("Optional current working directory used to resolve project-relative paths."),
-		"project":          stringSchema("Optional project root. When set, project-scoped target config and contract information are loaded for this root."),
-		"service":          stringSchema("Fully-qualified Java facade interface name."),
-		"method":           stringSchema("Java method name."),
-		"types":            stringArraySchema("Optional Java parameter type list used to disambiguate overloads."),
-		"args":             argsArraySchema(),
-		"version":          stringSchema("Optional SOFARPC service version."),
-		"targetAppName":    stringSchema("Optional target app name hint."),
-		"directUrl":        stringSchema("Optional direct BOLT URL, for example bolt://host:12200."),
-		"registryAddress":  stringSchema("Optional registry address."),
-		"registryProtocol": stringSchema("Optional registry protocol."),
-		"timeoutMs":        integerSchema("Optional invoke timeout in milliseconds."),
-		"dryRun":           booleanSchema("When true, return the resolved plan without executing the request."),
-		"trusted":          booleanSchema("When true, force trusted mode and require service, method, types, and args from the caller."),
-		"contractMode":     stringSchema("Contract behavior: auto (default), strict, or trusted."),
-		"sessionId":        stringSchema("Optional session id used for project/session-scoped contract loading and plan capture."),
+		"cwd":                  stringSchema("Optional current working directory used to resolve project-relative paths."),
+		"project":              stringSchema("Optional project root. When set, project-scoped target config and contract information are loaded for this root."),
+		"service":              stringSchema("Fully-qualified Java facade interface name."),
+		"method":               stringSchema("Java method name."),
+		"types":                stringArraySchema("Optional Java parameter type list used to disambiguate overloads."),
+		"args":                 argsArraySchema(),
+		"version":              stringSchema("Optional SOFARPC service version."),
+		"targetAppName":        stringSchema("Optional target app name hint."),
+		"invocationProperties": invocationPropertiesSchema("Gateway-carried SOFARPC request baggage. Each key declares exactly one of value, env, or unset."),
+		"directUrl":            stringSchema("Optional direct BOLT URL, for example bolt://host:12200."),
+		"registryAddress":      stringSchema("Optional registry address."),
+		"registryProtocol":     stringSchema("Optional registry protocol."),
+		"timeoutMs":            integerSchema("Optional invoke timeout in milliseconds."),
+		"dryRun":               booleanSchema("When true, return the resolved plan without executing the request."),
+		"trusted":              booleanSchema("When true, force trusted mode and require service, method, types, and args from the caller."),
+		"contractMode":         stringSchema("Contract behavior: auto (default), strict, or trusted."),
+		"sessionId":            stringSchema("Optional session id used for project/session-scoped contract loading and plan capture."),
 	})
 }
 
@@ -132,5 +133,20 @@ func objectPropertySchema(description string) map[string]any {
 func anyPropertySchema(description string) map[string]any {
 	return map[string]any{
 		"description": description,
+	}
+}
+
+func invocationPropertiesSchema(description string) map[string]any {
+	return map[string]any{
+		"type":        "object",
+		"description": description,
+		"additionalProperties": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"value": stringSchema("Literal string property value. Empty string is a valid explicit value."),
+				"env":   stringSchema("Environment variable name resolved only for real invoke or replay."),
+				"unset": booleanSchema("When true, masks a lower-priority project default for this key."),
+			},
+		},
 	}
 }

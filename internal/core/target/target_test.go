@@ -189,12 +189,20 @@ func TestProjectSources_LoadsSharedAndLocalConfig(t *testing.T) {
 	writeProjectTargetConfig(t, root, "config.json", `{
   "directUrl": "bolt://project-host:12200",
   "timeoutMs": 4000,
-  "allowedServices": ["com.foo.SharedFacade"]
+  "allowedServices": ["com.foo.SharedFacade"],
+  "invocationProperties": {
+    "tenant": {"value": "shared"},
+    "auth": {"env": "PROJECT_TOKEN"}
+  }
 }`)
 	writeProjectTargetConfig(t, root, "config.local.json", `{
   "directUrl": "bolt://local-host:12200",
   "connectTimeoutMs": 250,
-  "allowedServices": ["com.foo.LocalFacade", " "]
+  "allowedServices": ["com.foo.LocalFacade", " "],
+  "invocationProperties": {
+    "tenant": {"value": "local"},
+    "legacy": {"unset": true}
+  }
 }`)
 
 	sources := ProjectSources(root, Config{Serialization: "fastjson2"})
@@ -215,6 +223,15 @@ func TestProjectSources_LoadsSharedAndLocalConfig(t *testing.T) {
 	allowed := AllowedServices(sources)
 	if len(allowed) != 1 || allowed[0] != "com.foo.LocalFacade" {
 		t.Fatalf("allowed services: got %#v", allowed)
+	}
+	if got := sources.ProjectInvocationProperties["auth"].Env; got != "PROJECT_TOKEN" {
+		t.Fatalf("shared invocation auth env: %q", got)
+	}
+	if got := sources.ProjectLocalInvocationProperties["tenant"].Value; got == nil || *got != "local" {
+		t.Fatalf("local invocation tenant: %#v", sources.ProjectLocalInvocationProperties["tenant"])
+	}
+	if !sources.ProjectLocalInvocationProperties["legacy"].Unset {
+		t.Fatalf("local invocation unset not loaded: %#v", sources.ProjectLocalInvocationProperties["legacy"])
 	}
 }
 

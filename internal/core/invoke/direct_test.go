@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/boltclient"
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
@@ -113,6 +114,34 @@ func TestExecuteDirectIfPossible_InvalidTargetReturnsErrcode(t *testing.T) {
 	}
 	if ecerr.Code != errcode.TargetInvalid {
 		t.Fatalf("code: got %q want %q", ecerr.Code, errcode.TargetInvalid)
+	}
+}
+
+func TestExecuteDirectIfPossible_EmptyInvocationPropertyEnvFailsBeforeTransport(t *testing.T) {
+	t.Setenv("SOFARPC_EMPTY_INVOCATION_TOKEN", "")
+
+	_, err := ExecuteDirectIfPossible(context.Background(), Plan{
+		Service:    "com.foo.Svc",
+		Method:     "doThing",
+		ParamTypes: []string{"java.lang.String"},
+		Args:       []any{"hello"},
+		InvocationProperties: invocationprops.Declarations{
+			"authToken": {Env: "SOFARPC_EMPTY_INVOCATION_TOKEN", Redacted: true},
+		},
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://127.0.0.1:1",
+		},
+	}, "invoke")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	ecerr, ok := err.(*errcode.Error)
+	if !ok {
+		t.Fatalf("error type = %T", err)
+	}
+	if ecerr.Code != errcode.ArgsInvalid {
+		t.Fatalf("code: got %q want %q", ecerr.Code, errcode.ArgsInvalid)
 	}
 }
 

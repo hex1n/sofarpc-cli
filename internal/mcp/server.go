@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -60,6 +61,7 @@ func New(opts Options) *sdkmcp.Server {
 		Name:    serverName,
 		Version: normalizeServerVersion(opts.ServerVersion),
 	}, nil)
+	registerPrompts(server)
 	registerResources(server, opts, holder)
 	registerInitProject(server, opts, holder)
 	registerOpen(server, opts, holder)
@@ -120,21 +122,22 @@ type DescribeInput struct {
 // input.args-invalid. Version and TargetAppName are optional transport hints
 // for direct invoke paths.
 type InvokeInput struct {
-	Cwd              string   `json:"cwd,omitempty"`
-	Project          string   `json:"project,omitempty"`
-	Service          string   `json:"service,omitempty"`
-	Method           string   `json:"method,omitempty"`
-	Types            []string `json:"types,omitempty"`
-	Args             any      `json:"args,omitempty"`
-	Version          string   `json:"version,omitempty"`
-	TargetAppName    string   `json:"targetAppName,omitempty"`
-	DirectURL        string   `json:"directUrl,omitempty"`
-	RegistryAddress  string   `json:"registryAddress,omitempty"`
-	RegistryProtocol string   `json:"registryProtocol,omitempty"`
-	TimeoutMS        int      `json:"timeoutMs,omitempty"`
-	DryRun           bool     `json:"dryRun,omitempty"`
-	Trusted          bool     `json:"trusted,omitempty"`
-	ContractMode     string   `json:"contractMode,omitempty"`
+	Cwd                  string                       `json:"cwd,omitempty"`
+	Project              string                       `json:"project,omitempty"`
+	Service              string                       `json:"service,omitempty"`
+	Method               string                       `json:"method,omitempty"`
+	Types                []string                     `json:"types,omitempty"`
+	Args                 any                          `json:"args,omitempty"`
+	Version              string                       `json:"version,omitempty"`
+	TargetAppName        string                       `json:"targetAppName,omitempty"`
+	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
+	DirectURL            string                       `json:"directUrl,omitempty"`
+	RegistryAddress      string                       `json:"registryAddress,omitempty"`
+	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
+	TimeoutMS            int                          `json:"timeoutMs,omitempty"`
+	DryRun               bool                         `json:"dryRun,omitempty"`
+	Trusted              bool                         `json:"trusted,omitempty"`
+	ContractMode         string                       `json:"contractMode,omitempty"`
 	// SessionID, when set, tags the resulting plan onto the session so
 	// sofarpc_replay can replay it without re-sending the payload.
 	SessionID string `json:"sessionId,omitempty"`
@@ -158,8 +161,9 @@ type ReplayInput struct {
 // DoctorInput is the input shape for sofarpc_doctor. Service is optional:
 // when set, doctor biases target resolution toward a per-service uniqueId.
 type DoctorInput struct {
-	Cwd       string `json:"cwd,omitempty"`
-	Project   string `json:"project,omitempty"`
-	SessionID string `json:"sessionId,omitempty"`
-	Service   string `json:"service,omitempty"`
+	Cwd                  string                       `json:"cwd,omitempty"`
+	Project              string                       `json:"project,omitempty"`
+	SessionID            string                       `json:"sessionId,omitempty"`
+	Service              string                       `json:"service,omitempty"`
+	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
 }

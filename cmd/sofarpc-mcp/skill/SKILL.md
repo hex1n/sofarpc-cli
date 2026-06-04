@@ -1,126 +1,98 @@
 ---
 name: sofarpc-invoke
-description: Guides agents through using the sofarpc-mcp MCP tools to plan, invoke, replay, and diagnose SOFARPC Java facade calls. Use when the user asks an agent to call, test, debug, replay, or inspect a Java facade/service through SOFARPC/BOLT, or when target, contract, payload-shape, replay, or real-invoke guardrail errors occur.
+description: Guides agents through using the sofarpc-mcp MCP tools and prompts to plan, invoke, replay, and diagnose SOFARPC Java facade calls. Use when the user asks an agent to call, test, debug, replay, inspect, or pass gateway-carried context/request baggage for a Java facade/service through SOFARPC/BOLT, or when target, contract, payload-shape, invocationProperties, replay, or real-invoke guardrail errors occur.
 ---
 
 # sofarpc-invoke
-Agent playbook for the `sofarpc-mcp` tools: `sofarpc_init_project`,
-`sofarpc_open`, `sofarpc_target`, `sofarpc_describe`, `sofarpc_invoke`,
-`sofarpc_replay`, and `sofarpc_doctor`.
 
-## Operating Loop
-1. If the Java project has no `.sofarpc/config*.json`, call
-   `sofarpc_init_project` with `project`/`cwd` when you know the workspace.
-   If no scope is available, call it with `dryRun: true` first and inspect
-   `projectResolution`; retry with an explicit candidate `project` before
-   writing, even when confidence is high. Pass `directUrl` or `registryAddress`
-   only when the user supplied the target. Otherwise let it write discovered
-   `allowedServices` and report target next steps. If discovery finds no
-   services, pass explicit `services`; use `allowAllServices: true` only when
-   the user intentionally allows every service.
-2. Call `sofarpc_open` once for a new project/session. Keep the `sessionId`.
-3. Read `capabilities` and `contract` from `sofarpc_open`.
-4. If `capabilities.describe == true`, call `sofarpc_describe` with
-   `sessionId`, `service`, and `method`; reuse the returned `types`.
-5. Call `sofarpc_invoke` with `dryRun: true` unless the user explicitly asked
-   to send a real request. Include the `sessionId`.
-6. Inspect `plan.target`, `plan.paramTypes`, `plan.args`, and `contractSource`.
-7. For real calls, invoke without `dryRun` only after the plan matches intent.
-8. On failure, follow `hint.nextTool` / `hint.nextArgs` before guessing.
+Use the MCP tools for execution and the MCP prompts as workflow shortcuts. Prompts can scaffold bootstrap, dry-run, or diagnosis steps, but they do not execute calls by themselves.
 
-## Preconditions
-- Server registered: `sofarpc-mcp setup --scope=user`.
-- Target resolution: per-call input, `.sofarpc/config.local.json`,
-  `.sofarpc/config.json`, defaults. Project config must not set `mode`.
-- Contract data is loaded lazily per resolved project root. `project` / `cwd`
-  selects a project explicitly; otherwise `sessionId` selects the project opened
-  by `sofarpc_open`.
-- If no contract is available, use trusted mode. If a stale contract cannot
-  resolve a complete user-supplied tuple, use `contractMode: "trusted"` or
-  `trusted: true`. Use `contractMode: "strict"` only when falling back would be
-  unsafe.
-- Real calls require `SOFARPC_ALLOW_INVOKE=true` and explicit project
-  `.sofarpc/config*.json` `allowedServices`; missing allowlists block invoke.
-  Per-call `directUrl` overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`.
+## Quick Start
 
-## Invoke Shapes
-Contract-assisted invoke, preferred when `describe` is available:
+1. Run `sofarpc_init_project` when a Java checkout has no `.sofarpc/config*.json`; use `dryRun: true` first if project scope is unclear.
+2. Run `sofarpc_open` and keep the returned `sessionId`.
+3. Run `sofarpc_target` with `explain: true` when target layers or reachability are unclear.
+4. Run `sofarpc_describe` when contract data is available; reuse returned `types` to disambiguate overloads.
+5. Run `sofarpc_invoke` with `dryRun: true` first unless the user explicitly asks for a live call and the payload is low risk.
+6. Inspect resource links such as `sofarpc://session/{sessionId}/plan` when returned.
+7. Run `sofarpc_replay` only after understanding the saved plan and any edits.
+
+Useful prompts:
+- `sofarpc_bootstrap_project`: inspect and produce setup steps.
+- `sofarpc_dry_run_facade_call`: prepare a safe first-call plan.
+- `sofarpc_diagnose_failure`: diagnose a failed invoke or replay session.
+
+## Project And Safety
+
+Most tools accept `sessionId`, `project`, or `cwd`. Prefer `sessionId` after `sofarpc_open`; use `project` or `cwd` to select an ad hoc repository. Inspect `.sofarpc/config.json` and `.sofarpc/config.local.json` when behavior depends on config.
+
+Before a real invoke:
+- Identify the exact service, method, and overload `types`.
+- Use contract-derived argument names, Java types, and overloads.
+- Send `args` as an inline JSON array, even for one-parameter methods.
+- Confirm side effects with the user unless the request already explicitly asks for the call.
+- Treat retries and replay as live calls when `dryRun` is false.
+
+Do not send speculative payloads to production-like targets. Real calls require `SOFARPC_ALLOW_INVOKE=true` and project `allowedServices`; per-call target overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`.
+
+## Invoke Payloads
+
+Contract-assisted shape:
 
 ```json
 {
-  "service": "com.foo.OrderFacade",
-  "method": "query",
-  "types": ["com.foo.OrderQueryRequest"],
-  "args": [{ "orderId": 42, "includeItems": true }],
-  "sessionId": "ws_..."
+  "service": "com.example.DemoFacade",
+  "method": "echo",
+  "types": ["com.example.EchoRequest"],
+  "args": [{"message": "hello"}],
+  "invocationProperties": {
+    "tenant": {"value": "dev"},
+    "authToken": {"env": "SOFARPC_AUTH_TOKEN"}
+  },
+  "dryRun": true
 }
 ```
 
-The contract layer adds DTO `@type` tags and Java numeric wrappers. Do not
-pre-wrap values when contract assistance is active.
+Use `args` as an inline JSON array. Contract-assisted planning injects DTO `@type`, numeric wrappers, enum shapes, and nested collection normalization where the Java contract makes that safe.
 
-In contract-assisted invoke, enum params and enum DTO fields may be passed as
-the Java constant name: `"ACTIVE"`, `"DISABLED"`, etc. The plan normalizes them
-to SOFA's enum object shape: `{ "@type": "com.foo.Status", "name": "ACTIVE" }`.
-In trusted mode, use that canonical object shape yourself when no contract can
-identify the enum field.
+For overloads, include `types` from `sofarpc_describe`. Use `contractMode: "trusted"` or `trusted: true` only when the user intentionally bypasses contract parsing and provides the complete `service`, `method`, `types`, and ordered `args` tuple.
 
-Trusted mode, for no contract or exact user-supplied Java shape:
+## Invocation Properties
 
-```json
-{
-  "service": "com.foo.OrderFacade",
-  "method": "query",
-  "types": ["com.foo.OrderQueryRequest"],
-  "args": [{ "@type": "com.foo.OrderQueryRequest", "orderId": 42 }],
-  "directUrl": "bolt://host:12200",
-  "contractMode": "trusted"
-}
-```
+Use `invocationProperties` for gateway-carried request context, such as tenant, route, trace, identity, or token-like values that downstream Java services read from request baggage. Do not model this data as facade method arguments unless the Java contract actually declares them.
 
-Use per-call target/version/timeout fields only when the user wants an override.
-The executable mainline is direct + BOLT + Hessian2; `registryAddress` is
-inspectable but not executable.
+Supported entries:
+- `{"value": "literal"}` sends a literal string.
+- `{"env": "ENV_NAME"}` resolves the value from the environment for real invoke or replay.
+- `{"unset": true}` removes or masks a value from lower-precedence config.
 
-Always send `args` as an inline JSON array. Single-parameter methods still use
-a one-item array.
+Precedence is per-call payload over `.sofarpc/config.local.json` over `.sofarpc/config.json`. Env references remain redacted in dry-run plans and saved sessions. They resolve only for real invoke or replay; missing or empty env values fail before wire IO.
 
-## Replay
+On the wire, direct BOLT calls encode resolved entries into `SofaRequest.requestProps["rpc_req_baggage"]`. Java providers typically read them with `RpcInvokeContext.getRequestBaggage(...)`; the provider still needs SOFARPC baggage support enabled, commonly `invoke.baggage.enable`.
 
-Same payload: `sofarpc_replay` with captured `sessionId`. Changed payload:
-dry-run replay by `sessionId`, edit the returned full plan, then send it back
-as `payload` together with the same `sessionId` so replay policy uses the
-session project context. Payload replay requires `schemaVersion:
-"sofarpc.invoke.plan/v1"`; unsupported versions require a fresh dry-run invoke.
-If `diagnostics.sessionPlanCapture.reason == "plan-too-large"`, replay with the
-returned literal plan payload.
+Never put secrets in literal `value` entries. Prefer `env`, run `sofarpc_doctor` if env resolution fails, and keep copied replay plans redacted.
+
+## Replay And Resources
+
+For unchanged replay, call `sofarpc_replay` with the `sessionId`. For edited replay, first inspect `sofarpc://session/{sessionId}/plan` if the invoke response returned that resource link. Then submit the edited payload with the original `sessionId` and project context.
+
+Replay supports v2 saved plans. Legacy v1 plans are intentionally rejected. If session capture reports that the plan was too large to store, keep the literal dry-run plan from the invoke response or rebuild with `dryRun: true` and pass the edited payload directly.
 
 ## Error Recovery
 
-Every failure returns `{code, message, phase, hint?}`. Treat `hint.nextTool` and
-`hint.nextArgs` as machine instructions.
-
-- `target.missing` or `target.invalid`: call `sofarpc_target` with
-  `{"explain": true}`. If no project config exists, call
-  `sofarpc_init_project`; if project scope is unclear, start with
-  `dryRun: true` and inspect `projectResolution`. Do not guess directUrl or
-  registryAddress.
-- `target.unreachable`, `target.connect-failed`, `runtime.timeout`, or
-  `runtime.protocol-failed`: call `sofarpc_doctor`.
-- `contract.method-not-found` or `runtime.serialize-failed`: call
-  `sofarpc_describe`; inspect overloads, args, and `@type` shape.
-- `workspace.facade-not-configured`: confirm `projectRoot` / `contractRoot` in
-  `sofarpc_open` or `sofarpc_doctor`, then use trusted mode only with a complete
-  service/method/types/args tuple.
-- `replay.plan-version-unsupported`: rebuild a fresh dry-run plan.
-- `runtime.rejected`: report the guardrail message; do not retry blindly.
+- `target.missing` or `target.invalid`: call `sofarpc_target` with `explain: true`; use `sofarpc_init_project` if config is absent.
+- `contract.method-not-found` or overload ambiguity: call `sofarpc_describe` and include the exact `types`.
+- `input.args-invalid`, `contract.method-ambiguous`, or `runtime.serialize-failed`: fix payload shape, send `args` as an array, match Java parameter names inside DTO objects, and preserve list/map nesting.
+- Java type mismatch: check primitives, boxed types, enums, arrays, and date/time representations.
+- `invocationProperties` validation or missing env: check key names, remove mixed entry modes, export required env vars, then run `sofarpc_doctor`.
+- Transport errors: verify address, protocol, timeout, and direct-vs-registry target mode.
+- Hessian/BOLT mismatch: inspect target protocol and contract before forcing a wire mode.
+- Replay failure: read the saved plan resource before retrying and confirm whether the call is still safe.
 
 ## Agent Rules
 
-Do not bypass guardrails, pass `directUrl` every call when resolved target is
-right, use `registryAddress` as executable direct invoke, call `sofarpc_open`
-repeatedly in one workflow, or paraphrase errcode messages.
-
-On success, show `result`, key diagnostics, and `sessionId`; truncate large
-fields explicitly. On failure, lead with `code` and `message`, then execute or
-report the hinted next tool.
+- Prefer MCP resources over pasted logs when resource links are available.
+- Keep dry-run plans redacted when they include env-backed invocation properties.
+- Do not claim a call succeeded unless the MCP result shows a successful real invoke.
+- Summarize target, method, dry-run status, and session id in user-facing results.
+- When blocked, report the exact tool error code, the rejected field, and the next corrective action.
