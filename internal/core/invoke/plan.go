@@ -52,6 +52,11 @@ type Plan struct {
 	ContractSource       string                       `json:"contractSource,omitempty"`
 	TargetLayers         []target.Layer               `json:"targetLayers,omitempty"`
 	ArgSource            string                       `json:"argSource,omitempty"`
+	// Profile records the Active Target Profile this plan was built under, for
+	// replay provenance. It is additive to the v2 schema (omitempty) and does
+	// not affect replay: the resolved Target and InvocationProperties are
+	// already frozen above, so replay executes them verbatim.
+	Profile string `json:"profile,omitempty"`
 }
 
 // ValidatePlanSchema rejects payload/session plans produced by incompatible
@@ -136,6 +141,11 @@ func ValidateExecutablePlan(plan Plan, phase string) error {
 //   - input.args-invalid: args provided with the wrong arity.
 func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, error) {
 	report := target.Resolve(in.Target, sources)
+	if report.ProfileError != "" {
+		return Plan{}, errcode.New(errcode.ProfileNotDefined, "invoke", report.ProfileError).
+			WithHint("sofarpc_target", map[string]any{"explain": true},
+				"list available profiles before selecting one")
+	}
 	if report.Target.Mode == "" {
 		return Plan{}, errcode.New(errcode.TargetMissing, "invoke",
 			"no target resolved; call sofarpc_target for the layer breakdown").
@@ -176,6 +186,7 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 		ContractSource:       "facade-store",
 		TargetLayers:         report.Layers,
 		ArgSource:            argSource,
+		Profile:              report.ActiveProfile,
 	}, nil
 }
 
@@ -246,15 +257,17 @@ func buildTrustedPlan(in Input, report target.Report, plannedInvocationPropertie
 		ContractSource:       "trusted",
 		TargetLayers:         report.Layers,
 		ArgSource:            "user",
+		Profile:              report.ActiveProfile,
 	}, nil
 }
 
+// planInvocationProperties merges invocation properties in the same
+// descending precedence as target fields: the active profile's declarations
+// overlay the base declarations, and local wins over shared within each tier.
+// The layer order lives in target.InvocationPropertySources so plan building
+// and doctor never drift apart.
 func planInvocationProperties(in Input, sources target.Sources) (invocationprops.Declarations, error) {
-	props, err := invocationprops.Merge(
-		invocationprops.Source{Name: "input", Declarations: in.InvocationProperties},
-		invocationprops.Source{Name: "project-local", Declarations: sources.ProjectLocalInvocationProperties},
-		invocationprops.Source{Name: "project", Declarations: sources.ProjectInvocationProperties},
-	)
+	props, err := invocationprops.Merge(target.InvocationPropertySources(in.InvocationProperties, in.Target.Profile, sources)...)
 	if err != nil {
 		return nil, invocationPropertiesInvalidError("invoke", err)
 	}

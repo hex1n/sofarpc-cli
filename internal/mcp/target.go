@@ -15,6 +15,7 @@ type TargetInput struct {
 	Project          string `json:"project,omitempty"`
 	SessionID        string `json:"sessionId,omitempty"`
 	Service          string `json:"service,omitempty"`
+	Profile          string `json:"profile,omitempty"`
 	DirectURL        string `json:"directUrl,omitempty"`
 	RegistryAddress  string `json:"registryAddress,omitempty"`
 	RegistryProtocol string `json:"registryProtocol,omitempty"`
@@ -40,6 +41,12 @@ type TargetOutput struct {
 	// layers carried a shadowed value. Populated only when explain=true
 	// — agents can branch on it without parsing Explain strings.
 	Trace []target.FieldTrace `json:"trace,omitempty"`
+	// ActiveProfile is the selected Target Profile; AvailableProfiles lists
+	// every profile defined across both config files; ProfileError is set
+	// when ActiveProfile names a profile defined in neither file.
+	ActiveProfile     string   `json:"activeProfile,omitempty"`
+	AvailableProfiles []string `json:"availableProfiles,omitempty"`
+	ProfileError      string   `json:"profileError,omitempty"`
 }
 
 func registerTarget(server *sdkmcp.Server, opts Options) {
@@ -58,8 +65,12 @@ func registerTarget(server *sdkmcp.Server, opts Options) {
 			return toolResult(out, err.Error(), true), out, nil
 		}
 		toolSources := scope.Sources
+		// Profile precedence mirrors sofarpc_invoke / sofarpc_doctor: the
+		// per-call profile wins, else the session's Active Target Profile, else
+		// target.Resolve falls back to defaultProfile.
 		input := target.Input{
 			Service:          in.Service,
+			Profile:          effectiveProfile(in.Profile, scope.SessionProfile),
 			DirectURL:        in.DirectURL,
 			RegistryAddress:  in.RegistryAddress,
 			RegistryProtocol: in.RegistryProtocol,
@@ -69,20 +80,32 @@ func registerTarget(server *sdkmcp.Server, opts Options) {
 			ConnectTimeoutMS: in.ConnectTimeoutMS,
 			Explain:          in.Explain,
 		}
-		notifyToolProgress(ctx, req, 1, 2, "probing target")
+		notifyToolProgress(ctx, req, 1, 2, "resolving target")
 		report := target.Resolve(input, toolSources)
-		probe := target.Probe(report.Target)
 
 		out := TargetOutput{
-			ProjectRoot:  scope.ProjectRoot,
-			Target:       report.Target,
-			Service:      report.Service,
-			Layers:       report.Layers,
-			ConfigErrors: report.ConfigErrors,
-			Reachability: probe,
-			Explain:      report.Explain,
-			Trace:        report.Trace,
+			ProjectRoot:       scope.ProjectRoot,
+			Target:            report.Target,
+			Service:           report.Service,
+			Layers:            report.Layers,
+			ConfigErrors:      report.ConfigErrors,
+			Explain:           report.Explain,
+			Trace:             report.Trace,
+			ActiveProfile:     report.ActiveProfile,
+			AvailableProfiles: report.AvailableProfiles,
+			ProfileError:      report.ProfileError,
 		}
+
+		// A named-but-undefined profile is a hard error; never probe or fall
+		// through to base resolution.
+		if report.ProfileError != "" {
+			result := toolResult(out, "target profile error: "+report.ProfileError, true)
+			notifyToolProgress(ctx, req, 2, 2, "target profile error")
+			return result, out, nil
+		}
+
+		notifyToolProgress(ctx, req, 1, 2, "probing target")
+		out.Reachability = target.Probe(report.Target)
 
 		result := toolResult(out, summarizeTarget(out), false)
 		if report.Target.Mode == "" || len(report.ConfigErrors) > 0 {
