@@ -23,13 +23,19 @@ func runProjectSetup(opts setupOptions) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := buildProjectTargetConfig(opts)
-	if err != nil {
-		return err
-	}
 	kind := projectconfig.KindShared
 	if opts.local {
 		kind = projectconfig.KindLocal
+	}
+	if name := strings.TrimSpace(opts.profile); name != "" {
+		return runProjectProfileSetup(opts, projectRoot, kind, name)
+	}
+	if opts.setDefault {
+		return fmt.Errorf("--set-default requires --profile; to set the default for an existing profile use: sofarpc-mcp profile use <name>")
+	}
+	cfg, err := buildProjectTargetConfig(opts)
+	if err != nil {
+		return err
 	}
 	result, err := projectbootstrap.Run(projectbootstrap.Input{
 		ProjectRoot:            projectRoot,
@@ -60,6 +66,83 @@ func runProjectSetup(opts setupOptions) error {
 	}
 	fmt.Printf("project: wrote %s\n", result.ConfigPath)
 	return nil
+}
+
+func runProjectProfileSetup(opts setupOptions, projectRoot string, kind projectconfig.Kind, name string) error {
+	profile, err := buildProjectProfileConfig(opts)
+	if err != nil {
+		return err
+	}
+	result, err := projectbootstrap.WriteProfile(projectbootstrap.ProfileInput{
+		ProjectRoot: projectRoot,
+		Kind:        kind,
+		Name:        name,
+		Profile:     profile,
+		SetDefault:  opts.setDefault,
+		Force:       opts.force,
+		DryRun:      opts.dryRun,
+	})
+	if err != nil {
+		return projectProfileSetupError(err)
+	}
+	if opts.dryRun {
+		fmt.Printf("[dry-run] project %s profile %q:\n%s", result.ConfigPath, name, result.ConfigBody)
+		if result.Gitignore != nil {
+			if result.Gitignore.WouldChange {
+				fmt.Printf("[dry-run] project %s append:\n%s\n", result.Gitignore.Path, result.Gitignore.Entry)
+			} else {
+				fmt.Printf("[dry-run] project %s already contains %s\n", result.Gitignore.Path, result.Gitignore.Entry)
+			}
+		}
+		return nil
+	}
+	if result.Gitignore != nil && result.Gitignore.Changed {
+		fmt.Printf("project: ensured %s ignores %s\n", result.Gitignore.Path, result.Gitignore.Entry)
+	}
+	verb := "wrote"
+	if result.ProfileExisted {
+		verb = "overwrote"
+	}
+	fmt.Printf("project: %s profile %q in %s\n", verb, name, result.ConfigPath)
+	if result.SetDefault {
+		fmt.Printf("project: set defaultProfile=%q\n", name)
+	}
+	return nil
+}
+
+func projectProfileSetupError(err error) error {
+	switch {
+	case errors.Is(err, projectbootstrap.ErrProfileNoFields):
+		return fmt.Errorf("profile setup needs at least one target config flag (e.g. --direct-url)")
+	case errors.Is(err, projectbootstrap.ErrProfileNameRequired):
+		return fmt.Errorf("profile setup requires a non-empty --profile name")
+	default:
+		var existing projectbootstrap.ExistingProfileError
+		if errors.As(err, &existing) {
+			return fmt.Errorf("profile %q already exists in %s; pass --force to overwrite it", existing.Name, existing.Path)
+		}
+		return err
+	}
+}
+
+func buildProjectProfileConfig(opts setupOptions) (projectconfig.ProfileConfig, error) {
+	if opts.set["allowed-services"] {
+		return projectconfig.ProfileConfig{}, fmt.Errorf("--allowed-services is not valid with --profile; the service allowlist stays a base, project-wide setting")
+	}
+	cfg, err := buildProjectTargetConfig(opts)
+	if err != nil {
+		return projectconfig.ProfileConfig{}, err
+	}
+	return projectconfig.ProfileConfig{
+		DirectURL:        cfg.DirectURL,
+		RegistryAddress:  cfg.RegistryAddress,
+		RegistryProtocol: cfg.RegistryProtocol,
+		Protocol:         cfg.Protocol,
+		Serialization:    cfg.Serialization,
+		UniqueID:         cfg.UniqueID,
+		TimeoutMS:        cfg.TimeoutMS,
+		ConnectTimeoutMS: cfg.ConnectTimeoutMS,
+	}, nil
 }
 
 func projectSetupBootstrapError(err error) error {
