@@ -13,6 +13,9 @@ type toolScope struct {
 	ProjectRoot string
 	Sources     target.Sources
 	Source      string
+	// SessionProfile is the Active Target Profile stored on the session this
+	// scope was resolved from, or empty when no session was used.
+	SessionProfile string
 }
 
 type toolContext struct {
@@ -45,22 +48,27 @@ func resolveToolScope(base target.Sources, sessions *SessionStore, sessionID, cw
 			return toolScope{}, err
 		}
 		if sessionID != "" {
-			sessionRoot, err := sessionProjectRoot(sessions, sessionID)
+			session, err := sessionByID(sessions, sessionID)
 			if err != nil {
 				return toolScope{}, err
 			}
-			if !sameProjectRoot(sessionRoot, scope.ProjectRoot) {
-				return toolScope{}, fmt.Errorf("session %q project root %q does not match requested project root %q", sessionID, sessionRoot, scope.ProjectRoot)
+			if !sameProjectRoot(session.ProjectRoot, scope.ProjectRoot) {
+				return toolScope{}, fmt.Errorf("session %q project root %q does not match requested project root %q", sessionID, session.ProjectRoot, scope.ProjectRoot)
 			}
+			scope.SessionProfile = strings.TrimSpace(session.Profile)
 		}
 		return scope, nil
 	}
 	if sessionID != "" {
-		root, err := sessionProjectRoot(sessions, sessionID)
+		session, err := sessionByID(sessions, sessionID)
 		if err != nil {
 			return toolScope{}, err
 		}
-		return toolScope{ProjectRoot: root, Sources: target.ProjectSources(root, base.Env), Source: "session"}, nil
+		root := strings.TrimSpace(session.ProjectRoot)
+		if root == "" {
+			return toolScope{}, fmt.Errorf("session %q has no project root", sessionID)
+		}
+		return toolScope{ProjectRoot: root, Sources: target.ProjectSources(root, base.Env), Source: "session", SessionProfile: strings.TrimSpace(session.Profile)}, nil
 	}
 	if strings.TrimSpace(base.ProjectRoot) != "" {
 		return toolScope{ProjectRoot: base.ProjectRoot, Sources: target.ProjectSources(base.ProjectRoot, base.Env), Source: "ambient"}, nil
@@ -92,19 +100,25 @@ func buildContractBannerForSnapshot(snapshot contractSnapshot) ContractBanner {
 	return buildContractBanner(snapshot.store, snapshot.loadError, snapshot.root)
 }
 
-func sessionProjectRoot(sessions *SessionStore, sessionID string) (string, error) {
+// effectiveProfile picks the per-call profile when set, else the session's
+// Active Target Profile. An empty result lets target resolution fall back to
+// the project's defaultProfile, then to base-only resolution.
+func effectiveProfile(call, session string) string {
+	if c := strings.TrimSpace(call); c != "" {
+		return c
+	}
+	return strings.TrimSpace(session)
+}
+
+func sessionByID(sessions *SessionStore, sessionID string) (Session, error) {
 	if sessions == nil {
-		return "", fmt.Errorf("session %q cannot be resolved: no session store attached", sessionID)
+		return Session{}, fmt.Errorf("session %q cannot be resolved: no session store attached", sessionID)
 	}
 	session, ok := sessions.Get(sessionID)
 	if !ok {
-		return "", fmt.Errorf("session %q not found", sessionID)
+		return Session{}, fmt.Errorf("session %q not found", sessionID)
 	}
-	root := strings.TrimSpace(session.ProjectRoot)
-	if root == "" {
-		return "", fmt.Errorf("session %q has no project root", sessionID)
-	}
-	return root, nil
+	return session, nil
 }
 
 func sameProjectRoot(left, right string) bool {

@@ -62,7 +62,9 @@ func runSetup(args []string) error {
 	flags.BoolVar(&opts.replaceEnv, "replace-env", false, "user scope: replace the sofarpc env block instead of merging existing keys")
 	flags.BoolVar(&opts.local, "local", false, "project scope: write .sofarpc/config.local.json")
 	flags.BoolVar(&opts.shared, "shared", false, "project scope: write .sofarpc/config.json")
-	flags.BoolVar(&opts.force, "force", false, "project scope: overwrite an existing project config file")
+	flags.StringVar(&opts.profile, "profile", "", "project scope: write target fields into profiles[name] instead of base settings")
+	flags.BoolVar(&opts.setDefault, "set-default", false, "project scope: with --profile, also record defaultProfile")
+	flags.BoolVar(&opts.force, "force", false, "project scope: overwrite an existing project config file (or, with --profile, an existing same-named profile)")
 	flags.BoolVar(&opts.dryRun, "dry-run", false, "print the would-be changes without writing")
 	flags.Usage = func() {
 		fmt.Fprintf(flags.Output(), "Usage: sofarpc-mcp setup [flags]\n\nRegisters this binary at user scope or writes project-level target config.\n\nFlags:\n")
@@ -109,6 +111,8 @@ type setupOptions struct {
 	replaceEnv          bool
 	local               bool
 	shared              bool
+	profile             string
+	setDefault          bool
 	force               bool
 	dryRun              bool
 	set                 map[string]bool
@@ -184,6 +188,8 @@ func rejectProjectOnlyFlags(opts setupOptions) error {
 		"timeout-ms",
 		"connect-timeout-ms",
 		"allowed-services",
+		"profile",
+		"set-default",
 	} {
 		if opts.set[name] {
 			return fmt.Errorf("--%s is project-specific; use --scope=project", name)

@@ -20,6 +20,13 @@ type OpenOutput struct {
 	ConfigErrors []target.ConfigError `json:"configErrors,omitempty"`
 	Capabilities Capabilities         `json:"capabilities"`
 	Contract     ContractBanner       `json:"contract"`
+	// ActiveProfile is the Target Profile resolved for this session;
+	// AvailableProfiles lists every profile defined across both config files;
+	// ProfileError is set (and no session is opened) when the requested
+	// profile is defined in neither file.
+	ActiveProfile     string   `json:"activeProfile,omitempty"`
+	AvailableProfiles []string `json:"availableProfiles,omitempty"`
+	ProfileError      string   `json:"profileError,omitempty"`
 }
 
 // Capabilities is an up-front capability banner so agents know which
@@ -64,11 +71,25 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 		}
 
 		notifyToolProgress(ctx, req, 1, 3, "resolving target")
-		report := target.Resolve(target.Input{}, toolCtx.Sources)
+		report := target.Resolve(target.Input{Profile: in.Profile}, toolCtx.Sources)
+
+		// A named-but-undefined profile is a hard error: do not open a session
+		// pinned to a profile that resolves nothing.
+		if report.ProfileError != "" {
+			out := OpenOutput{
+				ProjectRoot:       toolCtx.ProjectRoot,
+				ConfigErrors:      report.ConfigErrors,
+				ActiveProfile:     report.ActiveProfile,
+				AvailableProfiles: report.AvailableProfiles,
+				ProfileError:      report.ProfileError,
+			}
+			return toolResult(out, "open failed: "+report.ProfileError, true), out, nil
+		}
 
 		session := sessions.Create(Session{
 			ProjectRoot: toolCtx.ProjectRoot,
 			Target:      report.Target,
+			Profile:     report.ActiveProfile,
 		})
 
 		out := OpenOutput{
@@ -82,7 +103,9 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 				Describe:     toolCtx.Contract.store != nil,
 				Replay:       sessions != nil,
 			},
-			Contract: toolCtx.ContractBanner,
+			Contract:          toolCtx.ContractBanner,
+			ActiveProfile:     report.ActiveProfile,
+			AvailableProfiles: report.AvailableProfiles,
 		}
 
 		notifyToolProgress(ctx, req, 3, 3, "workspace opened")
@@ -95,6 +118,9 @@ func summarizeOpen(out OpenOutput) string {
 	targetState := "no target resolved"
 	if out.Target.Mode != "" {
 		targetState = fmt.Sprintf("target.mode=%s", out.Target.Mode)
+	}
+	if out.ActiveProfile != "" {
+		return fmt.Sprintf("%s project=%s profile=%s %s", out.SessionID, out.ProjectRoot, out.ActiveProfile, targetState)
 	}
 	return fmt.Sprintf("%s project=%s %s", out.SessionID, out.ProjectRoot, targetState)
 }

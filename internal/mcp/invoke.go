@@ -64,6 +64,9 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			return invokeToolResult(InvokeOutput{Error: ecerr}, errorText("invoke failed", ecerr), true), nil
 		}
 		toolSources := toolCtx.Sources
+		// Effective profile: per-call wins over the session's profile; an
+		// empty result lets target.Resolve fall back to defaultProfile.
+		profile := effectiveProfile(decoded.Profile, toolCtx.SessionProfile)
 		notifyToolProgress(ctx, req, 2, 5, "normalizing arguments")
 		args, err = normalizeArgs(decoded.Service, decoded.Method, args, toolSources.ProjectRoot)
 		if err != nil {
@@ -90,6 +93,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			InvocationProperties: decoded.InvocationProperties,
 			Target: target.Input{
 				Service:          decoded.Service,
+				Profile:          profile,
 				DirectURL:        decoded.DirectURL,
 				RegistryAddress:  decoded.RegistryAddress,
 				RegistryProtocol: decoded.RegistryProtocol,
@@ -107,6 +111,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 				InvocationProperties: decoded.InvocationProperties,
 				Target: target.Input{
 					Service:          decoded.Service,
+					Profile:          profile,
 					DirectURL:        decoded.DirectURL,
 					RegistryAddress:  decoded.RegistryAddress,
 					RegistryProtocol: decoded.RegistryProtocol,
@@ -155,6 +160,7 @@ type rawInvokeInput struct {
 	Version              string                       `json:"version,omitempty"`
 	TargetAppName        string                       `json:"targetAppName,omitempty"`
 	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
+	Profile              string                       `json:"profile,omitempty"`
 	DirectURL            string                       `json:"directUrl,omitempty"`
 	RegistryAddress      string                       `json:"registryAddress,omitempty"`
 	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
@@ -192,6 +198,7 @@ func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
 		Version:              raw.Version,
 		TargetAppName:        raw.TargetAppName,
 		InvocationProperties: raw.InvocationProperties,
+		Profile:              raw.Profile,
 		DirectURL:            raw.DirectURL,
 		RegistryAddress:      raw.RegistryAddress,
 		RegistryProtocol:     raw.RegistryProtocol,
@@ -302,9 +309,13 @@ func summarizeInvokePlan(plan invoke.Plan, dryRun bool) string {
 	if dryRun {
 		prefix = "dry-run plan"
 	}
-	return fmt.Sprintf("%s: %s.%s target=%s overload=%d/%d argSource=%s",
+	summary := fmt.Sprintf("%s: %s.%s target=%s overload=%d/%d argSource=%s",
 		prefix, plan.Service, plan.Method, targetAddr(plan.Target),
 		plan.Selected+1, len(plan.Overloads), plan.ArgSource)
+	if plan.Profile != "" {
+		summary += " profile=" + plan.Profile
+	}
+	return summary
 }
 
 func targetAddr(cfg target.Config) string {

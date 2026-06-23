@@ -52,7 +52,10 @@ type Session struct {
 	ID          string        `json:"id"`
 	ProjectRoot string        `json:"projectRoot"`
 	Target      target.Config `json:"target,omitempty"`
-	CreatedAt   time.Time     `json:"createdAt"`
+	// Profile is the Active Target Profile resolved at sofarpc_open time.
+	// sessionId-based calls inherit it unless they pass their own profile.
+	Profile   string    `json:"profile,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
 	// LastPlan is the most recent plan produced by sofarpc_invoke for
 	// this session. sofarpc_replay reads it when called with sessionId.
 	LastPlan *invoke.Plan `json:"lastPlan,omitempty"`

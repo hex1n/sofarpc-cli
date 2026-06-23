@@ -19,6 +19,7 @@ const (
 	ServiceMissing       Code = "input.service-missing"
 	MethodMissing        Code = "input.method-missing"
 	ArgsInvalid          Code = "input.args-invalid"
+	ProfileNotDefined    Code = "input.profile-not-defined"
 	MethodAmbiguous      Code = "contract.method-ambiguous"
 	MethodNotFound       Code = "contract.method-not-found"
 	ContractUnresolvable Code = "contract.unresolvable"
