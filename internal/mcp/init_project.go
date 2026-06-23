@@ -26,14 +26,20 @@ type InitProjectInput struct {
 	Services            []string `json:"services,omitempty"`
 	AllowAllServices    bool     `json:"allowAllServices,omitempty"`
 	ServiceNameSuffixes []string `json:"serviceNameSuffixes,omitempty"`
-	DirectURL           string   `json:"directUrl,omitempty"`
-	RegistryAddress     string   `json:"registryAddress,omitempty"`
-	RegistryProtocol    string   `json:"registryProtocol,omitempty"`
-	Protocol            string   `json:"protocol,omitempty"`
-	Serialization       string   `json:"serialization,omitempty"`
-	UniqueID            string   `json:"uniqueId,omitempty"`
-	TimeoutMS           int      `json:"timeoutMs,omitempty"`
-	ConnectTimeoutMS    int      `json:"connectTimeoutMs,omitempty"`
+	// Profile, when set, switches init_project into profile mode: the target
+	// fields below are written into profiles[name] (merged into the existing
+	// file) instead of the base settings. SetDefault also records it as the
+	// project's defaultProfile.
+	Profile          string `json:"profile,omitempty"`
+	SetDefault       bool   `json:"setDefault,omitempty"`
+	DirectURL        string `json:"directUrl,omitempty"`
+	RegistryAddress  string `json:"registryAddress,omitempty"`
+	RegistryProtocol string `json:"registryProtocol,omitempty"`
+	Protocol         string `json:"protocol,omitempty"`
+	Serialization    string `json:"serialization,omitempty"`
+	UniqueID         string `json:"uniqueId,omitempty"`
+	TimeoutMS        int    `json:"timeoutMs,omitempty"`
+	ConnectTimeoutMS int    `json:"connectTimeoutMs,omitempty"`
 }
 
 type InitProjectOutput struct {
@@ -105,6 +111,10 @@ func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHo
 			out := InitProjectOutput{ProjectRoot: scope.ProjectRoot, ProjectResolution: projectResolution, Error: errcode.New(errcode.ArgsInvalid, "init-project", err.Error())}
 			return initProjectResult(out), out, nil
 		}
+		if strings.TrimSpace(in.Profile) != "" {
+			out := runInitProjectProfile(ctx, req, scope, projectResolution, kind, in)
+			return initProjectResult(out), out, nil
+		}
 		notifyToolProgress(ctx, req, 1, 4, "building project config")
 		toolCtx := attachContractContext(scope, holder)
 		cfg, discovery, err := buildInitProjectConfig(in, toolCtx.Contract)
@@ -142,6 +152,123 @@ func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHo
 		notifyToolProgress(ctx, req, 4, 4, "project initialization complete")
 		return initProjectResult(out), out, nil
 	})
+}
+
+// runInitProjectProfile handles profile mode: it writes the target/wire fields
+// into profiles[name], merged into the existing file. Service-allowlist inputs
+// are rejected because a profile never carries allowedServices (it stays a
+// base, project-wide guardrail — see ADR 0003).
+func runInitProjectProfile(ctx context.Context, req *sdkmcp.CallToolRequest, scope toolScope, projectResolution *workspace.JavaProjectDiscovery, kind projectconfig.Kind, in InitProjectInput) InitProjectOutput {
+	name := strings.TrimSpace(in.Profile)
+	out := InitProjectOutput{
+		ProjectRoot:       scope.ProjectRoot,
+		ConfigFile:        string(kind),
+		ConfigPath:        projectconfig.ConfigPath(scope.ProjectRoot, kind),
+		DryRun:            in.DryRun,
+		ProjectResolution: projectResolution,
+	}
+	notifyToolProgress(ctx, req, 1, 3, "validating target profile")
+	profile, err := buildInitProjectProfile(in)
+	if err != nil {
+		out.Error = errcode.New(errcode.ArgsInvalid, "init-project", err.Error())
+		return out
+	}
+	notifyToolProgress(ctx, req, 2, 3, "writing target profile")
+	result, err := projectbootstrap.WriteProfile(projectbootstrap.ProfileInput{
+		ProjectRoot: scope.ProjectRoot,
+		Kind:        kind,
+		Name:        name,
+		Profile:     profile,
+		SetDefault:  in.SetDefault,
+		Force:       in.Force,
+		DryRun:      in.DryRun,
+	})
+	applyInitProjectProfileResult(&out, result)
+	if err != nil {
+		out.Error = initProjectProfileError(err, scope.ProjectRoot, name)
+		return out
+	}
+	out.Ok = true
+	out.NextSteps = initProjectProfileNextSteps(name, kind, in.SetDefault)
+	notifyToolProgress(ctx, req, 3, 3, "target profile written")
+	return out
+}
+
+func buildInitProjectProfile(in InitProjectInput) (projectconfig.ProfileConfig, error) {
+	if len(in.Services) > 0 || in.AllowAllServices || len(in.ServiceNameSuffixes) > 0 {
+		return projectconfig.ProfileConfig{}, fmt.Errorf("profile mode writes target settings only; allowedServices stays a base, project-wide setting — omit services, allowAllServices, and serviceNameSuffixes")
+	}
+	if in.TimeoutMS < 0 {
+		return projectconfig.ProfileConfig{}, fmt.Errorf("timeoutMs must be non-negative")
+	}
+	if in.ConnectTimeoutMS < 0 {
+		return projectconfig.ProfileConfig{}, fmt.Errorf("connectTimeoutMs must be non-negative")
+	}
+	profile := projectconfig.ProfileConfig{
+		DirectURL:        strings.TrimSpace(in.DirectURL),
+		RegistryAddress:  strings.TrimSpace(in.RegistryAddress),
+		RegistryProtocol: strings.TrimSpace(in.RegistryProtocol),
+		Protocol:         strings.TrimSpace(in.Protocol),
+		Serialization:    strings.TrimSpace(in.Serialization),
+		UniqueID:         strings.TrimSpace(in.UniqueID),
+		TimeoutMS:        in.TimeoutMS,
+		ConnectTimeoutMS: in.ConnectTimeoutMS,
+	}
+	if !projectconfig.ProfileHasFields(profile) {
+		return projectconfig.ProfileConfig{}, fmt.Errorf("profile %q needs at least one target field (directUrl, registryAddress, protocol, serialization, uniqueId, or a timeout)", strings.TrimSpace(in.Profile))
+	}
+	return profile, nil
+}
+
+func applyInitProjectProfileResult(out *InitProjectOutput, result projectbootstrap.ProfileResult) {
+	if strings.TrimSpace(result.ConfigPath) != "" {
+		out.ConfigPath = result.ConfigPath
+	}
+	out.ProjectConfig = result.Config
+	out.Existing = result.FileExisted
+	out.Overwrote = result.ProfileExisted
+	out.Wrote = result.Wrote
+	if result.Gitignore != nil {
+		out.Gitignore = &InitProjectGitignore{
+			Path:        result.Gitignore.Path,
+			Entry:       result.Gitignore.Entry,
+			Changed:     result.Gitignore.Changed,
+			WouldChange: result.Gitignore.WouldChange,
+		}
+	}
+}
+
+func initProjectProfileNextSteps(name string, kind projectconfig.Kind, setDefault bool) []string {
+	out := []string{
+		fmt.Sprintf("Select this profile per call with profile=%q, or per session via sofarpc_open profile=%q.", name, name),
+	}
+	if !setDefault {
+		out = append(out, fmt.Sprintf("Make it the default with sofarpc_init_project profile=%q setDefault=true (or the CLI: sofarpc-mcp profile use %s).", name, name))
+	}
+	if kind == projectconfig.KindShared {
+		out = append(out, "Commit .sofarpc/config.json to share this profile with the team.")
+	}
+	return out
+}
+
+func initProjectProfileError(err error, projectRoot, name string) *errcode.Error {
+	var existing projectbootstrap.ExistingProfileError
+	if errors.As(err, &existing) {
+		return errcode.New(errcode.ArgsInvalid, "init-project",
+			fmt.Sprintf("profile %q already exists in %s; pass force=true to overwrite it", name, existing.Path)).
+			WithHint("sofarpc_target", map[string]any{"project": projectRoot, "profile": name, "explain": true},
+				"inspect the existing profile before overwriting it")
+	}
+	if errors.Is(err, projectbootstrap.ErrProfileNoFields) {
+		return errcode.New(errcode.ArgsInvalid, "init-project",
+			"profile needs at least one target field (directUrl, registryAddress, protocol, ...)").
+			WithHint("sofarpc_init_project", map[string]any{"project": projectRoot, "profile": name, "dryRun": true},
+				"pass a target for the profile before writing")
+	}
+	if errors.Is(err, projectbootstrap.ErrProfileNameRequired) {
+		return errcode.New(errcode.ArgsInvalid, "init-project", "profile name must not be empty")
+	}
+	return errcode.New(errcode.ArgsInvalid, "init-project", err.Error())
 }
 
 func resolveInitProjectScope(base target.Sources, sessions *SessionStore, in InitProjectInput) (toolScope, *workspace.JavaProjectDiscovery, error) {

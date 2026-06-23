@@ -66,10 +66,15 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			out.Summary = summarizeDoctor(out.Checks)
 			return toolResult(out, out.Summary, true), out, nil
 		}
+		// Effective profile: per-call wins over the session's profile; mutating
+		// the local input lets every check see the same selection. An empty
+		// value still lets target resolution fall back to defaultProfile.
+		in.Profile = effectiveProfile(in.Profile, toolCtx.SessionProfile)
+
 		notifyToolProgress(ctx, req, 1, 3, "running diagnostic checks")
-		checks := make([]DoctorCheck, 5)
+		checks := make([]DoctorCheck, 6)
 		var wg sync.WaitGroup
-		wg.Add(5)
+		wg.Add(6)
 		go func() { defer wg.Done(); checks[0] = checkTarget(in, toolCtx.Sources) }()
 		go func() {
 			defer wg.Done()
@@ -78,6 +83,7 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
 		go func() { defer wg.Done(); checks[3] = checkInvokePolicy(in, toolCtx.Sources) }()
 		go func() { defer wg.Done(); checks[4] = checkInvocationProperties(in, toolCtx.Sources) }()
+		go func() { defer wg.Done(); checks[5] = checkProfile(in, toolCtx.Sources) }()
 		wg.Wait()
 		out := DoctorOutput{Checks: checks}
 		out.Ok = allOk(out.Checks)
@@ -92,12 +98,68 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 	})
 }
 
+// checkProfile reports the resolved Target Profile selection. It fails when a
+// named profile is defined in neither config file (the same hard error invoke
+// and open raise), so an agent sees the typo before any target check confuses
+// it with a missing endpoint.
+func checkProfile(in DoctorInput, sources target.Sources) DoctorCheck {
+	report := target.Resolve(target.Input{Service: in.Service, Profile: in.Profile}, sources)
+	data := map[string]any{}
+	if len(report.AvailableProfiles) > 0 {
+		data["availableProfiles"] = report.AvailableProfiles
+	}
+	if report.ActiveProfile != "" {
+		data["activeProfile"] = report.ActiveProfile
+	}
+	if dp := strings.TrimSpace(sources.DefaultProfile); dp != "" {
+		data["defaultProfile"] = dp
+	}
+	if report.ProfileError != "" {
+		return DoctorCheck{
+			Name:     "profile",
+			Ok:       false,
+			Detail:   report.ProfileError,
+			Data:     data,
+			NextStep: &DoctorAction{Tool: "sofarpc_target", Args: map[string]any{"explain": true}},
+		}
+	}
+	if report.ActiveProfile == "" {
+		detail := "no target profile selected; base target settings apply"
+		if len(report.AvailableProfiles) > 0 {
+			detail += " (available: " + strings.Join(report.AvailableProfiles, ", ") + ")"
+		}
+		return DoctorCheck{Name: "profile", Ok: true, Detail: detail, Data: data}
+	}
+	return DoctorCheck{
+		Name:   "profile",
+		Ok:     true,
+		Detail: fmt.Sprintf("active profile %q", report.ActiveProfile),
+		Data:   data,
+	}
+}
+
+// profileNotDefinedCheck converts a profile-resolution error into a failing
+// check under the caller's name, so target / invoke-policy / invocation-property
+// checks defer to the dedicated profile check instead of emitting a misleading
+// "no target mode" message. It returns nil when the profile resolved cleanly.
+func profileNotDefinedCheck(name string, report target.Report) *DoctorCheck {
+	if report.ProfileError == "" {
+		return nil
+	}
+	return &DoctorCheck{
+		Name:     name,
+		Ok:       false,
+		Detail:   report.ProfileError,
+		Data:     map[string]any{"availableProfiles": report.AvailableProfiles},
+		NextStep: &DoctorAction{Tool: "sofarpc_target", Args: map[string]any{"explain": true}},
+	}
+}
+
 func checkInvocationProperties(in DoctorInput, sources target.Sources) DoctorCheck {
-	props, err := invocationprops.Merge(
-		invocationprops.Source{Name: "input", Declarations: in.InvocationProperties},
-		invocationprops.Source{Name: "project-local", Declarations: sources.ProjectLocalInvocationProperties},
-		invocationprops.Source{Name: "project", Declarations: sources.ProjectInvocationProperties},
-	)
+	if c := profileNotDefinedCheck("invocation-properties", target.Resolve(target.Input{Profile: in.Profile}, sources)); c != nil {
+		return *c
+	}
+	props, err := invocationprops.Merge(target.InvocationPropertySources(in.InvocationProperties, in.Profile, sources)...)
 	data := map[string]any{}
 	if strings.TrimSpace(sources.ProjectRoot) != "" {
 		data["targetRoot"] = sources.ProjectRoot
@@ -201,7 +263,10 @@ func missingInvocationPropertyEnv(statuses []invocationprops.EnvStatus) []string
 // checkTarget runs the same resolver+probe chain as sofarpc_target and
 // collapses the result into two checks: resolution and reachability.
 func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
-	report := target.Resolve(target.Input{Service: in.Service}, sources)
+	report := target.Resolve(target.Input{Service: in.Service, Profile: in.Profile}, sources)
+	if c := profileNotDefinedCheck("target", report); c != nil {
+		return *c
+	}
 	data := map[string]any{}
 	if strings.TrimSpace(sources.ProjectRoot) != "" {
 		data["targetRoot"] = sources.ProjectRoot
@@ -253,7 +318,10 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 	policy := executionPolicyFromEnv(sources)
 	policyDiagnostics := policy.Diagnostics()
-	report := target.Resolve(target.Input{Service: in.Service}, sources)
+	report := target.Resolve(target.Input{Service: in.Service, Profile: in.Profile}, sources)
+	if c := profileNotDefinedCheck("invoke-policy", report); c != nil {
+		return *c
+	}
 	data := map[string]any{
 		"policy":             policyDiagnostics,
 		"supportsDirectBolt": target.SupportsDirectBolt(report.Target),

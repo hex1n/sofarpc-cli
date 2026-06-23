@@ -34,6 +34,9 @@ type Input struct {
 	TimeoutMS        int
 	ConnectTimeoutMS int
 	Explain          bool
+	// Profile names the Target Profile to select. Empty means fall back to
+	// the project's DefaultProfile, then to base-only resolution.
+	Profile string
 }
 
 // Config is the resolved wire target handed to invoke/replay/worker.
@@ -62,6 +65,17 @@ type Sources struct {
 	ProjectLocalInvocationProperties invocationprops.Declarations
 	ProjectRoot                      string
 	ConfigErrors                     []ConfigError
+	// ProjectProfiles / ProjectLocalProfiles hold the named Target Profile
+	// target configs from the shared and local config files. DefaultProfile
+	// is the resolved fallback profile (local declaration wins over shared).
+	ProjectProfiles      map[string]Config
+	ProjectLocalProfiles map[string]Config
+	DefaultProfile       string
+	// ProjectProfileInvocationProperties / ProjectLocalProfileInvocationProperties
+	// hold each Target Profile's invocation-property declarations, keyed by
+	// profile name, from the shared and local config files.
+	ProjectProfileInvocationProperties      map[string]invocationprops.Declarations
+	ProjectLocalProfileInvocationProperties map[string]invocationprops.Declarations
 }
 
 // PolicyConfig contains project-scoped execution policy. It is parsed from
@@ -114,6 +128,13 @@ type Report struct {
 	ConfigErrors []ConfigError `json:"configErrors,omitempty"`
 	Explain      []string      `json:"explain,omitempty"`
 	Trace        []FieldTrace  `json:"trace,omitempty"`
+	// ActiveProfile is the selected Target Profile (per-call input, else
+	// DefaultProfile). AvailableProfiles lists every profile defined across
+	// both config files. ProfileError is set, and no target is resolved,
+	// when ActiveProfile names a profile defined in neither file.
+	ActiveProfile     string   `json:"activeProfile,omitempty"`
+	AvailableProfiles []string `json:"availableProfiles,omitempty"`
+	ProfileError      string   `json:"profileError,omitempty"`
 }
 
 type fieldSpec struct {
@@ -162,22 +183,34 @@ var configFieldSpecs = []fieldSpec{
 	},
 }
 
-// Resolve merges the target layers in descending priority:
-// input > project-local config > project shared config > MCP env > built-in
-// defaults.
+// Resolve merges the target layers in descending priority. When a Target
+// Profile is active, its layers sit above the base layers so a profile-specific
+// value beats a base value:
+//
+//	input
+//	  > project-local:profiles[P] > project:profiles[P]
+//	  > project-local (base) > project (base)
+//	  > mcp-env > built-in defaults
+//
+// A profile that is named but defined in neither config file is a hard error:
+// Resolve returns a Report with ProfileError set and no resolved target rather
+// than silently falling through to the base layers.
 func Resolve(input Input, sources Sources) Report {
-	layers := []layerConfig{
-		{name: "input", cfg: configFromInput(input)},
-		{name: "project-local", cfg: normalizeConfig(sources.ProjectLocal)},
-		{name: "project", cfg: normalizeConfig(sources.Project)},
-		{name: "mcp-env", cfg: normalizeConfig(sources.Env)},
-		{name: "defaults", cfg: defaultConfig()},
+	report := Report{
+		Service:           strings.TrimSpace(input.Service),
+		ConfigErrors:      append([]ConfigError(nil), sources.ConfigErrors...),
+		AvailableProfiles: availableProfiles(sources),
 	}
 
-	report := Report{
-		Service:      strings.TrimSpace(input.Service),
-		ConfigErrors: append([]ConfigError(nil), sources.ConfigErrors...),
+	activeProfile := resolveActiveProfile(input.Profile, sources)
+	report.ActiveProfile = activeProfile
+	if activeProfile != "" && !profileDefined(sources, activeProfile) {
+		report.ProfileError = fmt.Sprintf("profile %q is not defined; available profiles: %s",
+			activeProfile, formatProfileList(report.AvailableProfiles))
+		return report
 	}
+
+	layers := buildLayerStack(input, sources, activeProfile)
 	layerFields := make(map[string][]string, len(layers))
 
 	endpoint, endpointTraces, endpointFields := resolveEndpoint(layers)
@@ -218,6 +251,106 @@ func Resolve(input Input, sources Sources) Report {
 	return report
 }
 
+// buildLayerStack assembles the descending-priority layer list, inserting the
+// active profile's layers above the base layers when a profile is selected.
+func buildLayerStack(input Input, sources Sources, activeProfile string) []layerConfig {
+	layers := make([]layerConfig, 0, 6)
+	layers = append(layers, layerConfig{name: "input", cfg: configFromInput(input)})
+	if activeProfile != "" {
+		layers = append(layers,
+			layerConfig{name: profileLayerName("project-local", activeProfile), cfg: normalizeConfig(sources.ProjectLocalProfiles[activeProfile])},
+			layerConfig{name: profileLayerName("project", activeProfile), cfg: normalizeConfig(sources.ProjectProfiles[activeProfile])},
+		)
+	}
+	layers = append(layers,
+		layerConfig{name: "project-local", cfg: normalizeConfig(sources.ProjectLocal)},
+		layerConfig{name: "project", cfg: normalizeConfig(sources.Project)},
+		layerConfig{name: "mcp-env", cfg: normalizeConfig(sources.Env)},
+		layerConfig{name: "defaults", cfg: defaultConfig()},
+	)
+	return layers
+}
+
+func profileLayerName(tier, profile string) string {
+	return tier + ":profiles[" + profile + "]"
+}
+
+// InvocationPropertySources returns the invocation-property declaration sources
+// in descending precedence, inserting the active Target Profile's declarations
+// above the base declarations so a profile value beats a base value:
+//
+//	input
+//	  > project-local:profiles[P] > project:profiles[P]
+//	  > project-local (base) > project (base)
+//
+// profile is the already-resolved per-call/session selection; an empty profile
+// falls back to sources.DefaultProfile. input carries the caller's per-call
+// declarations and always ranks highest. This is the single definition of the
+// invocation-property layer order, shared by plan building and doctor.
+func InvocationPropertySources(input invocationprops.Declarations, profile string, sources Sources) []invocationprops.Source {
+	profile = resolveActiveProfile(profile, sources)
+	srcs := []invocationprops.Source{
+		{Name: "input", Declarations: input},
+	}
+	if profile != "" {
+		srcs = append(srcs,
+			invocationprops.Source{Name: profileLayerName("project-local", profile), Declarations: sources.ProjectLocalProfileInvocationProperties[profile]},
+			invocationprops.Source{Name: profileLayerName("project", profile), Declarations: sources.ProjectProfileInvocationProperties[profile]},
+		)
+	}
+	srcs = append(srcs,
+		invocationprops.Source{Name: "project-local", Declarations: sources.ProjectLocalInvocationProperties},
+		invocationprops.Source{Name: "project", Declarations: sources.ProjectInvocationProperties},
+	)
+	return srcs
+}
+
+// availableProfiles returns the sorted union of profile names defined across
+// the shared and local config files.
+func availableProfiles(sources Sources) []string {
+	if len(sources.ProjectProfiles) == 0 && len(sources.ProjectLocalProfiles) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(sources.ProjectProfiles)+len(sources.ProjectLocalProfiles))
+	for name := range sources.ProjectProfiles {
+		set[name] = struct{}{}
+	}
+	for name := range sources.ProjectLocalProfiles {
+		set[name] = struct{}{}
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// resolveActiveProfile applies the per-call/session selection, falling back to
+// the project's DefaultProfile when empty. It is the single fallback rule
+// shared by Resolve and InvocationPropertySources so the two never drift.
+func resolveActiveProfile(profile string, sources Sources) string {
+	if p := strings.TrimSpace(profile); p != "" {
+		return p
+	}
+	return strings.TrimSpace(sources.DefaultProfile)
+}
+
+func profileDefined(sources Sources, name string) bool {
+	if _, ok := sources.ProjectProfiles[name]; ok {
+		return true
+	}
+	_, ok := sources.ProjectLocalProfiles[name]
+	return ok
+}
+
+func formatProfileList(names []string) string {
+	if len(names) == 0 {
+		return "(none defined)"
+	}
+	return strings.Join(names, ", ")
+}
+
 // ProjectSources builds a Sources value for projectRoot by reading the optional
 // project-level target config files. Config load errors are carried in the
 // returned Sources so callers can surface them in target/open/doctor output
@@ -250,11 +383,58 @@ func applyProjectConfig(src *Sources, kind projectconfig.Kind) {
 		src.Project = configFromProjectConfig(loaded.Config)
 		src.ProjectPolicy = policyFromProjectConfig(loaded)
 		src.ProjectInvocationProperties = loaded.Config.InvocationProperties
+		src.ProjectProfiles = profilesFromProjectConfig(loaded.Config.Profiles)
+		src.ProjectProfileInvocationProperties = profileInvocationProperties(loaded.Config.Profiles)
+		if dp := strings.TrimSpace(loaded.Config.DefaultProfile); dp != "" && src.DefaultProfile == "" {
+			src.DefaultProfile = dp
+		}
 	case projectconfig.KindLocal:
 		src.ProjectLocal = configFromProjectConfig(loaded.Config)
 		src.ProjectLocalPolicy = policyFromProjectConfig(loaded)
 		src.ProjectLocalInvocationProperties = loaded.Config.InvocationProperties
+		src.ProjectLocalProfiles = profilesFromProjectConfig(loaded.Config.Profiles)
+		src.ProjectLocalProfileInvocationProperties = profileInvocationProperties(loaded.Config.Profiles)
+		// Local declaration wins over shared.
+		if dp := strings.TrimSpace(loaded.Config.DefaultProfile); dp != "" {
+			src.DefaultProfile = dp
+		}
 	}
+}
+
+func profileInvocationProperties(profiles map[string]projectconfig.ProfileConfig) map[string]invocationprops.Declarations {
+	if len(profiles) == 0 {
+		return nil
+	}
+	out := make(map[string]invocationprops.Declarations, len(profiles))
+	for name, p := range profiles {
+		if len(p.InvocationProperties) > 0 {
+			out[name] = p.InvocationProperties
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func profilesFromProjectConfig(profiles map[string]projectconfig.ProfileConfig) map[string]Config {
+	if len(profiles) == 0 {
+		return nil
+	}
+	out := make(map[string]Config, len(profiles))
+	for name, p := range profiles {
+		out[name] = normalizeConfig(Config{
+			DirectURL:        p.DirectURL,
+			RegistryAddress:  p.RegistryAddress,
+			RegistryProtocol: p.RegistryProtocol,
+			Protocol:         p.Protocol,
+			Serialization:    p.Serialization,
+			UniqueID:         p.UniqueID,
+			TimeoutMS:        p.TimeoutMS,
+			ConnectTimeoutMS: p.ConnectTimeoutMS,
+		})
+	}
+	return out
 }
 
 // AllowedServices returns the effective project-scoped service allowlist.

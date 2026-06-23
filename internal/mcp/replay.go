@@ -212,6 +212,10 @@ func summarizeReplay(plan *invoke.Plan, source string, dryRun bool) string {
 	if dryRun {
 		prefix = "dry-run replay"
 	}
-	return fmt.Sprintf("%s (%s): %s.%s target=%s",
+	summary := fmt.Sprintf("%s (%s): %s.%s target=%s",
 		prefix, source, plan.Service, plan.Method, targetAddr(plan.Target))
+	if plan.Profile != "" {
+		summary += " profile=" + plan.Profile
+	}
+	return summary
 }

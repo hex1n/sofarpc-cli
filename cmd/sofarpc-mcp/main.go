@@ -30,6 +30,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "profile":
+			if err := runProfile(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		case "version", "--version", "-v":
 			if err := runVersion(os.Stdout, os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, err)

@@ -99,6 +99,9 @@ func loadErrorMessage(err error) string {
 type OpenInput struct {
 	Cwd     string `json:"cwd,omitempty"`
 	Project string `json:"project,omitempty"`
+	// Profile selects the Active Target Profile for this session; sessionId
+	// calls inherit it. Empty falls back to the project's defaultProfile.
+	Profile string `json:"profile,omitempty"`
 }
 
 // --- sofarpc_describe (see describe.go) ------------------------------------
@@ -131,6 +134,7 @@ type InvokeInput struct {
 	Version              string                       `json:"version,omitempty"`
 	TargetAppName        string                       `json:"targetAppName,omitempty"`
 	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
+	Profile              string                       `json:"profile,omitempty"`
 	DirectURL            string                       `json:"directUrl,omitempty"`
 	RegistryAddress      string                       `json:"registryAddress,omitempty"`
 	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
@@ -160,10 +164,13 @@ type ReplayInput struct {
 
 // DoctorInput is the input shape for sofarpc_doctor. Service is optional:
 // when set, doctor biases target resolution toward a per-service uniqueId.
+// Profile selects the Target Profile to diagnose; empty inherits the session's
+// Active Target Profile (when called by sessionId) and then defaultProfile.
 type DoctorInput struct {
 	Cwd                  string                       `json:"cwd,omitempty"`
 	Project              string                       `json:"project,omitempty"`
 	SessionID            string                       `json:"sessionId,omitempty"`
 	Service              string                       `json:"service,omitempty"`
+	Profile              string                       `json:"profile,omitempty"`
 	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
 }
