@@ -16,7 +16,7 @@ type planExecutionResult struct {
 	Rejected bool
 }
 
-func executePlanWithPolicy(ctx context.Context, plan invoke.Plan, phase string, sources target.Sources, capture *PlanCaptureResult) planExecutionResult {
+func executePlanWithPolicy(ctx context.Context, plan invoke.Plan, phase string, sources target.Sources, capture *PlanCaptureResult, limiter *InvokeLimiter) planExecutionResult {
 	if err := validateExecutionPolicy(plan, phase, sources); err != nil {
 		return planExecutionResult{
 			Err:      err,
@@ -26,8 +26,20 @@ func executePlanWithPolicy(ctx context.Context, plan invoke.Plan, phase string, 
 			},
 		}
 	}
+	release, limiterDiagnostics, err := limiter.Acquire(ctx, phase, plan)
+	if err != nil {
+		return planExecutionResult{
+			Err:      err,
+			Rejected: true,
+			Outcome: invoke.Outcome{
+				Diagnostics: diagnosticsWithCapture(diagnosticsWithLimiter(targetConfigDiagnostics(sources), limiterDiagnostics), capture),
+			},
+		}
+	}
+	defer release()
+
 	outcome, err := invoke.Execute(ctx, plan, phase)
-	outcome.Diagnostics = diagnosticsWithCapture(outcome.Diagnostics, capture)
+	outcome.Diagnostics = diagnosticsWithCapture(diagnosticsWithLimiter(outcome.Diagnostics, limiterDiagnostics), capture)
 	return planExecutionResult{Outcome: outcome, Err: err}
 }
 
@@ -109,5 +121,17 @@ func diagnosticsWithCapture(base map[string]any, capture *PlanCaptureResult) map
 		out[k] = v
 	}
 	out["sessionPlanCapture"] = capture
+	return out
+}
+
+func diagnosticsWithLimiter(base map[string]any, diag InvokeLimiterDiagnostics) map[string]any {
+	if !diag.Enabled && diag.GlobalLimit == 0 && diag.PerTargetLimit == 0 {
+		return base
+	}
+	out := map[string]any{}
+	for k, v := range base {
+		out[k] = v
+	}
+	out["invokeConcurrency"] = diag
 	return out
 }

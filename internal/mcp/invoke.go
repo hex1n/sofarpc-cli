@@ -39,13 +39,15 @@ type InvokeOutput struct {
 func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
-	server.AddTool(&sdkmcp.Tool{
+	addRawTool(server, &sdkmcp.Tool{
 		Name:         "sofarpc_invoke",
 		Title:        "Invoke SOFARPC Method",
 		Description:  "Plan and execute a SOFARPC generic invocation. args is a JSON array argument vector; single-parameter methods still use a one-item array. dryRun=true returns the plan without executing the request. Real invokes require SOFARPC_ALLOW_INVOKE=true.",
 		Annotations:  remoteInvokeAnnotations("Invoke SOFARPC Method"),
 		InputSchema:  invokeInputSchema(),
 		OutputSchema: invokeOutputSchema(),
+	}, "invoke", func(ecerr *errcode.Error) *sdkmcp.CallToolResult {
+		return invokeToolResult(InvokeOutput{Error: ecerr}, errorText("invoke failed", ecerr), true)
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 		notifyToolProgress(ctx, req, 0, 5, "decoding invoke input")
 		decoded, args, err := decodeInvokeInput(req)
@@ -134,7 +136,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		}
 
 		notifyToolProgress(ctx, req, 4, 5, "executing invoke plan")
-		execution := executePlanWithPolicy(ctx, plan, "invoke", toolSources, capture)
+		execution := executePlanWithPolicy(ctx, plan, "invoke", toolSources, capture, opts.InvokeLimiter)
 		if execution.Err != nil {
 			out := InvokeOutput{Plan: &plan, Diagnostics: execution.Outcome.Diagnostics, Error: asErrcodeError(execution.Err)}
 			return invokeToolResultWithLinks(out, planExecutionErrorText("invoke", execution), true, links...), nil

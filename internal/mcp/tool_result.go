@@ -29,10 +29,6 @@ func structuredToolResultWithLinks(out any, text string, isError bool, links ...
 	return result
 }
 
-func contentWithJSONText(out any, text string) []sdkmcp.Content {
-	content := []sdkmcp.Content{&sdkmcp.TextContent{Text: text}}
-	if body, err := json.Marshal(out); err == nil {
-		content = append(content, &sdkmcp.TextContent{Text: string(body)})
-	}
-	return content
+func contentWithJSONText(_ any, text string) []sdkmcp.Content {
+	return []sdkmcp.Content{&sdkmcp.TextContent{Text: text}}
 }

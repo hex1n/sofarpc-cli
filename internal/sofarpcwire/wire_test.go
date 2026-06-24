@@ -453,6 +453,63 @@ func TestDecodeResponse_RoundTripsSuccessEnvelope(t *testing.T) {
 	}
 }
 
+func TestFormatValueSafeFormatsMapWithTypedObjectValues(t *testing.T) {
+	t.Parallel()
+
+	value := map[string]any{
+		"type": "com.example.Result",
+		"fields": map[string]any{
+			"configs": map[string]any{
+				"type": "java.util.LinkedHashMap",
+				"entries": map[string]any{
+					"daily": map[string]any{
+						"type": "com.example.RankTypeConfig",
+						"fields": map[string]any{
+							"rankType": "daily",
+						},
+						"fieldNames": []string{"rankType"},
+					},
+				},
+			},
+		},
+		"fieldNames": []string{"configs"},
+	}
+
+	formatted, err := FormatValueSafe(value)
+	if err != nil {
+		t.Fatalf("FormatValueSafe() error = %v", err)
+	}
+	root, ok := formatted.(map[string]any)
+	if !ok {
+		t.Fatalf("formatted type = %T", formatted)
+	}
+	fields := root["fields"].(map[string]any)
+	configs := fields["configs"].(map[string]any)
+	entries := configs["entries"].(map[string]any)
+	daily := entries["daily"].(map[string]any)
+	if got := daily["type"]; got != "com.example.RankTypeConfig" {
+		t.Fatalf("daily.type = %#v", got)
+	}
+	dailyFields := daily["fields"].(map[string]any)
+	if got := dailyFields["rankType"]; got != "daily" {
+		t.Fatalf("daily.fields.rankType = %#v", got)
+	}
+}
+
+func TestFormatValueSafeRejectsCyclicMap(t *testing.T) {
+	t.Parallel()
+
+	value := map[string]any{}
+	value["self"] = value
+
+	_, err := FormatValueSafe(value)
+	if err == nil {
+		t.Fatal("expected cycle error")
+	}
+	if !strings.Contains(err.Error(), "cycle detected") {
+		t.Fatalf("error = %v, want cycle detection", err)
+	}
+}
 func TestDecodeResponseRejectsOverlargeFixedList(t *testing.T) {
 	t.Parallel()
 

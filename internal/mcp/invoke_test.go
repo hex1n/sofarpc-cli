@@ -196,6 +196,102 @@ func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 	}
 }
 
+func TestInvoke_DirectTransportRendersMapWithTypedObjectValues(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.example.demo.RankingListFacade",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{
+					Name:       "rankingList",
+					ParamTypes: []string{"java.lang.String"},
+					ReturnType: "com.example.demo.Result",
+				},
+			},
+		},
+	)
+	appResponse := sofarpcwire.NormalizeArgs([]any{
+		map[string]any{
+			"@type":   "com.example.demo.Result",
+			"success": true,
+			"rankVo": map[string]any{
+				"@type": "com.example.demo.RankVo",
+				"rankTypeConfigMap": map[string]any{
+					"daily": map[string]any{
+						"@type":    "com.example.demo.RankTypeConfig",
+						"rankType": "daily",
+						"title":    "Daily Ranking",
+					},
+				},
+			},
+		},
+	})[0]
+	responseBytes, err := sofarpcwire.BuildSuccessResponse(appResponse)
+	if err != nil {
+		t.Fatalf("BuildSuccessResponse: %v", err)
+	}
+	directURL, stop := fakeDirectServer(t, responseBytes)
+	defer stop()
+
+	out := callInvoke(t, Options{
+		Contract: store,
+		TargetSources: target.Sources{
+			Env: target.Config{DirectURL: directURL},
+			ProjectPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.example.demo.RankingListFacade"},
+			},
+		},
+	}, map[string]any{
+		"service": "com.example.demo.RankingListFacade",
+		"method":  "rankingList",
+		"args":    []any{"request"},
+	})
+	if !out.Ok {
+		t.Fatalf("expected Ok=true, got error=%+v diagnostics=%+v", out.Error, out.Diagnostics)
+	}
+
+	result, ok := out.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T", out.Result)
+	}
+	fields, ok := result["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("result.fields type = %T", result["fields"])
+	}
+	rankVo, ok := fields["rankVo"].(map[string]any)
+	if !ok {
+		t.Fatalf("rankVo type = %T", fields["rankVo"])
+	}
+	rankFields, ok := rankVo["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("rankVo.fields type = %T", rankVo["fields"])
+	}
+	configs, ok := rankFields["rankTypeConfigMap"].(map[string]any)
+	if !ok {
+		t.Fatalf("rankTypeConfigMap type = %T", rankFields["rankTypeConfigMap"])
+	}
+	entries, ok := configs["entries"].(map[string]any)
+	if !ok {
+		t.Fatalf("rankTypeConfigMap.entries type = %T", configs["entries"])
+	}
+	daily, ok := entries["daily"].(map[string]any)
+	if !ok {
+		t.Fatalf("daily config type = %T", entries["daily"])
+	}
+	if got := daily["type"]; got != "com.example.demo.RankTypeConfig" {
+		t.Fatalf("daily.type = %#v", got)
+	}
+	dailyFields, ok := daily["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("daily.fields type = %T", daily["fields"])
+	}
+	if got := dailyFields["rankType"]; got != "daily" {
+		t.Fatalf("daily.fields.rankType = %#v", got)
+	}
+	if got := dailyFields["title"]; got != "Daily Ranking" {
+		t.Fatalf("daily.fields.title = %#v", got)
+	}
+}
 func TestInvoke_ConfigErrorDiagnosticsUseSessionProject(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
 	t.Setenv(envAllowTargetOverride, "false")

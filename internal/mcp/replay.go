@@ -26,13 +26,15 @@ type ReplayOutput struct {
 func registerReplay(server *sdkmcp.Server, opts Options) {
 	sessions := opts.Sessions
 	sources := opts.TargetSources
-	server.AddTool(&sdkmcp.Tool{
+	addRawTool(server, &sdkmcp.Tool{
 		Name:         "sofarpc_replay",
 		Title:        "Replay SOFARPC Invocation",
 		Description:  "Replay a captured invocation. Accepts a payload from sofarpc_invoke's dryRun output, or a sessionId to look up a captured plan. Replay requires a supported plan schemaVersion.",
 		Annotations:  remoteInvokeAnnotations("Replay SOFARPC Invocation"),
 		InputSchema:  replayInputSchema(),
 		OutputSchema: replayOutputSchema(),
+	}, "replay", func(ecerr *errcode.Error) *sdkmcp.CallToolResult {
+		return invokeToolResult(ReplayOutput{Error: ecerr}, errorText("replay failed", ecerr), true)
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 		notifyToolProgress(ctx, req, 0, 4, "decoding replay input")
 		in, payload, err := decodeReplayInput(req)
@@ -63,7 +65,7 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 		}
 		toolSources := scope.Sources
 		notifyToolProgress(ctx, req, 3, 4, "executing replay plan")
-		execution := executePlanWithPolicy(ctx, *plan, "replay", toolSources, nil)
+		execution := executePlanWithPolicy(ctx, *plan, "replay", toolSources, nil, opts.InvokeLimiter)
 		if execution.Err != nil {
 			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: execution.Outcome.Diagnostics, Error: asErrcodeError(execution.Err)}
 			return invokeToolResultWithLinks(out, planExecutionErrorText("replay", execution), true, replayResourceLinks(in.SessionID, source)...), nil

@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
@@ -411,6 +414,63 @@ public class B {
 	}
 }
 
+func TestLoad_CoalescesConcurrentClassParses(t *testing.T) {
+	root := t.TempDir()
+	writeJava(t, root, "src/main/java/com/foo/Svc.java", `
+package com.foo;
+public interface Svc {
+    String ping(String request);
+}
+`)
+
+	store, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if store == nil {
+		t.Fatal("Load returned nil store")
+	}
+
+	originalParse := parseJavaFileClassesFunc
+	var parseCount atomic.Int64
+	parseJavaFileClassesFunc = func(path string, projectSymbols symbolTable) ([]javamodel.Class, []typeResolutionIssue, bool) {
+		parseCount.Add(1)
+		time.Sleep(20 * time.Millisecond)
+		return originalParse(path, projectSymbols)
+	}
+	t.Cleanup(func() { parseJavaFileClassesFunc = originalParse })
+
+	const calls = 16
+	start := make(chan struct{})
+	errs := make(chan error, calls)
+	var wg sync.WaitGroup
+	for range calls {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			cls, ok := store.Class("com.foo.Svc")
+			if !ok {
+				errs <- os.ErrNotExist
+				return
+			}
+			if cls.FQN != "com.foo.Svc" {
+				errs <- os.ErrInvalid
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Class lookup failed: %v", err)
+		}
+	}
+	if got := parseCount.Load(); got != 1 {
+		t.Fatalf("parse count: got %d want 1", got)
+	}
+}
 func TestLoad_ResolvesInnerClassesLazily(t *testing.T) {
 	root := t.TempDir()
 	writeJava(t, root, "src/main/java/com/foo/Outer.java", `

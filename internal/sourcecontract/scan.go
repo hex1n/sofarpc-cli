@@ -179,6 +179,8 @@ func parseJavaFileClasses(path string, projectSymbols symbolTable) ([]javamodel.
 	return classes, issues, true
 }
 
+var parseJavaFileClassesFunc = parseJavaFileClasses
+
 func containsLombokAnnotation(src string) bool {
 	for _, marker := range []string{
 		"@Data", "@Getter", "@Setter", "@Value", "@Builder",

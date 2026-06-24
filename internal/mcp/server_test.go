@@ -3,8 +3,11 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -417,6 +420,91 @@ func TestToolProgressNotificationsWhenTokenProvided(t *testing.T) {
 	}
 }
 
+func TestConcurrentInvokeDryRunCallsStayIsolated(t *testing.T) {
+	server := New(Options{})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var progress atomic.Int64
+	client := connectWithOptions(t, ctx, server, &sdkmcp.ClientOptions{
+		ProgressNotificationHandler: func(context.Context, *sdkmcp.ProgressNotificationClientRequest) {
+			progress.Add(1)
+		},
+	})
+	defer client.Close()
+
+	const calls = 50
+	errs := make(chan error, calls)
+	var wg sync.WaitGroup
+	for i := range calls {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			service := fmt.Sprintf("com.foo.Svc%d", i)
+			arg := fmt.Sprintf("arg-%d", i)
+			params := &sdkmcp.CallToolParams{
+				Name: "sofarpc_invoke",
+				Arguments: map[string]any{
+					"contractMode": "trusted",
+					"service":      service,
+					"method":       "ping",
+					"types":        []string{"java.lang.String"},
+					"args":         []any{arg},
+					"directUrl":    "bolt://127.0.0.1:1",
+					"dryRun":       true,
+				},
+			}
+			params.SetProgressToken(fmt.Sprintf("progress-%d", i))
+
+			result, err := client.CallTool(ctx, params)
+			if err != nil {
+				errs <- fmt.Errorf("call %d: %w", i, err)
+				return
+			}
+			if result.IsError {
+				errs <- fmt.Errorf("call %d returned tool error: %v", i, result.Content)
+				return
+			}
+
+			var out InvokeOutput
+			body, err := json.Marshal(result.StructuredContent)
+			if err != nil {
+				errs <- fmt.Errorf("call %d marshal structured content: %w", i, err)
+				return
+			}
+			if err := json.Unmarshal(body, &out); err != nil {
+				errs <- fmt.Errorf("call %d unmarshal structured content: %w", i, err)
+				return
+			}
+			if !out.Ok || out.Plan == nil {
+				errs <- fmt.Errorf("call %d returned no dry-run plan: %+v", i, out)
+				return
+			}
+			if out.Plan.Service != service {
+				errs <- fmt.Errorf("call %d service mismatch: got %q want %q", i, out.Plan.Service, service)
+				return
+			}
+			if len(out.Plan.Args) != 1 || out.Plan.Args[0] != arg {
+				errs <- fmt.Errorf("call %d args mismatch: got %#v want [%q]", i, out.Plan.Args, arg)
+				return
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	if progress.Load() == 0 {
+		t.Fatal("expected progress notifications from concurrent calls")
+	}
+}
+
 func TestToolLoggingNotificationsWhenLevelProvided(t *testing.T) {
 	server := New(Options{})
 	ctx := context.Background()
@@ -503,14 +591,14 @@ func TestNew_ReplaySchemaAdvertisesPayloadObject(t *testing.T) {
 	}
 }
 
-func TestToolResultIncludesStructuredJSONTextMirror(t *testing.T) {
+func TestToolResultIncludesStructuredContentWithoutJSONTextMirror(t *testing.T) {
 	out := InvokeOutput{Ok: true, Diagnostics: map[string]any{"capture": "session"}}
 	result := invokeToolResult(out, "summary", false)
 	if result.IsError {
 		t.Fatal("result should not be marked as error")
 	}
-	if len(result.Content) != 2 {
-		t.Fatalf("content count: got %d want 2", len(result.Content))
+	if len(result.Content) != 1 {
+		t.Fatalf("content count: got %d want 1", len(result.Content))
 	}
 	if got := contentText(t, result.Content[0]); got != "summary" {
 		t.Fatalf("summary text: got %q want summary", got)
@@ -518,9 +606,6 @@ func TestToolResultIncludesStructuredJSONTextMirror(t *testing.T) {
 	structured, ok := result.StructuredContent.(json.RawMessage)
 	if !ok {
 		t.Fatalf("structured content type: got %T want json.RawMessage", result.StructuredContent)
-	}
-	if got := contentText(t, result.Content[1]); got != string(structured) {
-		t.Fatalf("json mirror: got %q want %q", got, string(structured))
 	}
 	var decoded InvokeOutput
 	if err := json.Unmarshal(structured, &decoded); err != nil {
