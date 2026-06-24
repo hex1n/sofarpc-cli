@@ -11,6 +11,7 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/core/invocationprops"
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
+	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -18,9 +19,10 @@ import (
 // is self-describing so agents can iterate and fix one problem at a time.
 // Ok at the top is the AND of every check.Ok.
 type DoctorOutput struct {
-	Ok      bool          `json:"ok"`
-	Summary string        `json:"summary"`
-	Checks  []DoctorCheck `json:"checks"`
+	Ok      bool           `json:"ok"`
+	Summary string         `json:"summary"`
+	Checks  []DoctorCheck  `json:"checks"`
+	Error   *errcode.Error `json:"error,omitempty"`
 }
 
 // DoctorCheck is one diagnostic line. NextStep is omitted when the check
@@ -43,12 +45,12 @@ type DoctorAction struct {
 func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
-	sdkmcp.AddTool(server, &sdkmcp.Tool{
+	addTypedTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_doctor",
 		Title:       "Diagnose SOFARPC Workspace",
 		Description: "Run end-to-end self-diagnosis: target resolution, reachability, workspace state, and session readiness.",
 		Annotations: networkReadOnlyAnnotations("Diagnose SOFARPC Workspace"),
-	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in DoctorInput) (*sdkmcp.CallToolResult, DoctorOutput, error) {
+	}, "doctor", func(ecerr *errcode.Error) DoctorOutput { return panicDoctorOutput(ecerr) }, func(ctx context.Context, req *sdkmcp.CallToolRequest, in DoctorInput) (*sdkmcp.CallToolResult, DoctorOutput, error) {
 		notifyToolProgress(ctx, req, 0, 3, "resolving diagnostic context")
 		toolCtx, err := resolveToolContext(sources, sessions, holder, in.SessionID, in.Cwd, in.Project)
 		if err != nil {
@@ -72,18 +74,22 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		in.Profile = effectiveProfile(in.Profile, toolCtx.SessionProfile)
 
 		notifyToolProgress(ctx, req, 1, 3, "running diagnostic checks")
-		checks := make([]DoctorCheck, 6)
+		checks := make([]DoctorCheck, 7)
 		var wg sync.WaitGroup
-		wg.Add(6)
-		go func() { defer wg.Done(); checks[0] = checkTarget(in, toolCtx.Sources) }()
-		go func() {
-			defer wg.Done()
-			checks[1] = checkContract(toolCtx.Contract, toolCtx.ProjectRoot, holder.ProjectCacheDiagnostics())
-		}()
-		go func() { defer wg.Done(); checks[2] = checkSessions(sessions) }()
-		go func() { defer wg.Done(); checks[3] = checkInvokePolicy(in, toolCtx.Sources) }()
-		go func() { defer wg.Done(); checks[4] = checkInvocationProperties(in, toolCtx.Sources) }()
-		go func() { defer wg.Done(); checks[5] = checkProfile(in, toolCtx.Sources) }()
+		wg.Add(7)
+		runDoctorCheck(&wg, checks, 0, "target", func() DoctorCheck { return checkTarget(in, toolCtx.Sources) })
+		runDoctorCheck(&wg, checks, 1, "contract", func() DoctorCheck {
+			return checkContract(toolCtx.Contract, toolCtx.ProjectRoot, holder.ProjectCacheDiagnostics())
+		})
+		runDoctorCheck(&wg, checks, 2, "sessions", func() DoctorCheck { return checkSessions(sessions) })
+		runDoctorCheck(&wg, checks, 3, "invoke-policy", func() DoctorCheck { return checkInvokePolicy(in, toolCtx.Sources) })
+		runDoctorCheck(&wg, checks, 4, "invocation-properties", func() DoctorCheck {
+			return checkInvocationProperties(in, toolCtx.Sources)
+		})
+		runDoctorCheck(&wg, checks, 5, "profile", func() DoctorCheck { return checkProfile(in, toolCtx.Sources) })
+		runDoctorCheck(&wg, checks, 6, "invoke-concurrency", func() DoctorCheck {
+			return checkInvokeConcurrency(opts.InvokeLimiter)
+		})
 		wg.Wait()
 		out := DoctorOutput{Checks: checks}
 		out.Ok = allOk(out.Checks)
@@ -96,6 +102,40 @@ func registerDoctor(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		notifyToolProgress(ctx, req, 3, 3, "diagnostics complete")
 		return result, out, nil
 	})
+}
+
+func panicDoctorOutput(ecerr *errcode.Error) DoctorOutput {
+	checks := []DoctorCheck{panicDoctorCheck("internal", ecerr)}
+	return DoctorOutput{
+		Ok:      false,
+		Summary: summarizeDoctor(checks),
+		Checks:  checks,
+		Error:   ecerr,
+	}
+}
+
+func runDoctorCheck(wg *sync.WaitGroup, checks []DoctorCheck, index int, name string, fn func() DoctorCheck) {
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				ecerr := toolPanicError("sofarpc_doctor."+name, "doctor", recovered)
+				checks[index] = panicDoctorCheck(name, ecerr)
+			}
+		}()
+		checks[index] = fn()
+	}()
+}
+
+func panicDoctorCheck(name string, ecerr *errcode.Error) DoctorCheck {
+	return DoctorCheck{
+		Name:   name,
+		Ok:     false,
+		Detail: ecerr.Message,
+		Data: map[string]any{
+			"code": ecerr.Code,
+		},
+	}
 }
 
 // checkProfile reports the resolved Target Profile selection. It fails when a
@@ -312,6 +352,36 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 		Ok:     true,
 		Detail: fmt.Sprintf("mode=%s target=%s reachable", report.Target.Mode, probe.Target),
 		Data:   data,
+	}
+}
+
+func checkInvokeConcurrency(limiter *InvokeLimiter) DoctorCheck {
+	diag := InvokeLimiterDiagnostics{}
+	if limiter != nil {
+		diag = limiter.Diagnostics()
+	}
+	data := map[string]any{
+		"limiter": diag,
+		"env": []string{
+			invoke.EnvMaxConcurrentInvokes,
+			invoke.EnvMaxConcurrentInvokesPerTarget,
+			invoke.EnvInvokeQueueTimeoutMS,
+		},
+	}
+	if !diag.Enabled {
+		return DoctorCheck{
+			Name:   "invoke-concurrency",
+			Ok:     true,
+			Detail: "real invoke concurrency limiter is disabled",
+			Data:   data,
+		}
+	}
+	return DoctorCheck{
+		Name: "invoke-concurrency",
+		Ok:   true,
+		Detail: fmt.Sprintf("real invoke concurrency limit global=%d inUse=%d perTarget=%d queueTimeoutMs=%d",
+			diag.GlobalLimit, diag.GlobalInUse, diag.PerTargetLimit, diag.QueueTimeoutMS),
+		Data: data,
 	}
 }
 

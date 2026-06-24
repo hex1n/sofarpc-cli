@@ -29,6 +29,7 @@ type Store struct {
 	index                map[string]string
 	symbols              symbolTable
 	cache                map[string]javamodel.Class
+	inflight             map[string]*parseCall
 	indexedFiles         int
 	indexFailureCount    int
 	indexFailures        map[string]string
@@ -41,6 +42,12 @@ type Store struct {
 	parseFailures        map[string]string
 	resolutionIssueCount int
 	resolutionIssues     map[string][]string
+}
+
+type parseCall struct {
+	done       chan struct{}
+	ok         bool
+	classCount int
 }
 
 // Diagnostics surfaces the store's current health so sofarpc_open and
@@ -110,16 +117,44 @@ func (s *Store) Class(fqn string) (javamodel.Class, bool) {
 		return javamodel.Class{}, false
 	}
 
-	classes, resolutionIssues, ok := parseJavaFileClasses(path, s.symbols)
-	if !ok || len(classes) == 0 {
-		s.recordParseFailure(fqn, "parseJavaFile returned no top-level declaration")
+	s.mu.Lock()
+	if cached, exists := s.cache[fqn]; exists {
+		s.mu.Unlock()
+		return cached, true
+	}
+	if s.inflight == nil {
+		s.inflight = map[string]*parseCall{}
+	}
+	if call, exists := s.inflight[path]; exists {
+		s.mu.Unlock()
+		<-call.done
+		s.mu.RLock()
+		cached, cachedOK := s.cache[fqn]
+		s.mu.RUnlock()
+		if cachedOK {
+			return cached, true
+		}
+		if !call.ok || call.classCount == 0 {
+			s.recordParseFailure(fqn, "parseJavaFile returned no top-level declaration")
+		} else {
+			s.recordParseFailure(fqn, "parsed file did not materialize requested class")
+		}
 		return javamodel.Class{}, false
 	}
+	call := &parseCall{done: make(chan struct{})}
+	s.inflight[path] = call
+	s.mu.Unlock()
+
+	classes, resolutionIssues, ok := parseJavaFileClassesFunc(path, s.symbols)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if cached, exists := s.cache[fqn]; exists {
-		return cached, true
+	call.ok = ok
+	call.classCount = len(classes)
+	if !ok || len(classes) == 0 {
+		s.recordParseFailureLocked(fqn, "parseJavaFile returned no top-level declaration")
+		s.finishParseLocked(path, call)
+		s.mu.Unlock()
+		return javamodel.Class{}, false
 	}
 	if s.cache == nil {
 		s.cache = map[string]javamodel.Class{}
@@ -133,9 +168,22 @@ func (s *Store) Class(fqn string) (javamodel.Class, bool) {
 	cls, exists := s.cache[fqn]
 	if !exists {
 		s.recordParseFailureLocked(fqn, "parsed file did not materialize requested class")
+		s.finishParseLocked(path, call)
+		s.mu.Unlock()
 		return javamodel.Class{}, false
 	}
+	s.finishParseLocked(path, call)
+	s.mu.Unlock()
 	return cls, true
+}
+
+func (s *Store) finishParseLocked(path string, call *parseCall) {
+	if s.inflight != nil {
+		if current := s.inflight[path]; current == call {
+			delete(s.inflight, path)
+		}
+	}
+	close(call.done)
 }
 
 // Size returns the number of classes loaded into the store.

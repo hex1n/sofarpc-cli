@@ -77,13 +77,13 @@ type InitProjectGitignore struct {
 func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
-	sdkmcp.AddTool(server, &sdkmcp.Tool{
+	addTypedTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_init_project",
 		Title:       "Initialize SOFARPC Project",
 		Description: "Initialize a Java project's .sofarpc config. It can discover facade services from source contracts, write allowedServices, and optionally persist an explicit direct or registry target.",
 		Annotations: localWriteAnnotations("Initialize SOFARPC Project"),
 		InputSchema: initProjectInputSchema(),
-	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in InitProjectInput) (*sdkmcp.CallToolResult, InitProjectOutput, error) {
+	}, "init-project", func(ecerr *errcode.Error) InitProjectOutput { return InitProjectOutput{Error: ecerr} }, func(ctx context.Context, req *sdkmcp.CallToolRequest, in InitProjectInput) (*sdkmcp.CallToolResult, InitProjectOutput, error) {
 		notifyToolProgress(ctx, req, 0, 4, "resolving project scope")
 		scope, projectResolution, err := resolveInitProjectScope(sources, sessions, in)
 		if err != nil {

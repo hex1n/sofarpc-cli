@@ -40,6 +40,7 @@ type Options struct {
 	TargetSources     target.Sources
 	ServerVersion     string
 	Sessions          *SessionStore
+	InvokeLimiter     *InvokeLimiter
 	Contract          contract.Store
 	ContractLoadError error
 	ContractLoader    func() (contract.Store, error)
@@ -53,6 +54,9 @@ type Options struct {
 func New(opts Options) *sdkmcp.Server {
 	if opts.Sessions == nil {
 		opts.Sessions = NewSessionStore()
+	}
+	if opts.InvokeLimiter == nil {
+		opts.InvokeLimiter = NewInvokeLimiterFromEnv()
 	}
 	holder := newContractHolder(opts.Contract, loadErrorMessage(opts.ContractLoadError), opts.ContractLoader)
 	holder.SetDefaultRoot(opts.TargetSources.ProjectRoot)

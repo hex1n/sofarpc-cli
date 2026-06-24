@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -74,7 +75,7 @@ public class UserDTO {
 }
 
 func TestInitProject_NoScopeHighConfidenceDiscoveryRequiresExplicitProjectForWrite(t *testing.T) {
-	root := t.TempDir()
+	root := isolatedInitProjectTempDir(t)
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir git: %v", err)
 	}
@@ -174,7 +175,10 @@ func TestInitProject_AllowAllServicesWritesExplicitWildcard(t *testing.T) {
 }
 
 func TestInitProject_NoScopeLowConfidenceRejectsWrite(t *testing.T) {
-	root := t.TempDir()
+	root := isolatedInitProjectTempDir(t)
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir git: %v", err)
+	}
 	restoreCwd := chdirForInitProject(t, root)
 	defer restoreCwd()
 
@@ -193,7 +197,10 @@ func TestInitProject_NoScopeLowConfidenceRejectsWrite(t *testing.T) {
 }
 
 func TestInitProject_NoScopeLowConfidenceDryRunReturnsCandidates(t *testing.T) {
-	root := t.TempDir()
+	root := isolatedInitProjectTempDir(t)
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir git: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "pom.xml"), []byte("<project/>"), 0o644); err != nil {
 		t.Fatalf("write pom: %v", err)
 	}
@@ -358,6 +365,20 @@ func writeInitProjectJava(t *testing.T, root, rel, body string) {
 	}
 }
 
+func isolatedInitProjectTempDir(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		base := `C:\tmp`
+		if err := os.MkdirAll(base, 0o755); err == nil {
+			dir, err := os.MkdirTemp(base, "sofarpc-init-project-*")
+			if err == nil {
+				t.Cleanup(func() { _ = os.RemoveAll(dir) })
+				return dir
+			}
+		}
+	}
+	return t.TempDir()
+}
 func chdirForInitProject(t *testing.T, dir string) func() {
 	t.Helper()
 	prev, err := os.Getwd()

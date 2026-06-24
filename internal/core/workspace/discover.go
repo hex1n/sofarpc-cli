@@ -111,6 +111,12 @@ func discoverCandidates(start, gitRoot string) ([]JavaProjectCandidate, error) {
 		}
 		if ok {
 			out = append(out, candidate)
+			if gitRoot == "" && candidate.Confidence == DiscoveryConfidenceHigh {
+				break
+			}
+		}
+		if gitRoot != "" && sameCleanPath(dir, gitRoot) {
+			break
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

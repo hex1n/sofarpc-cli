@@ -51,12 +51,12 @@ type DescribeDiagnostics struct {
 func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
-	sdkmcp.AddTool(server, &sdkmcp.Tool{
+	addTypedTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_describe",
 		Title:       "Describe SOFARPC Method",
 		Description: "Describe a service method: resolve overloads, list param/return types, and return a JSON skeleton when contract information is available.",
 		Annotations: localReadOnlyAnnotations("Describe SOFARPC Method"),
-	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in DescribeInput) (*sdkmcp.CallToolResult, DescribeOutput, error) {
+	}, "describe", func(ecerr *errcode.Error) DescribeOutput { return DescribeOutput{Error: ecerr} }, func(ctx context.Context, req *sdkmcp.CallToolRequest, in DescribeInput) (*sdkmcp.CallToolResult, DescribeOutput, error) {
 		notifyToolProgress(ctx, req, 0, 3, "loading contract context")
 		toolCtx, err := resolveToolContext(sources, sessions, holder, in.SessionID, in.Cwd, in.Project)
 		if err != nil {

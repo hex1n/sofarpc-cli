@@ -211,66 +211,170 @@ func NormalizeArgs(args []any) []any {
 }
 
 func FormatValue(v any) any {
+	out, err := FormatValueSafe(v)
+	if err != nil {
+		return map[string]any{
+			"error": err.Error(),
+		}
+	}
+	return out
+}
+
+func FormatValueSafe(v any) (out any, err error) {
+	state := formatState{stack: map[formatVisit]string{}}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			out = nil
+			err = fmt.Errorf("format value panic: %v", recovered)
+		}
+	}()
+	return state.formatValue(v, "result", 0)
+}
+
+type formatVisit struct {
+	typ  reflect.Type
+	kind reflect.Kind
+	ptr  uintptr
+}
+
+type formatState struct {
+	stack map[formatVisit]string
+}
+
+func (s *formatState) formatValue(v any, path string, depth int) (any, error) {
+	if depth > defaultHessianMaxDepth {
+		return nil, fmt.Errorf("format value depth at %s exceeds limit %d", path, defaultHessianMaxDepth)
+	}
 	switch value := v.(type) {
 	case nil, bool, string, int64, float64, int32, int16, int8, int, uint64, uint32, uint16, uint8, uint:
-		return value
+		return value, nil
 	case map[string]interface{}:
-		return formatStringMap(value)
+		return s.formatStringMap(value, path, depth)
 	case map[interface{}]interface{}:
+		leave, err := s.enter(value, path)
+		if err != nil {
+			return nil, err
+		}
+		defer leave()
 		converted := make(map[string]interface{}, len(value))
 		for key, item := range value {
 			converted[fmt.Sprint(key)] = item
 		}
-		return formatStringMap(converted)
+		return s.formatStringMap(converted, path, depth)
 	case []any:
+		leave, err := s.enter(value, path)
+		if err != nil {
+			return nil, err
+		}
+		defer leave()
 		out := make([]any, len(value))
 		for i, item := range value {
-			out[i] = FormatValue(item)
+			formatted, err := s.formatValue(item, fmt.Sprintf("%s[%d]", path, i), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = formatted
 		}
-		return out
+		return out, nil
 	case []string:
 		out := make([]any, len(value))
 		for i, item := range value {
 			out[i] = item
 		}
-		return out
+		return out, nil
 	case []int64:
 		out := make([]any, len(value))
 		for i, item := range value {
 			out[i] = item
 		}
-		return out
+		return out, nil
 	case []float64:
 		out := make([]any, len(value))
 		for i, item := range value {
 			out[i] = item
 		}
-		return out
+		return out, nil
 	case []bool:
 		out := make([]any, len(value))
 		for i, item := range value {
 			out[i] = item
 		}
-		return out
+		return out, nil
 	}
 
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
 	case reflect.Slice, reflect.Array:
+		leave, err := s.enterReflect(rv, path)
+		if err != nil {
+			return nil, err
+		}
+		defer leave()
 		out := make([]any, rv.Len())
 		for i := range out {
-			out[i] = FormatValue(rv.Index(i).Interface())
+			item := rv.Index(i)
+			if !item.CanInterface() {
+				return nil, fmt.Errorf("format value at %s[%d]: value cannot be represented as interface", path, i)
+			}
+			formatted, err := s.formatValue(item.Interface(), fmt.Sprintf("%s[%d]", path, i), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = formatted
 		}
-		return out
+		return out, nil
 	case reflect.Map:
+		leave, err := s.enterReflect(rv, path)
+		if err != nil {
+			return nil, err
+		}
+		defer leave()
 		converted := make(map[string]interface{}, rv.Len())
 		iter := rv.MapRange()
 		for iter.Next() {
-			converted[fmt.Sprint(iter.Key().Interface())] = iter.Value().Interface()
+			key := iter.Key()
+			value := iter.Value()
+			if !key.CanInterface() || !value.CanInterface() {
+				return nil, fmt.Errorf("format value at %s: map key/value cannot be represented as interface", path)
+			}
+			converted[fmt.Sprint(key.Interface())] = value.Interface()
 		}
-		return formatStringMap(converted)
+		return s.formatStringMap(converted, path, depth)
 	default:
-		return v
+		return v, nil
+	}
+}
+
+func (s *formatState) enter(v any, path string) (func(), error) {
+	return s.enterReflect(reflect.ValueOf(v), path)
+}
+
+func (s *formatState) enterReflect(rv reflect.Value, path string) (func(), error) {
+	key, ok := formatVisitKey(rv)
+	if !ok {
+		return func() {}, nil
+	}
+	if existing, seen := s.stack[key]; seen {
+		return nil, fmt.Errorf("format value cycle detected at %s; already visited at %s", path, existing)
+	}
+	s.stack[key] = path
+	return func() {
+		delete(s.stack, key)
+	}, nil
+}
+
+func formatVisitKey(rv reflect.Value) (formatVisit, bool) {
+	if !rv.IsValid() {
+		return formatVisit{}, false
+	}
+	switch rv.Kind() {
+	case reflect.Map, reflect.Slice:
+		if rv.IsNil() {
+			return formatVisit{}, false
+		}
+		return formatVisit{typ: rv.Type(), kind: rv.Kind(), ptr: rv.Pointer()}, true
+	default:
+		return formatVisit{}, false
 	}
 }
 
@@ -334,6 +438,22 @@ func normalizeStringMap(input map[string]interface{}) any {
 }
 
 func formatStringMap(input map[string]interface{}) any {
+	out, err := (&formatState{stack: map[formatVisit]string{}}).formatStringMap(input, "result", 0)
+	if err != nil {
+		return map[string]any{
+			"error": err.Error(),
+		}
+	}
+	return out
+}
+
+func (s *formatState) formatStringMap(input map[string]interface{}, path string, depth int) (any, error) {
+	leave, err := s.enter(input, path)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+
 	if className, ok := input[javaTypeKey].(string); ok && className != "" {
 		fields := make(map[string]any, len(input)-1)
 		fieldNames := make([]string, 0, len(input)-1)
@@ -341,7 +461,11 @@ func formatStringMap(input map[string]interface{}) any {
 			if key == javaTypeKey {
 				continue
 			}
-			fields[key] = FormatValue(value)
+			formatted, err := s.formatValue(value, path+"."+key, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			fields[key] = formatted
 			fieldNames = append(fieldNames, key)
 		}
 		sort.Strings(fieldNames)
@@ -349,7 +473,7 @@ func formatStringMap(input map[string]interface{}) any {
 			"type":       className,
 			"fields":     fields,
 			"fieldNames": fieldNames,
-		}
+		}, nil
 	}
 
 	keys := make([]string, 0, len(input))
@@ -360,9 +484,13 @@ func formatStringMap(input map[string]interface{}) any {
 
 	out := make(map[string]any, len(input))
 	for _, key := range keys {
-		out[key] = FormatValue(input[key])
+		formatted, err := s.formatValue(input[key], path+"."+key, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = formatted
 	}
-	return out
+	return out, nil
 }
 
 func cloneStringMap(input map[string]string) map[string]string {

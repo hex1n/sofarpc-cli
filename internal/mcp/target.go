@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hex1n/sofarpc-cli/internal/errcode"
+
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -44,20 +46,21 @@ type TargetOutput struct {
 	// ActiveProfile is the selected Target Profile; AvailableProfiles lists
 	// every profile defined across both config files; ProfileError is set
 	// when ActiveProfile names a profile defined in neither file.
-	ActiveProfile     string   `json:"activeProfile,omitempty"`
-	AvailableProfiles []string `json:"availableProfiles,omitempty"`
-	ProfileError      string   `json:"profileError,omitempty"`
+	ActiveProfile     string         `json:"activeProfile,omitempty"`
+	AvailableProfiles []string       `json:"availableProfiles,omitempty"`
+	ProfileError      string         `json:"profileError,omitempty"`
+	Error             *errcode.Error `json:"error,omitempty"`
 }
 
 func registerTarget(server *sdkmcp.Server, opts Options) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
-	sdkmcp.AddTool(server, &sdkmcp.Tool{
+	addTypedTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_target",
 		Title:       "Resolve SOFARPC Target",
 		Description: "Resolve the invocation target without executing a request. Returns the merged target, the config layers that produced it, and a reachability probe.",
 		Annotations: networkReadOnlyAnnotations("Resolve SOFARPC Target"),
-	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in TargetInput) (*sdkmcp.CallToolResult, TargetOutput, error) {
+	}, "target", func(ecerr *errcode.Error) TargetOutput { return TargetOutput{Error: ecerr} }, func(ctx context.Context, req *sdkmcp.CallToolRequest, in TargetInput) (*sdkmcp.CallToolResult, TargetOutput, error) {
 		notifyToolProgress(ctx, req, 0, 2, "resolving target scope")
 		scope, err := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
 		if err != nil {

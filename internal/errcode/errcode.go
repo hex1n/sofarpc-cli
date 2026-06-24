@@ -36,6 +36,8 @@ const (
 	InvocationTimeout  Code = "runtime.timeout"
 	ProtocolFailed     Code = "runtime.protocol-failed"
 	InvocationRejected Code = "runtime.rejected"
+	InvocationBusy     Code = "runtime.busy"
+	InternalFailure    Code = "runtime.internal"
 )
 
 // Hint points the agent at its next action. NextTool names a tool the agent
