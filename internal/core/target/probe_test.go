@@ -39,39 +39,6 @@ func TestParseDirectDialAddressLegacyCases(t *testing.T) {
 	}
 }
 
-func TestParseRegistryDialAddressLegacyCases(t *testing.T) {
-	cases := []struct {
-		name    string
-		in      string
-		want    string
-		wantErr string
-	}{
-		{"empty", "", "", "registryAddress is empty"},
-		{"scheme host port", "zookeeper://zk:2182", "zk:2182", ""},
-		{"scheme host default port", "zookeeper://zk", "zk:2181", ""},
-		{"plain host port", "zk:2182", "zk:2182", ""},
-		{"plain host default port", "zk", "zk:2181", ""},
-		{"scheme missing host", "zookeeper://", "", "no host"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := ParseRegistryDialAddress(tc.in)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("err: got %v, want contains %q", err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
-			if got != tc.want {
-				t.Fatalf("got %q want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // IPv6 literals are the spicy case — net.SplitHostPort disagrees with url.Parse
 // about bracket handling, and we want to make sure missing-port + present-port
 // forms both round-trip cleanly.
@@ -102,16 +69,6 @@ func TestProbe_DirectWithEmptyURLReportsParseError(t *testing.T) {
 		t.Fatal("empty direct URL should not be reachable")
 	}
 	if !strings.Contains(got.Message, "directUrl is empty") {
-		t.Fatalf("expected parse error in message, got %q", got.Message)
-	}
-}
-
-func TestProbe_RegistryWithEmptyAddressReportsParseError(t *testing.T) {
-	got := Probe(Config{Mode: ModeRegistry, RegistryAddress: ""})
-	if got.Reachable {
-		t.Fatal("empty registry address should not be reachable")
-	}
-	if !strings.Contains(got.Message, "registryAddress is empty") {
 		t.Fatalf("expected parse error in message, got %q", got.Message)
 	}
 }

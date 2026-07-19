@@ -2,9 +2,6 @@ package mcp
 
 import (
 	"context"
-	"os"
-	"strconv"
-	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
@@ -50,12 +47,12 @@ func validateRealInvoke(service string) error {
 func executionPolicyFromEnv(sources target.Sources) invoke.ExecutionPolicy {
 	allowedServices, allowedServicesConfigured, allowedServicesSource := allowedServicesForSources(sources)
 	return invoke.ExecutionPolicy{
-		AllowInvoke:               envBool(envAllowInvoke),
+		AllowInvoke:               invoke.EnvFlag(envAllowInvoke),
 		AllowedServices:           allowedServices,
 		AllowedServicesConfigured: allowedServicesConfigured,
 		AllowedServicesSource:     allowedServicesSource,
-		AllowTargetOverride:       envBool(envAllowTargetOverride),
-		AllowedTargetHosts:        envCSV(envAllowedTargetHosts),
+		AllowTargetOverride:       invoke.EnvFlag(envAllowTargetOverride),
+		AllowedTargetHosts:        invoke.EnvList(envAllowedTargetHosts),
 		Sources:                   sources,
 	}
 }
@@ -68,30 +65,6 @@ func allowedServicesForSources(sources target.Sources) ([]string, bool, string) 
 	return nil, false, ""
 }
 
-func envBool(name string) bool {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return false
-	}
-	value, err := strconv.ParseBool(raw)
-	return err == nil && value
-}
-
-func envCSV(name string) []string {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return nil
-	}
-	var out []string
-	for _, item := range strings.Split(raw, ",") {
-		value := strings.TrimSpace(item)
-		if value != "" {
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
 func capturePlanForSession(sessions *SessionStore, sessionID string, plan invoke.Plan) *PlanCaptureResult {
 	if sessions == nil || sessionID == "" {
 		return nil
@@ -100,8 +73,11 @@ func capturePlanForSession(sessions *SessionStore, sessionID string, plan invoke
 	return &capture
 }
 
+// diagnosticsWithCapture attaches the session capture outcome whenever a
+// capture was attempted: failures explain why sessionId replay won't work,
+// and successes carry the planId handle for later planId replay.
 func diagnosticsWithCapture(base map[string]any, capture *PlanCaptureResult) map[string]any {
-	if capture == nil || capture.Captured {
+	if capture == nil {
 		return base
 	}
 	out := map[string]any{}

@@ -13,9 +13,9 @@ Agent-first local MCP server for SOFARPC generic invoke.
 | `sofarpc_init_project` | Initialize `.sofarpc/config*.json` for a Java project, including discovered `allowedServices`. |
 | `sofarpc_open` | Open a workspace. Returns project root, resolved target, capabilities, and a session id. |
 | `sofarpc_target` | Resolve the effective target and probe reachability. |
-| `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. |
+| `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. Omit `method` to list a service's callable methods; omit `service` too to list known services. |
 | `sofarpc_invoke` | Build a plan and execute it. `dryRun=true` returns the plan only. |
-| `sofarpc_replay` | Re-run a captured plan from `sessionId` or a literal `payload` with project/session safety context. |
+| `sofarpc_replay` | Re-run a captured plan from `sessionId` (optionally a specific `planId` from the session's plan history) or a literal `payload` with project/session safety context. |
 | `sofarpc_doctor` | Run structured diagnostics across target, workspace state, and invoke prerequisites. |
 
 Every failure returns a stable `errcode.Code` and may include a structured
@@ -115,7 +115,7 @@ sofarpc-mcp setup --scope=project --project-root . --local \
   --allowed-services=com.foo.UserFacade
 
 sofarpc-mcp setup --scope=project --project-root . --shared \
-  --registry-address=zookeeper://zk.example.com:2181 --protocol=bolt \
+  --direct-url=bolt://dev-rpc.example.com:12200 --protocol=bolt \
   --allowed-services=com.foo.UserFacade,com.foo.OrderFacade
 ```
 
@@ -146,9 +146,9 @@ does not write files until a follow-up call passes `project`, `cwd`, or
 
 If `services` is omitted, the tool loads source-contract information for the
 resolved project and writes discovered `*Facade` interfaces with methods into
-`allowedServices`. It never guesses a target; pass `directUrl` or
-`registryAddress` explicitly, or let it write an allowlist-only config and
-return next steps. If service discovery cannot produce an allowlist, pass
+`allowedServices`. It never guesses a target; pass `directUrl` explicitly, or
+let it write an allowlist-only config and return next steps. If service
+discovery cannot produce an allowlist, pass
 `services` explicitly or set `allowAllServices: true` to intentionally write
 `allowedServices: ["*"]`.
 
@@ -217,10 +217,11 @@ in `.sofarpc/config.local.json`:
 }
 ```
 
-Do not set `mode` in project config. It is derived atomically from the first
-configured endpoint in priority order: `directUrl` selects direct mode,
-`registryAddress` selects registry mode, and the other endpoint fields from
-lower-priority layers are ignored.
+Do not set `mode` in project config. It is derived from the resolved
+`directUrl`, which selects direct mode; lower-priority endpoint values are
+ignored. The pure-Go mainline executes only direct `bolt + hessian2` targets —
+`registryAddress`/`registryProtocol` are not accepted and a config carrying
+either is rejected as an unknown field.
 
 Target resolution order is:
 
@@ -313,6 +314,31 @@ readable playbook for Claude Code / Codex, including the errcode
 recovery protocol. See `cmd/sofarpc-mcp/skill/SKILL.md` for the
 source.
 
+## One-shot CLI call
+
+`sofarpc-mcp call` runs a single invocation through the same plan/execute
+pipeline and guardrails as the MCP tools — useful for human smoke tests, CI
+scripts, and reproducing an agent's call outside an MCP client:
+
+```sh
+# Preview the plan without touching the wire
+sofarpc-mcp call -project . -service com.foo.UserFacade -method query \
+  -types java.lang.String -args '["id-1"]' \
+  -direct-url bolt://127.0.0.1:12200 -dry-run
+
+# Execute for real (same opt-in and allowlist rules as the MCP tools)
+SOFARPC_ALLOW_INVOKE=true sofarpc-mcp call -project . \
+  -service com.foo.UserFacade -method query \
+  -types java.lang.String -args '["id-1"]'
+
+# Replay a captured plan (bare plan JSON or invoke dry-run output)
+sofarpc-mcp call -plan plan.json
+```
+
+Output is the same JSON shape as `sofarpc_invoke` (`ok`, `plan`, `result`,
+`diagnostics`, `error`). Real invokes still require `SOFARPC_ALLOW_INVOKE=true`
+plus the project's `allowedServices`; `-dry-run` never executes.
+
 ## `sofarpc_invoke` shape
 
 ```json
@@ -342,9 +368,9 @@ source.
   services read them with `RpcInvokeContext.getRequestBaggage(...)` when
   provider baggage is enabled (`invoke.baggage.enable`). `value` is literal;
   `env` is resolved only for real invoke/replay and stays redacted in plans.
-- `directUrl` and `registryAddress` are per-call overrides. Otherwise project
-  config wins; process env is only a legacy/manual fallback. User setup does
-  not write target defaults.
+- `directUrl` is a per-call override. Otherwise project config wins; process
+  env is only a legacy/manual fallback. User setup does not write target
+  defaults.
 - `dryRun=true` returns the exact plan that `sofarpc_replay` can execute later;
   replay accepts either that plan or a dry-run output object containing `plan`.
   Literal payload replay may include `sessionId`, `project`, or `cwd` so

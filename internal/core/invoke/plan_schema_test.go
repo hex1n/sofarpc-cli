@@ -106,8 +106,9 @@ func TestValidateExecutablePlanRejectsUnsupportedTarget(t *testing.T) {
 
 	plan := replayablePlan()
 	plan.Target = target.Config{
-		Mode:            target.ModeRegistry,
-		RegistryAddress: "zookeeper://h:1",
+		Mode:      target.ModeDirect,
+		DirectURL: "bolt://h:1",
+		Protocol:  "tr3",
 	}
 	err := ValidateExecutablePlan(plan, "invoke")
 	assertErrcode(t, err, errcode.InvocationRejected)

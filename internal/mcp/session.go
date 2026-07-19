@@ -32,16 +32,32 @@ const (
 	// session retention.
 	defaultSessionPlanMaxBytes = int64(1 << 20)
 	envSessionPlanMaxBytes     = "SOFARPC_SESSION_PLAN_MAX_BYTES"
+
+	// defaultSessionPlanHistory bounds how many captured plans a session
+	// keeps for planId replay. The newest plan is also exposed as LastPlan;
+	// older entries stay addressable until they rotate out.
+	defaultSessionPlanHistory = 10
 )
 
 // PlanCaptureResult reports whether an invoke plan was attached to a session
 // for sessionId replay. Failed capture is advisory: invoke/dry-run can still
 // return the full plan to the caller, and payload replay remains available.
+// PlanID is the handle sofarpc_replay accepts to replay this exact plan
+// later, even after newer invokes capture newer plans.
 type PlanCaptureResult struct {
 	Captured  bool   `json:"captured"`
 	Reason    string `json:"reason,omitempty"`
+	PlanID    string `json:"planId,omitempty"`
 	PlanBytes int64  `json:"planBytes,omitempty"`
 	MaxBytes  int64  `json:"maxBytes,omitempty"`
+}
+
+// PlanEntry is one captured invoke plan in a session's bounded history,
+// addressable by ID through sofarpc_replay and the session plan resources.
+type PlanEntry struct {
+	ID         string      `json:"id"`
+	CapturedAt time.Time   `json:"capturedAt"`
+	Plan       invoke.Plan `json:"plan"`
 }
 
 // Session is a per-workspace snapshot the agent can refer back to by ID
@@ -59,6 +75,11 @@ type Session struct {
 	// LastPlan is the most recent plan produced by sofarpc_invoke for
 	// this session. sofarpc_replay reads it when called with sessionId.
 	LastPlan *invoke.Plan `json:"lastPlan,omitempty"`
+	// Plans is the newest-first bounded history of captured plans. LastPlan
+	// mirrors Plans[0] except after an oversized capture, which clears
+	// LastPlan (no implicit latest) while explicit planId replay of older
+	// entries stays available.
+	Plans []PlanEntry `json:"plans,omitempty"`
 
 	// lastUsed is the GC anchor: Get / UpdatePlan bump it so active
 	// sessions don't expire. Unexported + json:"-" so it stays an
@@ -210,11 +231,35 @@ func (s *SessionStore) CapturePlan(id string, plan invoke.Plan) PlanCaptureResul
 		}
 	}
 
+	now := s.clock().UTC()
 	clone := plan
+	entry := PlanEntry{ID: randomPlanID(), CapturedAt: now, Plan: plan}
 	session.LastPlan = &clone
-	session.lastUsed = s.clock().UTC()
+	session.Plans = append([]PlanEntry{entry}, session.Plans...)
+	if len(session.Plans) > defaultSessionPlanHistory {
+		session.Plans = session.Plans[:defaultSessionPlanHistory]
+	}
+	session.lastUsed = now
 	s.sessions[id] = session
-	return PlanCaptureResult{Captured: true, Reason: "captured", PlanBytes: planBytes, MaxBytes: s.maxPlanBytes}
+	return PlanCaptureResult{Captured: true, Reason: "captured", PlanID: entry.ID, PlanBytes: planBytes, MaxBytes: s.maxPlanBytes}
+}
+
+// PlanByID returns the captured plan entry with the given ID from a
+// session's history. ok=false covers both an unknown session and an
+// unknown (or rotated-out) plan ID.
+func (s *SessionStore) PlanByID(sessionID, planID string) (PlanEntry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[sessionID]
+	if !ok {
+		return PlanEntry{}, false
+	}
+	for _, entry := range session.Plans {
+		if entry.ID == planID {
+			return entry, true
+		}
+	}
+	return PlanEntry{}, false
 }
 
 // UpdatePlan attaches the most recent invoke plan to a session so that
@@ -297,6 +342,14 @@ func randomSessionID() string {
 		return "ws_" + hex.EncodeToString([]byte(time.Now().UTC().Format("20060102150405.000000000")))
 	}
 	return "ws_" + hex.EncodeToString(buf[:])
+}
+
+func randomPlanID() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "pl_" + hex.EncodeToString([]byte(time.Now().UTC().Format("20060102150405.000000000")))
+	}
+	return "pl_" + hex.EncodeToString(buf[:])
 }
 
 func sessionPlanMaxBytesFromEnv() int64 {

@@ -33,8 +33,6 @@ type InitProjectInput struct {
 	Profile          string `json:"profile,omitempty"`
 	SetDefault       bool   `json:"setDefault,omitempty"`
 	DirectURL        string `json:"directUrl,omitempty"`
-	RegistryAddress  string `json:"registryAddress,omitempty"`
-	RegistryProtocol string `json:"registryProtocol,omitempty"`
 	Protocol         string `json:"protocol,omitempty"`
 	Serialization    string `json:"serialization,omitempty"`
 	UniqueID         string `json:"uniqueId,omitempty"`
@@ -80,10 +78,14 @@ func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHo
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_init_project",
 		Title:       "Initialize SOFARPC Project",
-		Description: "Initialize a Java project's .sofarpc config. It can discover facade services from source contracts, write allowedServices, and optionally persist an explicit direct or registry target.",
+		Description: "Initialize a Java project's .sofarpc config. It can discover facade services from source contracts, write allowedServices, and optionally persist an explicit direct target.",
 		Annotations: localWriteAnnotations("Initialize SOFARPC Project"),
 		InputSchema: initProjectInputSchema(),
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in InitProjectInput) (*sdkmcp.CallToolResult, InitProjectOutput, error) {
+		if err := retiredTargetFieldError(req.Params.Arguments, "init-project"); err != nil {
+			out := InitProjectOutput{Error: err}
+			return initProjectResult(out), out, nil
+		}
 		notifyToolProgress(ctx, req, 0, 4, "resolving project scope")
 		scope, projectResolution, err := resolveInitProjectScope(sources, sessions, in)
 		if err != nil {
@@ -206,8 +208,6 @@ func buildInitProjectProfile(in InitProjectInput) (projectconfig.ProfileConfig, 
 	}
 	profile := projectconfig.ProfileConfig{
 		DirectURL:        strings.TrimSpace(in.DirectURL),
-		RegistryAddress:  strings.TrimSpace(in.RegistryAddress),
-		RegistryProtocol: strings.TrimSpace(in.RegistryProtocol),
 		Protocol:         strings.TrimSpace(in.Protocol),
 		Serialization:    strings.TrimSpace(in.Serialization),
 		UniqueID:         strings.TrimSpace(in.UniqueID),
@@ -215,7 +215,7 @@ func buildInitProjectProfile(in InitProjectInput) (projectconfig.ProfileConfig, 
 		ConnectTimeoutMS: in.ConnectTimeoutMS,
 	}
 	if !projectconfig.ProfileHasFields(profile) {
-		return projectconfig.ProfileConfig{}, fmt.Errorf("profile %q needs at least one target field (directUrl, registryAddress, protocol, serialization, uniqueId, or a timeout)", strings.TrimSpace(in.Profile))
+		return projectconfig.ProfileConfig{}, fmt.Errorf("profile %q needs at least one target field (directUrl, protocol, serialization, uniqueId, or a timeout)", strings.TrimSpace(in.Profile))
 	}
 	return profile, nil
 }
@@ -261,7 +261,7 @@ func initProjectProfileError(err error, projectRoot, name string) *errcode.Error
 	}
 	if errors.Is(err, projectbootstrap.ErrProfileNoFields) {
 		return errcode.New(errcode.ArgsInvalid, "init-project",
-			"profile needs at least one target field (directUrl, registryAddress, protocol, ...)").
+			"profile needs at least one target field (directUrl, protocol, ...)").
 			WithHint("sofarpc_init_project", map[string]any{"project": projectRoot, "profile": name, "dryRun": true},
 				"pass a target for the profile before writing")
 	}
@@ -380,8 +380,6 @@ func buildInitProjectConfig(in InitProjectInput, snapshot contractSnapshot) (pro
 
 	cfg := projectconfig.Config{
 		DirectURL:        strings.TrimSpace(in.DirectURL),
-		RegistryAddress:  strings.TrimSpace(in.RegistryAddress),
-		RegistryProtocol: strings.TrimSpace(in.RegistryProtocol),
 		Protocol:         strings.TrimSpace(in.Protocol),
 		Serialization:    strings.TrimSpace(in.Serialization),
 		UniqueID:         strings.TrimSpace(in.UniqueID),
@@ -407,8 +405,8 @@ func initProjectDiscoveryFromServices(snapshot contractSnapshot, services contra
 
 func initProjectNextSteps(cfg projectconfig.Config, kind projectconfig.Kind) []string {
 	var out []string
-	if strings.TrimSpace(cfg.DirectURL) == "" && strings.TrimSpace(cfg.RegistryAddress) == "" {
-		out = append(out, "Add directUrl or registryAddress before real invoke; allowedServices-only config is still useful for safety policy.")
+	if strings.TrimSpace(cfg.DirectURL) == "" {
+		out = append(out, "Add directUrl before real invoke; allowedServices-only config is still useful for safety policy.")
 	}
 	if len(cfg.AllowedServices) == 0 {
 		out = append(out, "Review candidateServices and pass services or serviceNameSuffixes to set allowedServices.")

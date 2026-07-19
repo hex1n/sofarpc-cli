@@ -2,6 +2,7 @@ package contract
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
@@ -67,7 +68,36 @@ func ResolveMethod(store Store, service, method string, paramTypes []string) (Re
 	}, nil
 }
 
+// ListMethods returns every method callable on a service, including methods
+// inherited from superinterfaces and superclasses with type parameters
+// substituted. Results are deduplicated by signature and sorted by name then
+// signature so listings are stable across runs.
+func ListMethods(store Store, service string) (javamodel.Class, []javamodel.Method, error) {
+	if strings.TrimSpace(service) == "" {
+		return javamodel.Class{}, nil, errcode.New(errcode.ServiceMissing, "contract", "service is required").
+			WithHint("sofarpc_describe", nil, "call describe without service to list known services")
+	}
+	cls, ok := store.Class(service)
+	if !ok {
+		return javamodel.Class{}, nil, errcode.New(errcode.ContractUnresolvable, "contract",
+			fmt.Sprintf("service %q is not in the facade index", service)).
+			WithHint("sofarpc_doctor", nil, "facade index may be missing or stale")
+	}
+	methods := collectMethods(store, cls, func(string) bool { return true })
+	sort.SliceStable(methods, func(i, j int) bool {
+		if methods[i].Name != methods[j].Name {
+			return methods[i].Name < methods[j].Name
+		}
+		return methodSignature(methods[i]) < methodSignature(methods[j])
+	})
+	return cls, methods, nil
+}
+
 func collectOverloads(store Store, cls javamodel.Class, name string) []javamodel.Method {
+	return collectMethods(store, cls, func(candidate string) bool { return candidate == name })
+}
+
+func collectMethods(store Store, cls javamodel.Class, match func(name string) bool) []javamodel.Method {
 	var out []javamodel.Method
 	seen := map[string]bool{}
 	seenSignatures := map[string]bool{}
@@ -81,7 +111,7 @@ func collectOverloads(store Store, cls javamodel.Class, name string) []javamodel
 		seen[seenKey] = true
 		for _, m := range current.Methods {
 			m = substituteMethodTypeParams(m, bindings)
-			if m.Name == name {
+			if match(m.Name) {
 				signature := methodSignature(m)
 				if seenSignatures[signature] {
 					continue

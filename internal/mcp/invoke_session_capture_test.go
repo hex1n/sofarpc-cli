@@ -98,10 +98,15 @@ func TestInvoke_DryRunCapturedPlanCanReplayBySession(t *testing.T) {
 	if !out.Ok {
 		t.Fatalf("dry-run should succeed; got error=%+v", out.Error)
 	}
-	if out.Diagnostics != nil {
-		if _, exists := out.Diagnostics["sessionPlanCapture"]; exists {
-			t.Fatalf("successful capture should not add noisy diagnostics: %+v", out.Diagnostics)
-		}
+	capture, ok := out.Diagnostics["sessionPlanCapture"].(map[string]any)
+	if !ok {
+		t.Fatalf("successful capture should report the planId handle: %+v", out.Diagnostics)
+	}
+	if got := capture["captured"]; got != true {
+		t.Fatalf("capture should be reported as successful: %+v", capture)
+	}
+	if planID, _ := capture["planId"].(string); planID == "" {
+		t.Fatalf("successful capture should carry a planId for planId replay: %+v", capture)
 	}
 
 	replay := callReplay(t, Options{Sessions: sessions}, map[string]any{

@@ -10,8 +10,7 @@ import (
 )
 
 const (
-	ModeDirect   = "direct"
-	ModeRegistry = "registry"
+	ModeDirect = "direct"
 )
 
 const (
@@ -26,8 +25,6 @@ const (
 type Input struct {
 	Service          string
 	DirectURL        string
-	RegistryAddress  string
-	RegistryProtocol string
 	Protocol         string
 	Serialization    string
 	UniqueID         string
@@ -43,8 +40,6 @@ type Input struct {
 type Config struct {
 	Mode             string `json:"mode,omitempty"`
 	DirectURL        string `json:"directUrl,omitempty"`
-	RegistryAddress  string `json:"registryAddress,omitempty"`
-	RegistryProtocol string `json:"registryProtocol,omitempty"`
 	Protocol         string `json:"protocol,omitempty"`
 	Serialization    string `json:"serialization,omitempty"`
 	UniqueID         string `json:"uniqueId,omitempty"`
@@ -152,11 +147,6 @@ type layerConfig struct {
 
 var configFieldSpecs = []fieldSpec{
 	{
-		name: "registryProtocol",
-		get:  func(c Config) string { return c.RegistryProtocol },
-		set:  func(c *Config, v string) { c.RegistryProtocol = v },
-	},
-	{
 		name: "protocol",
 		get:  func(c Config) string { return c.Protocol },
 		set:  func(c *Config, v string) { c.Protocol = v },
@@ -216,7 +206,6 @@ func Resolve(input Input, sources Sources) Report {
 	endpoint, endpointTraces, endpointFields := resolveEndpoint(layers)
 	report.Target.Mode = endpoint.Mode
 	report.Target.DirectURL = endpoint.DirectURL
-	report.Target.RegistryAddress = endpoint.RegistryAddress
 	if input.Explain {
 		report.Trace = append(report.Trace, endpointTraces...)
 	}
@@ -241,9 +230,6 @@ func Resolve(input Input, sources Sources) Report {
 	}
 
 	report.Target = normalizeResolvedTarget(report.Target)
-	if report.Target.Mode != ModeRegistry {
-		report.Target.RegistryProtocol = ""
-	}
 	report.Layers = buildLayers(layers, layerFields)
 	if input.Explain {
 		report.Explain = buildExplain(report.Trace)
@@ -425,8 +411,6 @@ func profilesFromProjectConfig(profiles map[string]projectconfig.ProfileConfig) 
 	for name, p := range profiles {
 		out[name] = normalizeConfig(Config{
 			DirectURL:        p.DirectURL,
-			RegistryAddress:  p.RegistryAddress,
-			RegistryProtocol: p.RegistryProtocol,
 			Protocol:         p.Protocol,
 			Serialization:    p.Serialization,
 			UniqueID:         p.UniqueID,
@@ -478,15 +462,9 @@ func resolveEndpoint(layers []layerConfig) (Config, []FieldTrace, map[string][]s
 	var endpoint Config
 	for _, layer := range layers {
 		cfg := normalizeConfig(layer.cfg)
-		switch {
-		case cfg.DirectURL != "":
+		if cfg.DirectURL != "" {
 			winner = layerConfig{name: layer.name, cfg: cfg}
 			endpoint = Config{Mode: ModeDirect, DirectURL: cfg.DirectURL}
-		case cfg.RegistryAddress != "":
-			winner = layerConfig{name: layer.name, cfg: cfg}
-			endpoint = Config{Mode: ModeRegistry, RegistryAddress: cfg.RegistryAddress}
-		}
-		if endpoint.Mode != "" {
 			break
 		}
 	}
@@ -500,29 +478,18 @@ func resolveEndpoint(layers []layerConfig) (Config, []FieldTrace, map[string][]s
 }
 
 func endpointFieldNames(mode string) []string {
-	switch mode {
-	case ModeDirect:
+	if mode == ModeDirect {
 		return []string{"directUrl"}
-	case ModeRegistry:
-		return []string{"registryAddress"}
-	default:
-		return nil
 	}
+	return nil
 }
 
 func endpointFieldTraces(winner layerConfig, endpoint Config, layers []layerConfig) []FieldTrace {
 	var traces []FieldTrace
-	switch endpoint.Mode {
-	case ModeDirect:
+	if endpoint.Mode == ModeDirect {
 		traces = append(traces, FieldTrace{
 			Field:    "directUrl",
 			Winner:   TraceValue{Layer: winner.name, Value: endpoint.DirectURL},
-			Shadowed: shadowedEndpointValues(winner.name, layers),
-		})
-	case ModeRegistry:
-		traces = append(traces, FieldTrace{
-			Field:    "registryAddress",
-			Winner:   TraceValue{Layer: winner.name, Value: endpoint.RegistryAddress},
 			Shadowed: shadowedEndpointValues(winner.name, layers),
 		})
 	}
@@ -544,9 +511,6 @@ func shadowedEndpointValues(winnerName string, layers []layerConfig) []TraceValu
 		if cfg.DirectURL != "" {
 			out = append(out, TraceValue{Layer: layer.name, Value: "directUrl=" + cfg.DirectURL})
 		}
-		if cfg.RegistryAddress != "" {
-			out = append(out, TraceValue{Layer: layer.name, Value: "registryAddress=" + cfg.RegistryAddress})
-		}
 	}
 	return out
 }
@@ -554,8 +518,6 @@ func shadowedEndpointValues(winnerName string, layers []layerConfig) []TraceValu
 func configFromProjectConfig(cfg projectconfig.Config) Config {
 	return normalizeConfig(Config{
 		DirectURL:        cfg.DirectURL,
-		RegistryAddress:  cfg.RegistryAddress,
-		RegistryProtocol: cfg.RegistryProtocol,
 		Protocol:         cfg.Protocol,
 		Serialization:    cfg.Serialization,
 		UniqueID:         cfg.UniqueID,
@@ -577,8 +539,6 @@ func policyFromProjectConfig(loaded projectconfig.ReadResult) PolicyConfig {
 func configFromInput(in Input) Config {
 	return normalizeConfig(Config{
 		DirectURL:        in.DirectURL,
-		RegistryAddress:  in.RegistryAddress,
-		RegistryProtocol: in.RegistryProtocol,
 		Protocol:         in.Protocol,
 		Serialization:    in.Serialization,
 		UniqueID:         in.UniqueID,
@@ -599,8 +559,6 @@ func defaultConfig() Config {
 func normalizeConfig(cfg Config) Config {
 	cfg.Mode = strings.TrimSpace(cfg.Mode)
 	cfg.DirectURL = strings.TrimSpace(cfg.DirectURL)
-	cfg.RegistryAddress = strings.TrimSpace(cfg.RegistryAddress)
-	cfg.RegistryProtocol = strings.TrimSpace(cfg.RegistryProtocol)
 	cfg.Protocol = strings.TrimSpace(cfg.Protocol)
 	cfg.Serialization = strings.TrimSpace(cfg.Serialization)
 	cfg.UniqueID = strings.TrimSpace(cfg.UniqueID)
@@ -608,9 +566,9 @@ func normalizeConfig(cfg Config) Config {
 }
 
 // Normalize trims whitespace on target fields and infers Mode from
-// DirectURL / RegistryAddress. It is the canonical pre-step for code
-// paths that receive a Config from outside the Resolve pipeline
-// (Probe, direct-transport support checks).
+// DirectURL. It is the canonical pre-step for code paths that receive a
+// Config from outside the Resolve pipeline (Probe, direct-transport
+// support checks).
 func Normalize(cfg Config) Config {
 	return normalizeResolvedTarget(cfg)
 }
@@ -636,15 +594,9 @@ func SupportsDirectBolt(cfg Config) bool {
 
 func normalizeResolvedTarget(cfg Config) Config {
 	cfg = normalizeConfig(cfg)
-	switch {
-	case cfg.DirectURL != "":
+	if cfg.DirectURL != "" {
 		cfg.Mode = ModeDirect
-		cfg.RegistryAddress = ""
-		cfg.RegistryProtocol = ""
-	case cfg.RegistryAddress != "":
-		cfg.Mode = ModeRegistry
-		cfg.DirectURL = ""
-	default:
+	} else {
 		cfg.Mode = ""
 	}
 	return cfg

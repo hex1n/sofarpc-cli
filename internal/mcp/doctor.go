@@ -288,7 +288,7 @@ func checkTarget(in DoctorInput, sources target.Sources) DoctorCheck {
 		return DoctorCheck{
 			Name:   "target",
 			Ok:     false,
-			Detail: "no layer supplied a target mode (direct or registry)",
+			Detail: "no layer supplied a direct target (directUrl)",
 			NextStep: &DoctorAction{
 				Tool: "sofarpc_target",
 				Args: targetHintArgs(sources),

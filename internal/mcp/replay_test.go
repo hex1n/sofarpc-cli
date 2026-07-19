@@ -160,7 +160,7 @@ func TestReplay_ConfigErrorDiagnosticsUseSessionProject(t *testing.T) {
 	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowTargetOverride, "false")
 	projectRoot := t.TempDir()
-	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.local.json", `{"mode":"registry","directUrl":"bolt://project-host:12200"}`)
+	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.local.json", `{"mode":"direct","directUrl":"bolt://project-host:12200"}`)
 	sessions := NewSessionStore()
 	session := sessions.Create(Session{ProjectRoot: projectRoot})
 	if !sessions.UpdatePlan(session.ID, samplePlan()) {
@@ -195,7 +195,7 @@ func TestReplay_PayloadNonDryRunWithUnsupportedTargetSurfacesInvocationRejected(
 			},
 		},
 	}, map[string]any{
-		"payload": sampleRegistryPlan(),
+		"payload": sampleUnsupportedPlan(),
 	})
 	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
 		t.Fatalf("expected InvocationRejected, got %+v", out.Error)
@@ -545,11 +545,15 @@ func samplePlan() invoke.Plan {
 	}
 }
 
-func sampleRegistryPlan() invoke.Plan {
+// sampleUnsupportedPlan builds a resolved plan whose target the pure-Go
+// direct transport cannot execute (non-bolt protocol), so execution policy
+// rejects it with InvocationRejected.
+func sampleUnsupportedPlan() invoke.Plan {
 	plan := samplePlan()
 	plan.Target = target.Config{
-		Mode:            target.ModeRegistry,
-		RegistryAddress: "zookeeper://h:1",
+		Mode:      target.ModeDirect,
+		DirectURL: "bolt://h:1",
+		Protocol:  "tr3",
 	}
 	return plan
 }
@@ -588,4 +592,83 @@ func callReplayRaw(t *testing.T, opts Options, raw json.RawMessage) ReplayOutput
 		t.Fatalf("unmarshal structured: %v", err)
 	}
 	return out
+}
+
+func TestReplay_PlanIDSelectsCapturedPlan(t *testing.T) {
+	sessions := NewSessionStoreWithLimits(0, 0).WithIDFunc(seqIDs())
+	session := sessions.Create(Session{ProjectRoot: "/tmp/proj"})
+
+	first := samplePlan()
+	first.Method = "firstMethod"
+	second := samplePlan()
+	second.Method = "secondMethod"
+	firstCapture := sessions.CapturePlan(session.ID, first)
+	secondCapture := sessions.CapturePlan(session.ID, second)
+	if !firstCapture.Captured || !secondCapture.Captured {
+		t.Fatalf("captures should succeed: %+v / %+v", firstCapture, secondCapture)
+	}
+
+	// Without planId, replay uses the most recent capture.
+	latest := callReplay(t, Options{Sessions: sessions}, map[string]any{
+		"sessionId": session.ID,
+		"dryRun":    true,
+	})
+	if !latest.Ok || latest.Plan == nil || latest.Plan.Method != "secondMethod" {
+		t.Fatalf("default session replay should use newest plan: %+v error=%+v", latest.Plan, latest.Error)
+	}
+
+	// With planId, replay selects the older captured plan.
+	out := callReplay(t, Options{Sessions: sessions}, map[string]any{
+		"sessionId": session.ID,
+		"planId":    firstCapture.PlanID,
+		"dryRun":    true,
+	})
+	if !out.Ok || out.Plan == nil {
+		t.Fatalf("planId replay failed: %+v", out.Error)
+	}
+	if out.Plan.Method != "firstMethod" {
+		t.Fatalf("planId replay should select the captured plan: got %q", out.Plan.Method)
+	}
+	if out.Source != "session" {
+		t.Fatalf("source: got %q want session", out.Source)
+	}
+
+	missing := callReplay(t, Options{Sessions: sessions}, map[string]any{
+		"sessionId": session.ID,
+		"planId":    "pl_does_not_exist",
+		"dryRun":    true,
+	})
+	if missing.Error == nil || missing.Error.Code != errcode.ArgsInvalid {
+		t.Fatalf("unknown planId should be rejected: %+v", missing.Error)
+	}
+
+	noSession := callReplay(t, Options{Sessions: sessions}, map[string]any{
+		"planId": firstCapture.PlanID,
+		"dryRun": true,
+	})
+	if noSession.Error == nil || !strings.Contains(noSession.Error.Message, "planId requires sessionId") {
+		t.Fatalf("planId without sessionId should be rejected: %+v", noSession.Error)
+	}
+}
+
+func TestReplay_PlanIDConflictsWithPayload(t *testing.T) {
+	sessions := NewSessionStoreWithLimits(0, 0).WithIDFunc(seqIDs())
+	session := sessions.Create(Session{ProjectRoot: "/tmp/proj"})
+	capture := sessions.CapturePlan(session.ID, samplePlan())
+	if !capture.Captured {
+		t.Fatalf("capture should succeed: %+v", capture)
+	}
+
+	out := callReplay(t, Options{Sessions: sessions}, map[string]any{
+		"sessionId": session.ID,
+		"planId":    capture.PlanID,
+		"payload":   samplePlan(),
+		"dryRun":    true,
+	})
+	if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
+		t.Fatalf("planId combined with payload should be rejected: %+v", out.Error)
+	}
+	if !strings.Contains(out.Error.Message, "cannot be combined with payload") {
+		t.Fatalf("error should explain the conflict: %+v", out.Error)
+	}
 }

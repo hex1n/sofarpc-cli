@@ -8,8 +8,19 @@ import (
 	"testing"
 )
 
+// canonicalTempDir resolves t.TempDir() through symlinks so expected roots
+// compare equal with discovery output (/var vs /private/var on macOS).
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	return dir
+}
+
 func TestDiscoverJavaProject_FindsUniqueHighConfidenceRoot(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	mkdir(t, filepath.Join(root, ".git"))
 	writeFile(t, filepath.Join(root, "pom.xml"), "<project/>")
 	writeFile(t, filepath.Join(root, "src", "main", "java", "com", "foo", "UserFacade.java"), "package com.foo; public interface UserFacade {}")
@@ -28,7 +39,7 @@ func TestDiscoverJavaProject_FindsUniqueHighConfidenceRoot(t *testing.T) {
 }
 
 func TestDiscoverJavaProject_ExistingSofaConfigWins(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	writeFile(t, filepath.Join(root, ".sofarpc", "config.local.json"), "{}")
 
 	got, err := DiscoverJavaProject(root)
@@ -44,7 +55,7 @@ func TestDiscoverJavaProject_ExistingSofaConfigWins(t *testing.T) {
 }
 
 func TestDiscoverJavaProject_RejectsMultipleHighConfidenceCandidates(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	mkdir(t, filepath.Join(root, ".git"))
 	writeFile(t, filepath.Join(root, "pom.xml"), "<project/>")
 	writeFile(t, filepath.Join(root, "module-a", "pom.xml"), "<project/>")
@@ -66,7 +77,7 @@ func TestDiscoverJavaProject_RejectsMultipleHighConfidenceCandidates(t *testing.
 }
 
 func TestDiscoverJavaProject_FindsLargeMultiModuleRootWithoutFullTreeScan(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	mkdir(t, filepath.Join(root, ".git"))
 	writeFile(t, filepath.Join(root, "pom.xml"), "<project/>")
 	for i := 0; i < 2105; i++ {
@@ -87,7 +98,7 @@ func TestDiscoverJavaProject_FindsLargeMultiModuleRootWithoutFullTreeScan(t *tes
 }
 
 func TestDiscoverJavaProject_GitOnlyIsNotCandidate(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	mkdir(t, filepath.Join(root, ".git"))
 
 	got, err := DiscoverJavaProject(root)
@@ -101,6 +112,69 @@ func TestDiscoverJavaProject_GitOnlyIsNotCandidate(t *testing.T) {
 		if candidate.Root == root {
 			t.Fatalf("git-only directory should not be a candidate: %+v", got)
 		}
+	}
+}
+
+func TestDiscoverJavaProject_ResolvesSymlinkedStart(t *testing.T) {
+	base := canonicalTempDir(t)
+	root := filepath.Join(base, "real")
+	mkdir(t, filepath.Join(root, ".git"))
+	writeFile(t, filepath.Join(root, "pom.xml"), "<project/>")
+	writeFile(t, filepath.Join(root, "src", "main", "java", "com", "foo", "UserFacade.java"), "package com.foo; public interface UserFacade {}")
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+
+	got, err := DiscoverJavaProject(link)
+	if err != nil {
+		t.Fatalf("DiscoverJavaProject: %v", err)
+	}
+	if got.Root != root || got.Confidence != DiscoveryConfidenceHigh {
+		t.Fatalf("discovery = %+v, want canonical root %s high", got, root)
+	}
+}
+
+func TestDiscoverJavaProject_StopsAtGitRoot(t *testing.T) {
+	outer := canonicalTempDir(t)
+	writeFile(t, filepath.Join(outer, "pom.xml"), "<project/>")
+	writeFile(t, filepath.Join(outer, "src", "main", "java", "com", "foo", "Outer.java"), "package com.foo; public interface Outer {}")
+	inner := filepath.Join(outer, "repo")
+	mkdir(t, filepath.Join(inner, ".git"))
+	writeFile(t, filepath.Join(inner, "pom.xml"), "<project/>")
+	writeFile(t, filepath.Join(inner, "src", "main", "java", "com", "foo", "UserFacade.java"), "package com.foo; public interface UserFacade {}")
+
+	got, err := DiscoverJavaProject(inner)
+	if err != nil {
+		t.Fatalf("DiscoverJavaProject: %v", err)
+	}
+	if got.Root != inner || got.Confidence != DiscoveryConfidenceHigh {
+		t.Fatalf("discovery = %+v, want git root %s high", got, inner)
+	}
+	for _, candidate := range got.Candidates {
+		if candidate.Root == outer {
+			t.Fatalf("walk should stop at git root, not evaluate %s: %+v", outer, got.Candidates)
+		}
+	}
+}
+
+func TestDiscoverJavaProject_SkipsMarkerlessAncestorsOutsideGit(t *testing.T) {
+	base := canonicalTempDir(t)
+	start := filepath.Join(base, "app")
+	writeFile(t, filepath.Join(start, "pom.xml"), "<project/>")
+	writeFile(t, filepath.Join(base, "other", "src", "main", "java", "com", "foo", "Noise.java"), "package com.foo; public interface Noise {}")
+
+	got, err := DiscoverJavaProject(start)
+	if err != nil {
+		t.Fatalf("DiscoverJavaProject: %v", err)
+	}
+	for _, candidate := range got.Candidates {
+		if candidate.Root == base {
+			t.Fatalf("marker-less ancestor should not be content-scanned into a candidate: %+v", got.Candidates)
+		}
+	}
+	if len(got.Candidates) != 1 || got.Candidates[0].Root != start {
+		t.Fatalf("candidates = %+v, want only start dir %s", got.Candidates, start)
 	}
 }
 

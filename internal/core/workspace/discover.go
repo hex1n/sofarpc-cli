@@ -36,6 +36,10 @@ type JavaProjectCandidate struct {
 }
 
 // DiscoverJavaProject inspects cwd and its ancestors for Java project markers.
+// The start directory is resolved through symlinks so reported roots are
+// canonical. The ancestor walk stops at the enclosing git root when one
+// exists, and marker-less ancestors are never content-scanned, so discovery
+// stays inside the project instead of trawling $HOME or the system temp dir.
 // It returns a writable project root only when exactly one high-confidence
 // candidate exists; ambiguous or weak evidence is surfaced as candidates.
 func DiscoverJavaProject(cwd string) (JavaProjectDiscovery, error) {
@@ -99,18 +103,25 @@ func discoverStart(cwd string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("discovery cwd %q is not a directory", candidate)
 	}
-	return filepath.Clean(abs), nil
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolve discovery cwd %q: %w", candidate, err)
+	}
+	return filepath.Clean(resolved), nil
 }
 
 func discoverCandidates(start, gitRoot string) ([]JavaProjectCandidate, error) {
 	var out []JavaProjectCandidate
 	for dir := start; ; dir = filepath.Dir(dir) {
-		candidate, ok, err := evaluateJavaProjectCandidate(dir, gitRoot)
+		candidate, ok, err := evaluateJavaProjectCandidate(dir, gitRoot, dir == start)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
 			out = append(out, candidate)
+		}
+		if gitRoot != "" && sameCleanPath(dir, gitRoot) {
+			break
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -120,7 +131,7 @@ func discoverCandidates(start, gitRoot string) ([]JavaProjectCandidate, error) {
 	return out, nil
 }
 
-func evaluateJavaProjectCandidate(root, gitRoot string) (JavaProjectCandidate, bool, error) {
+func evaluateJavaProjectCandidate(root, gitRoot string, isStart bool) (JavaProjectCandidate, bool, error) {
 	markers := map[string]struct{}{}
 	addMarker := func(marker string) {
 		if strings.TrimSpace(marker) != "" {
@@ -136,17 +147,25 @@ func evaluateJavaProjectCandidate(root, gitRoot string) (JavaProjectCandidate, b
 	if dirExists(filepath.Join(root, "src", "main", "java")) {
 		addMarker("src/main/java")
 	}
-	if hasNestedJavaSourceRoot(root) {
-		addMarker("nested-src/main/java")
-	}
-	hasSource, visitedCount, scanTruncated := hasJavaSource(root)
-	if hasSource {
-		addMarker("java-source")
-	}
 	if sameCleanPath(root, gitRoot) {
 		addMarker(".git")
 	} else if gitRoot != "" && pathWithin(root, gitRoot) {
 		addMarker("git-ancestor")
+	}
+	// Content scans walk directory trees; restrict them to the start dir and
+	// ancestors that already carry a cheap marker so discovery never trawls
+	// unrelated directories above the project.
+	visitedCount := 0
+	scanTruncated := false
+	if isStart || len(markers) > 0 {
+		if hasNestedJavaSourceRoot(root) {
+			addMarker("nested-src/main/java")
+		}
+		var hasSource bool
+		hasSource, visitedCount, scanTruncated = hasJavaSource(root)
+		if hasSource {
+			addMarker("java-source")
+		}
 	}
 	markerList := sortedMarkers(markers)
 	if !hasAnyProjectMarker(markers) {

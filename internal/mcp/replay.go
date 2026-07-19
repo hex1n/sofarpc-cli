@@ -82,6 +82,7 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 
 type rawReplayInput struct {
 	SessionID string          `json:"sessionId,omitempty"`
+	PlanID    string          `json:"planId,omitempty"`
 	Cwd       string          `json:"cwd,omitempty"`
 	Project   string          `json:"project,omitempty"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
@@ -92,6 +93,9 @@ func decodeReplayInput(req *sdkmcp.CallToolRequest) (ReplayInput, json.RawMessag
 	if req == nil || len(req.Params.Arguments) == 0 {
 		return ReplayInput{}, nil, nil
 	}
+	if err := retiredTargetFieldError(req.Params.Arguments, "replay"); err != nil {
+		return ReplayInput{}, nil, err
+	}
 	var raw rawReplayInput
 	dec := json.NewDecoder(bytes.NewReader(req.Params.Arguments))
 	dec.UseNumber()
@@ -101,6 +105,7 @@ func decodeReplayInput(req *sdkmcp.CallToolRequest) (ReplayInput, json.RawMessag
 	}
 	return ReplayInput{
 		SessionID: raw.SessionID,
+		PlanID:    raw.PlanID,
 		Cwd:       raw.Cwd,
 		Project:   raw.Project,
 		DryRun:    raw.DryRun,
@@ -113,6 +118,20 @@ func decodeReplayInput(req *sdkmcp.CallToolRequest) (ReplayInput, json.RawMessag
 func extractPlan(in ReplayInput, payload json.RawMessage, sessions *SessionStore) (*invoke.Plan, string, error) {
 	hasSession := in.SessionID != ""
 	hasPayload := len(bytes.TrimSpace(payload)) > 0 && !bytes.Equal(bytes.TrimSpace(payload), []byte("null"))
+	if in.PlanID != "" {
+		switch {
+		case hasPayload:
+			return nil, "", errcode.New(errcode.ArgsInvalid, "replay",
+				"planId selects a captured session plan and cannot be combined with payload").
+				WithHint("sofarpc_replay", map[string]any{"sessionId": in.SessionID, "planId": in.PlanID},
+					"drop payload to replay the captured plan, or drop planId to replay the payload")
+		case !hasSession:
+			return nil, "", errcode.New(errcode.ArgsInvalid, "replay",
+				"planId requires sessionId").
+				WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
+					"invoke with a sessionId captures plans addressable by planId")
+		}
+	}
 	switch {
 	case hasSession && hasPayload:
 		plan, err := planFromPayload(payload)
@@ -123,14 +142,14 @@ func extractPlan(in ReplayInput, payload json.RawMessage, sessions *SessionStore
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
 				"run invoke with dryRun=true to produce a replayable plan")
 	case hasSession:
-		return planFromSession(in.SessionID, sessions)
+		return planFromSession(in.SessionID, in.PlanID, sessions)
 	default:
 		plan, err := planFromPayload(payload)
 		return plan, "payload", err
 	}
 }
 
-func planFromSession(id string, sessions *SessionStore) (*invoke.Plan, string, error) {
+func planFromSession(id, planID string, sessions *SessionStore) (*invoke.Plan, string, error) {
 	if sessions == nil {
 		return nil, "", errcode.New(errcode.ArgsInvalid, "replay",
 			"no session store attached").
@@ -141,6 +160,21 @@ func planFromSession(id string, sessions *SessionStore) (*invoke.Plan, string, e
 		return nil, "", errcode.New(errcode.ArgsInvalid, "replay",
 			fmt.Sprintf("session %q not found", id)).
 			WithHint("sofarpc_open", nil, "session ids are per-process; reopen the workspace")
+	}
+	if planID != "" {
+		entry, ok := sessions.PlanByID(id, planID)
+		if !ok {
+			return nil, "", errcode.New(errcode.ArgsInvalid, "replay",
+				fmt.Sprintf("plan %q not found in session %q (history keeps the %d most recent plans)",
+					planID, id, defaultSessionPlanHistory)).
+				WithHint("sofarpc_invoke", map[string]any{"sessionId": id, "dryRun": true},
+					"read the session resource to list captured planIds, or capture a fresh plan")
+		}
+		if err := invoke.ValidateReplayPlan(entry.Plan, "replay"); err != nil {
+			return nil, "", err
+		}
+		plan := entry.Plan
+		return &plan, "session", nil
 	}
 	if session.LastPlan == nil {
 		return nil, "", errcode.New(errcode.ArgsInvalid, "replay",

@@ -23,7 +23,6 @@ func registerPrompts(server *sdkmcp.Server) {
 			{Name: "project", Title: "Project Root", Description: "Absolute Java project root when known."},
 			{Name: "config", Title: "Config Scope", Description: "local or shared; default to local for machine-specific targets."},
 			{Name: "directUrl", Title: "Direct URL", Description: "Optional bolt://host:port target supplied by the user."},
-			{Name: "registryAddress", Title: "Registry Address", Description: "Optional registry address supplied by the user."},
 		},
 	}, bootstrapProjectPrompt)
 
@@ -71,16 +70,15 @@ Known inputs:
 - project: %s
 - config: %s
 - directUrl: %s
-- registryAddress: %s
 
 Workflow:
 1. If project is empty, call sofarpc_init_project with dryRun=true and inspect projectResolution. Do not write files until project or cwd is explicit.
-2. If project is known, call sofarpc_init_project with project, config, and only the target supplied by the user. Do not invent directUrl or registryAddress.
+2. If project is known, call sofarpc_init_project with project, config, and only the target supplied by the user. Do not invent a directUrl.
 3. Let sofarpc_init_project discover allowedServices from source contracts when services were not supplied. Use allowAllServices only when the user intentionally wants a wildcard allowlist.
 4. After setup, call sofarpc_open with the resolved project and keep the returned sessionId.
 5. Call sofarpc_target with sessionId and explain=true to show the effective target layers before any invoke workflow.
 6. Keep real invoke disabled unless the user explicitly opted in through user-scope guardrails.
-`, promptValue(args, "project"), config, promptValue(args, "directUrl"), promptValue(args, "registryAddress")))
+`, promptValue(args, "project"), config, promptValue(args, "directUrl")))
 	return promptTextResult("Safe project bootstrap workflow for SOFARPC MCP.", text), nil
 }
 

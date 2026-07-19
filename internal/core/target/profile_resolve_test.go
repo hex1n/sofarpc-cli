@@ -24,11 +24,10 @@ func writeProfileFixture(t *testing.T) string {
   "defaultProfile": "test",
   "profiles": {
     "test": {
-      "registryAddress": "zookeeper://zk-test.example.com:2181",
-      "registryProtocol": "zookeeper"
+      "directUrl": "bolt://rpc-test.example.com:12200"
     },
     "staging": {
-      "registryAddress": "zookeeper://zk-staging.example.com:2181"
+      "directUrl": "bolt://rpc-staging.example.com:12200"
     }
   }
 }`
@@ -77,15 +76,15 @@ func TestResolve_ProfileOverlaysBaseAndLocalOverlaysShared(t *testing.T) {
 		t.Fatalf("AvailableProfiles: got %v want %v", report.AvailableProfiles, want)
 	}
 
-	// Endpoint comes from the shared profile layer (registry mode).
-	if report.Target.Mode != ModeRegistry {
-		t.Fatalf("Mode: got %q want %q", report.Target.Mode, ModeRegistry)
+	// Endpoint comes from the shared profile layer.
+	if report.Target.Mode != ModeDirect {
+		t.Fatalf("Mode: got %q want %q", report.Target.Mode, ModeDirect)
 	}
-	if report.Target.RegistryAddress != "zookeeper://zk-test.example.com:2181" {
-		t.Fatalf("RegistryAddress: got %q", report.Target.RegistryAddress)
+	if report.Target.DirectURL != "bolt://rpc-test.example.com:12200" {
+		t.Fatalf("DirectURL: got %q", report.Target.DirectURL)
 	}
-	if layer, _ := winnerLayer(report, "registryAddress"); layer != "project:profiles[test]" {
-		t.Fatalf("registryAddress winner layer: got %q want %q", layer, "project:profiles[test]")
+	if layer, _ := winnerLayer(report, "directUrl"); layer != "project:profiles[test]" {
+		t.Fatalf("directUrl winner layer: got %q want %q", layer, "project:profiles[test]")
 	}
 
 	// A base field (protocol) is inherited from the shared base, not a profile.
@@ -151,8 +150,8 @@ func TestResolve_PerCallProfileBeatsDefault(t *testing.T) {
 	if report.ActiveProfile != "staging" {
 		t.Fatalf("ActiveProfile: got %q want staging", report.ActiveProfile)
 	}
-	if report.Target.RegistryAddress != "zookeeper://zk-staging.example.com:2181" {
-		t.Fatalf("RegistryAddress: got %q", report.Target.RegistryAddress)
+	if report.Target.DirectURL != "bolt://rpc-staging.example.com:12200" {
+		t.Fatalf("DirectURL: got %q", report.Target.DirectURL)
 	}
 }
 

@@ -20,6 +20,7 @@ type sessionResource struct {
 	Target      target.Config `json:"target,omitempty"`
 	CreatedAt   string        `json:"createdAt,omitempty"`
 	LastPlan    *planRef      `json:"lastPlan,omitempty"`
+	Plans       []planRef     `json:"plans,omitempty"`
 	ContractURI string        `json:"contractUri,omitempty"`
 	SessionURI  string        `json:"sessionUri"`
 	Description string        `json:"description"`
@@ -27,6 +28,7 @@ type sessionResource struct {
 
 type planResource struct {
 	SessionID string      `json:"sessionId"`
+	PlanID    string      `json:"planId,omitempty"`
 	Plan      invoke.Plan `json:"plan"`
 }
 
@@ -37,9 +39,11 @@ type contractResource struct {
 }
 
 type planRef struct {
-	URI     string `json:"uri"`
-	Service string `json:"service,omitempty"`
-	Method  string `json:"method,omitempty"`
+	URI        string `json:"uri"`
+	PlanID     string `json:"planId,omitempty"`
+	CapturedAt string `json:"capturedAt,omitempty"`
+	Service    string `json:"service,omitempty"`
+	Method     string `json:"method,omitempty"`
 }
 
 func registerResources(server *sdkmcp.Server, opts Options, holder *contractHolder) {
@@ -80,6 +84,25 @@ func registerResources(server *sdkmcp.Server, opts Options, holder *contractHold
 			return nil, sdkmcp.ResourceNotFoundError(uri)
 		}
 		return jsonResource(uri, planResource{SessionID: session.ID, Plan: *session.LastPlan})
+	})
+
+	server.AddResourceTemplate(&sdkmcp.ResourceTemplate{
+		URITemplate: "sofarpc://session/{sessionId}/plans/{planId}",
+		Name:        "sofarpc_session_plan_entry",
+		Title:       "SOFARPC Session Plan Entry",
+		Description: "Read one plan from a session's captured plan history by planId.",
+		MIMEType:    resourceMIMEJSON,
+	}, func(_ context.Context, req *sdkmcp.ReadResourceRequest) (*sdkmcp.ReadResourceResult, error) {
+		uri := req.Params.URI
+		sessionID, planID, ok := parseSessionPlanEntryResourceURI(uri)
+		if !ok {
+			return nil, sdkmcp.ResourceNotFoundError(uri)
+		}
+		entry, ok := sessions.PlanByID(sessionID, planID)
+		if !ok {
+			return nil, sdkmcp.ResourceNotFoundError(uri)
+		}
+		return jsonResource(uri, planResource{SessionID: sessionID, PlanID: entry.ID, Plan: entry.Plan})
 	})
 
 	server.AddResourceTemplate(&sdkmcp.ResourceTemplate{
@@ -124,6 +147,15 @@ func sessionResourceFromSession(session Session) sessionResource {
 			Method:  session.LastPlan.Method,
 		}
 	}
+	for _, entry := range session.Plans {
+		out.Plans = append(out.Plans, planRef{
+			URI:        sessionPlanEntryResourceURI(session.ID, entry.ID),
+			PlanID:     entry.ID,
+			CapturedAt: entry.CapturedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Service:    entry.Plan.Service,
+			Method:     entry.Plan.Method,
+		})
+	}
 	return out
 }
 
@@ -151,6 +183,10 @@ func sessionPlanResourceURI(sessionID string) string {
 
 func sessionContractResourceURI(sessionID string) string {
 	return sessionResourceURI(sessionID) + "/contract"
+}
+
+func sessionPlanEntryResourceURI(sessionID, planID string) string {
+	return sessionResourceURI(sessionID) + "/plans/" + url.PathEscape(planID)
 }
 
 func sessionResourceLink(sessionID string) *sdkmcp.ResourceLink {
@@ -205,6 +241,28 @@ func replayResourceLinks(sessionID, source string) []sdkmcp.Content {
 		return nil
 	}
 	return []sdkmcp.Content{sessionPlanResourceLink(sessionID)}
+}
+
+// parseSessionPlanEntryResourceURI parses
+// sofarpc://session/{sessionId}/plans/{planId}.
+func parseSessionPlanEntryResourceURI(rawURI string) (string, string, bool) {
+	parsed, err := url.Parse(rawURI)
+	if err != nil || parsed.Scheme != "sofarpc" || parsed.Host != "session" {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	if len(parts) != 3 || parts[1] != "plans" {
+		return "", "", false
+	}
+	sessionID, err := url.PathUnescape(parts[0])
+	if err != nil || strings.TrimSpace(sessionID) == "" {
+		return "", "", false
+	}
+	planID, err := url.PathUnescape(parts[2])
+	if err != nil || strings.TrimSpace(planID) == "" {
+		return "", "", false
+	}
+	return sessionID, planID, true
 }
 
 func parseSessionResourceURI(rawURI, suffix string) (string, bool) {

@@ -22,15 +22,16 @@ func TestExecuteDirectIfPossible_UnsupportedTargetFallsThrough(t *testing.T) {
 		ParamTypes: []string{"java.lang.String"},
 		Args:       []any{"hello"},
 		Target: target.Config{
-			Mode:            target.ModeRegistry,
-			RegistryAddress: "zookeeper://h:1",
+			Mode:      target.ModeDirect,
+			DirectURL: "bolt://h:1",
+			Protocol:  "tr3",
 		},
 	}, "invoke")
 	if err != nil {
 		t.Fatalf("ExecuteDirectIfPossible: %v", err)
 	}
 	if exec.Handled {
-		t.Fatal("registry target should fall through to caller")
+		t.Fatal("unsupported protocol should fall through to caller")
 	}
 }
 

@@ -3,6 +3,8 @@ package invoke
 import (
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
@@ -15,6 +17,35 @@ const (
 	EnvAllowTargetOverride = "SOFARPC_ALLOW_TARGET_OVERRIDE"
 	EnvAllowedTargetHosts  = "SOFARPC_ALLOWED_TARGET_HOSTS"
 )
+
+// EnvFlag reports whether the named guardrail environment variable is set to
+// a true value, using strict strconv.ParseBool semantics. Every execution
+// entrypoint (MCP tools, the call CLI) must parse opt-ins through this single
+// helper so an env value can never enable one path that another refuses.
+func EnvFlag(name string) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return false
+	}
+	value, err := strconv.ParseBool(raw)
+	return err == nil && value
+}
+
+// EnvList returns the comma-separated values of the named environment
+// variable with whitespace trimmed and empty items dropped.
+func EnvList(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, item := range strings.Split(raw, ",") {
+		if value := strings.TrimSpace(item); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
 
 // ExecutionPolicy is the core invoke guardrail. It keeps real-invoke
 // enablement, service allowlisting, and target override checks behind one

@@ -417,8 +417,6 @@ func TestBuildSetupEnv_OnlyIncludesProvidedKeys(t *testing.T) {
 	for _, absent := range []string{
 		"SOFARPC_PROJECT_ROOT",
 		"SOFARPC_DIRECT_URL",
-		"SOFARPC_REGISTRY_ADDRESS",
-		"SOFARPC_REGISTRY_PROTOCOL",
 		"SOFARPC_PROTOCOL",
 		"SOFARPC_SERIALIZATION",
 		"SOFARPC_UNIQUE_ID",
@@ -548,8 +546,7 @@ func TestRunSetup_ProjectSharedWritesSharedConfigOnly(t *testing.T) {
 		"--scope=project",
 		"--project-root", root,
 		"--shared",
-		"--registry-address", "zookeeper://host:2181",
-		"--registry-protocol", "zookeeper",
+		"--direct-url", "bolt://host:12200",
 		"--connect-timeout-ms", "1000",
 		"--allowed-services", "com.foo.UserFacade",
 	})
@@ -560,11 +557,30 @@ func TestRunSetup_ProjectSharedWritesSharedConfigOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read shared config: %v", err)
 	}
-	if !strings.Contains(string(body), "\"registryAddress\": \"zookeeper://host:2181\"") {
-		t.Fatalf("registryAddress missing:\n%s", body)
+	if !strings.Contains(string(body), "\"directUrl\": \"bolt://host:12200\"") {
+		t.Fatalf("directUrl missing:\n%s", body)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
 		t.Fatalf("shared setup should not create gitignore: %v", err)
+	}
+}
+
+// TestRunSetup_RegistryFlagRemoved documents that registry is retired: the
+// --registry-address flag no longer exists and is rejected as unknown.
+func TestRunSetup_RegistryFlagRemoved(t *testing.T) {
+	root := t.TempDir()
+	err := runSetup([]string{
+		"--scope=project",
+		"--project-root", root,
+		"--shared",
+		"--registry-address", "zookeeper://host:2181",
+		"--allowed-services", "com.foo.UserFacade",
+	})
+	if err == nil {
+		t.Fatal("--registry-address should be rejected as an unknown flag")
+	}
+	if !strings.Contains(err.Error(), "registry-address") {
+		t.Fatalf("error should name the removed flag: %v", err)
 	}
 }
 

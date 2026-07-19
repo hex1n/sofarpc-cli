@@ -17,8 +17,6 @@ type TargetInput struct {
 	Service          string `json:"service,omitempty"`
 	Profile          string `json:"profile,omitempty"`
 	DirectURL        string `json:"directUrl,omitempty"`
-	RegistryAddress  string `json:"registryAddress,omitempty"`
-	RegistryProtocol string `json:"registryProtocol,omitempty"`
 	Protocol         string `json:"protocol,omitempty"`
 	Serialization    string `json:"serialization,omitempty"`
 	TimeoutMS        int    `json:"timeoutMs,omitempty"`
@@ -72,8 +70,6 @@ func registerTarget(server *sdkmcp.Server, opts Options) {
 			Service:          in.Service,
 			Profile:          effectiveProfile(in.Profile, scope.SessionProfile),
 			DirectURL:        in.DirectURL,
-			RegistryAddress:  in.RegistryAddress,
-			RegistryProtocol: in.RegistryProtocol,
 			Protocol:         in.Protocol,
 			Serialization:    in.Serialization,
 			TimeoutMS:        in.TimeoutMS,
@@ -124,12 +120,9 @@ func summarizeTarget(out TargetOutput) string {
 		return "target config error: " + formatConfigErrors(out.ConfigErrors)
 	}
 	if out.Target.Mode == "" {
-		return "target mode unresolved — call sofarpc_doctor or provide directUrl/registryAddress"
+		return "target mode unresolved — call sofarpc_doctor or provide directUrl"
 	}
 	addr := out.Target.DirectURL
-	if out.Target.Mode == target.ModeRegistry {
-		addr = out.Target.RegistryAddress
-	}
 	reach := "unknown"
 	if out.Reachability.Reachable {
 		reach = "reachable"

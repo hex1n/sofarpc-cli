@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/boltclient"
@@ -100,6 +101,7 @@ func TestInvoke_DryRunRedactsInvocationPropertyEnv(t *testing.T) {
 }
 
 func TestInvoke_UnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
 	store := contract.NewInMemoryStore(
 		javamodel.Class{
 			FQN:  "com.foo.Svc",
@@ -109,16 +111,47 @@ func TestInvoke_UnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 			},
 		},
 	)
-	out := callInvoke(t, Options{Contract: store}, map[string]any{
-		"service":         "com.foo.Svc",
-		"method":          "doThing",
-		"registryAddress": "zookeeper://host:2181",
+	// A resolved direct target with a non-bolt protocol is the only remaining
+	// "resolved but unexecutable" shape now that registry is retired.
+	out := callInvoke(t, Options{
+		Contract: store,
+		TargetSources: target.Sources{
+			Env: target.Config{DirectURL: "bolt://host:12200", Protocol: "tr3"},
+			ProjectPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.foo.Svc"},
+			},
+		},
+	}, map[string]any{
+		"service": "com.foo.Svc",
+		"method":  "doThing",
+		"args":    []any{"hello"},
 	})
 	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
 		t.Fatalf("expected InvocationRejected, got %+v", out.Error)
 	}
 	if out.Plan == nil {
 		t.Fatal("plan should still be attached on InvocationRejected")
+	}
+}
+
+func TestInvoke_RejectsRetiredRegistryField(t *testing.T) {
+	for _, key := range []string{"registryAddress", "registryProtocol"} {
+		t.Run(key, func(t *testing.T) {
+			out := callInvoke(t, Options{}, map[string]any{
+				"service": "com.foo.Svc",
+				"method":  "doThing",
+				key:       "zookeeper://host:2181",
+			})
+			if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
+				t.Fatalf("a retired registry field must be rejected, not silently dropped: %+v", out.Error)
+			}
+			if !strings.Contains(out.Error.Message, key) {
+				t.Fatalf("error should name the retired field %q: %+v", key, out.Error)
+			}
+			if out.Ok {
+				t.Fatal("invoke must not proceed when a retired registry field is sent")
+			}
+		})
 	}
 }
 
@@ -200,7 +233,7 @@ func TestInvoke_ConfigErrorDiagnosticsUseSessionProject(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
 	t.Setenv(envAllowTargetOverride, "false")
 	projectRoot := t.TempDir()
-	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.json", `{"mode":"registry","directUrl":"bolt://project-host:12200"}`)
+	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.json", `{"mode":"direct","directUrl":"bolt://project-host:12200"}`)
 	sessions := NewSessionStore()
 	session := sessions.Create(Session{ProjectRoot: projectRoot})
 

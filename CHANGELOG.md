@@ -6,6 +6,16 @@ All notable changes to this project are recorded here.
 
 ### Added
 
+- `sofarpc_describe` listing modes: omit `method` to list a service's callable
+  methods (including inherited ones), omit `service` too to list the
+  method-bearing interfaces in the contract index.
+- Session plan history: sessions keep the 10 most recent captured plans, each
+  addressable by `planId` through `sofarpc_replay` and the new
+  `sofarpc://session/{sessionId}/plans/{planId}` resource; successful captures
+  now return the `planId` in invoke `sessionPlanCapture` diagnostics.
+- `sofarpc-mcp call`: one-shot CLI invocation (flags or `-plan` file) through
+  the same plan/execute pipeline and real-invoke guardrails as the MCP tools.
+
 - Added `sofarpc-mcp version` and `sofarpc-mcp version -json` for release and support diagnostics.
 - Added build-time version metadata injection through `-ldflags` for version, commit, and build date.
 - Added MCP server version injection so the MCP implementation metadata matches the CLI build version.
@@ -27,6 +37,20 @@ All notable changes to this project are recorded here.
 - `sofarpc_replay` now requires captured plans to use the current `sofarpc.invoke.plan/v1` schema.
 - Oversized plans are still returned by `sofarpc_invoke`, but are no longer retained in session memory for `sessionId` replay.
 - `sofarpc-mcp setup` now merges existing sofarpc env by default; use `--replace-env` for the previous replacement behavior.
+
+### Removed
+
+- Retired the registry target configuration surface. `.sofarpc` config
+  (base and profiles), `sofarpc-mcp setup` (`--registry-address`,
+  `--registry-protocol`), and the `sofarpc_invoke`/`sofarpc_replay`/
+  `sofarpc_target`/`sofarpc_init_project` tool inputs no longer accept
+  `registryAddress`/`registryProtocol`. The pure-Go mainline executes only
+  direct `bolt + hessian2` targets. Every entrypoint fails loud rather than
+  silently ignoring a stale registry field: the config parser rejects it as an
+  unknown field, `setup` rejects the removed flags, `sofarpc_invoke`/
+  `sofarpc_replay`/`sofarpc_init_project` reject it in arguments with an
+  `input.args-invalid` error, and `sofarpc_target`/`sofarpc_describe` reject it
+  through input-schema validation.
 
 ## v0.1.0 - planned
 

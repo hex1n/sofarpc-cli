@@ -46,11 +46,8 @@ func inferProbeMode(cfg Config) Config {
 	if cfg.Mode != "" {
 		return cfg
 	}
-	switch {
-	case strings.TrimSpace(cfg.DirectURL) != "":
+	if strings.TrimSpace(cfg.DirectURL) != "" {
 		cfg.Mode = ModeDirect
-	case strings.TrimSpace(cfg.RegistryAddress) != "":
-		cfg.Mode = ModeRegistry
 	}
 	return cfg
 }
@@ -59,8 +56,6 @@ func dialTarget(cfg Config) (string, error) {
 	switch cfg.Mode {
 	case ModeDirect:
 		return ParseDirectDialAddress(cfg.DirectURL)
-	case ModeRegistry:
-		return ParseRegistryDialAddress(cfg.RegistryAddress)
 	case "":
 		return "", fmt.Errorf("target mode not resolved")
 	default:

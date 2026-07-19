@@ -43,8 +43,6 @@ func runSetup(args []string) error {
 	flags.StringVar(&opts.command, "command", "", "user scope: absolute sofarpc-mcp command path to register")
 	flags.StringVar(&opts.projectRoot, "project-root", "", "project scope: target project root")
 	flags.StringVar(&opts.directURL, "direct-url", "", "project scope: direct target URL")
-	flags.StringVar(&opts.registryAddr, "registry-address", "", "project scope: registry target address")
-	flags.StringVar(&opts.registryProtocol, "registry-protocol", "", "project scope: registry protocol")
 	flags.StringVar(&opts.protocol, "protocol", "", "project scope: wire protocol")
 	flags.StringVar(&opts.serialization, "serialization", "", "project scope: wire serialization")
 	flags.StringVar(&opts.uniqueID, "unique-id", "", "project scope: SOFA service uniqueId")
@@ -92,8 +90,6 @@ type setupOptions struct {
 	command             string
 	projectRoot         string
 	directURL           string
-	registryAddr        string
-	registryProtocol    string
 	protocol            string
 	serialization       string
 	uniqueID            string
@@ -180,8 +176,6 @@ func rejectProjectOnlyFlags(opts setupOptions) error {
 		"force",
 		"project-root",
 		"direct-url",
-		"registry-address",
-		"registry-protocol",
 		"protocol",
 		"serialization",
 		"unique-id",
@@ -375,8 +369,6 @@ func readClaudeEnv(entry any) map[string]string {
 var projectScopedEnvKeys = map[string]struct{}{
 	"SOFARPC_PROJECT_ROOT":       {},
 	"SOFARPC_DIRECT_URL":         {},
-	"SOFARPC_REGISTRY_ADDRESS":   {},
-	"SOFARPC_REGISTRY_PROTOCOL":  {},
 	"SOFARPC_PROTOCOL":           {},
 	"SOFARPC_SERIALIZATION":      {},
 	"SOFARPC_UNIQUE_ID":          {},

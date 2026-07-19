@@ -107,7 +107,10 @@ type OpenInput struct {
 // --- sofarpc_describe (see describe.go) ------------------------------------
 
 // DescribeInput is the input shape for sofarpc_describe. Types is the
-// paramType list the agent may supply to disambiguate overloads.
+// paramType list the agent may supply to disambiguate overloads. Method is
+// optional: without it, describe lists the service's callable methods, and
+// without service it lists the method-bearing interfaces in the contract
+// index.
 type DescribeInput struct {
 	Cwd       string   `json:"cwd,omitempty"`
 	Project   string   `json:"project,omitempty"`
@@ -136,8 +139,6 @@ type InvokeInput struct {
 	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
 	Profile              string                       `json:"profile,omitempty"`
 	DirectURL            string                       `json:"directUrl,omitempty"`
-	RegistryAddress      string                       `json:"registryAddress,omitempty"`
-	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
 	TimeoutMS            int                          `json:"timeoutMs,omitempty"`
 	DryRun               bool                         `json:"dryRun,omitempty"`
 	Trusted              bool                         `json:"trusted,omitempty"`
@@ -151,9 +152,12 @@ type InvokeInput struct {
 
 // ReplayInput is the input shape for sofarpc_replay. SessionID can either
 // select the captured session plan or, when Payload is present, provide the
-// project/safety context for that literal plan. DryRun mirrors sofarpc_invoke.
+// project/safety context for that literal plan. PlanID selects a specific
+// plan from the session's captured history instead of the most recent one.
+// DryRun mirrors sofarpc_invoke.
 type ReplayInput struct {
 	SessionID string `json:"sessionId,omitempty"`
+	PlanID    string `json:"planId,omitempty"`
 	Cwd       string `json:"cwd,omitempty"`
 	Project   string `json:"project,omitempty"`
 	Payload   any    `json:"payload,omitempty"`

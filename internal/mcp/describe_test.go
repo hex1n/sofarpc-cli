@@ -210,6 +210,76 @@ func TestDescribe_MissingServiceIsErrcode(t *testing.T) {
 	}
 }
 
+func TestDescribe_MethodOmittedListsMethods(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.BaseFacade",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:        "com.foo.UserFacade",
+			Kind:       javamodel.KindInterface,
+			Interfaces: []string{"com.foo.BaseFacade"},
+			Methods: []javamodel.Method{
+				{Name: "create", ParamTypes: []string{"java.lang.String"}, ReturnType: "void"},
+			},
+		},
+	)
+	out := callDescribe(t, Options{Contract: store}, map[string]any{
+		"service": "com.foo.UserFacade",
+	})
+	if out.Error != nil {
+		t.Fatalf("method-less describe should list methods, got error: %+v", out.Error)
+	}
+	if out.Service != "com.foo.UserFacade" {
+		t.Fatalf("service: got %q", out.Service)
+	}
+	var names []string
+	for _, m := range out.Methods {
+		names = append(names, m.Name)
+	}
+	if len(names) != 2 || names[0] != "create" || names[1] != "query" {
+		t.Fatalf("methods should include declared and inherited, sorted: %v", names)
+	}
+	if len(out.Overloads) != 0 || len(out.Skeleton) != 0 {
+		t.Fatalf("listing mode should not resolve overloads or build skeletons: %+v", out)
+	}
+}
+
+func TestDescribe_ServiceOmittedListsServices(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.UserFacade",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.InternalService",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "run", ParamTypes: []string{"java.lang.String"}, ReturnType: "void"},
+			},
+		},
+		javamodel.Class{
+			FQN:  "com.foo.PlainDto",
+			Kind: javamodel.KindClass,
+		},
+	)
+	out := callDescribe(t, Options{Contract: store}, map[string]any{})
+	if out.Error != nil {
+		t.Fatalf("service-less describe should list services, got error: %+v", out.Error)
+	}
+	want := []string{"com.foo.InternalService", "com.foo.UserFacade"}
+	if len(out.Services) != len(want) || out.Services[0] != want[0] || out.Services[1] != want[1] {
+		t.Fatalf("services: got %v want %v (method-bearing interfaces only)", out.Services, want)
+	}
+}
+
 func callDescribe(t *testing.T, opts Options, args map[string]any) DescribeOutput {
 	t.Helper()
 	server := New(opts)

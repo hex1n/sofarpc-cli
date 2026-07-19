@@ -92,12 +92,10 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			TargetAppName:        decoded.TargetAppName,
 			InvocationProperties: decoded.InvocationProperties,
 			Target: target.Input{
-				Service:          decoded.Service,
-				Profile:          profile,
-				DirectURL:        decoded.DirectURL,
-				RegistryAddress:  decoded.RegistryAddress,
-				RegistryProtocol: decoded.RegistryProtocol,
-				TimeoutMS:        decoded.TimeoutMS,
+				Service:   decoded.Service,
+				Profile:   profile,
+				DirectURL: decoded.DirectURL,
+				TimeoutMS: decoded.TimeoutMS,
 			},
 		}, store, toolSources)
 		if err != nil && shouldAutoTrustedFallback(decoded, args, err, contractMode) {
@@ -110,12 +108,10 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 				TargetAppName:        decoded.TargetAppName,
 				InvocationProperties: decoded.InvocationProperties,
 				Target: target.Input{
-					Service:          decoded.Service,
-					Profile:          profile,
-					DirectURL:        decoded.DirectURL,
-					RegistryAddress:  decoded.RegistryAddress,
-					RegistryProtocol: decoded.RegistryProtocol,
-					TimeoutMS:        decoded.TimeoutMS,
+					Service:   decoded.Service,
+					Profile:   profile,
+					DirectURL: decoded.DirectURL,
+					TimeoutMS: decoded.TimeoutMS,
 				},
 			}, nil, toolSources)
 		}
@@ -162,8 +158,6 @@ type rawInvokeInput struct {
 	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
 	Profile              string                       `json:"profile,omitempty"`
 	DirectURL            string                       `json:"directUrl,omitempty"`
-	RegistryAddress      string                       `json:"registryAddress,omitempty"`
-	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
 	TimeoutMS            int                          `json:"timeoutMs,omitempty"`
 	DryRun               bool                         `json:"dryRun,omitempty"`
 	Trusted              bool                         `json:"trusted,omitempty"`
@@ -171,9 +165,38 @@ type rawInvokeInput struct {
 	SessionID            string                       `json:"sessionId,omitempty"`
 }
 
+// retiredTargetFieldError rejects tool arguments that still carry a retired
+// registry target field. The MCP tool-input decoders are otherwise lenient
+// (unknown fields are dropped), so without this a stale caller that sends a
+// registry target would have it silently ignored and the call routed to
+// whatever direct target resolves from lower layers — a wrong-target hazard.
+// It fails loud instead, matching the .sofarpc config parser. Detection is by
+// JSON key so no retired Go identifier is reintroduced.
+func retiredTargetFieldError(rawArgs json.RawMessage, phase string) *errcode.Error {
+	if len(bytes.TrimSpace(rawArgs)) == 0 {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rawArgs, &fields); err != nil {
+		return nil // malformed arguments are reported by the caller's own decode
+	}
+	for _, key := range []string{"registryAddress", "registryProtocol"} {
+		if _, ok := fields[key]; ok {
+			return errcode.New(errcode.ArgsInvalid, phase,
+				fmt.Sprintf("%s is no longer supported: registry targets are retired; use directUrl for a direct bolt target", key)).
+				WithHint("sofarpc_target", map[string]any{"explain": true},
+					"inspect the resolved direct target instead of supplying a registry field")
+		}
+	}
+	return nil
+}
+
 func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
 	if req == nil || len(req.Params.Arguments) == 0 {
 		return InvokeInput{}, nil, nil
+	}
+	if err := retiredTargetFieldError(req.Params.Arguments, "invoke"); err != nil {
+		return InvokeInput{}, nil, err
 	}
 	var raw rawInvokeInput
 	dec := json.NewDecoder(bytes.NewReader(req.Params.Arguments))
@@ -200,8 +223,6 @@ func decodeInvokeInput(req *sdkmcp.CallToolRequest) (InvokeInput, any, error) {
 		InvocationProperties: raw.InvocationProperties,
 		Profile:              raw.Profile,
 		DirectURL:            raw.DirectURL,
-		RegistryAddress:      raw.RegistryAddress,
-		RegistryProtocol:     raw.RegistryProtocol,
 		TimeoutMS:            raw.TimeoutMS,
 		DryRun:               raw.DryRun,
 		Trusted:              raw.Trusted,
@@ -321,9 +342,6 @@ func summarizeInvokePlan(plan invoke.Plan, dryRun bool) string {
 func targetAddr(cfg target.Config) string {
 	if cfg.DirectURL != "" {
 		return cfg.DirectURL
-	}
-	if cfg.RegistryAddress != "" {
-		return cfg.RegistryAddress
 	}
 	return string(cfg.Mode)
 }

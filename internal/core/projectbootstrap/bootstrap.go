@@ -140,8 +140,6 @@ func Run(in Input) (Result, error) {
 
 func HasConfigFields(cfg projectconfig.Config) bool {
 	return strings.TrimSpace(cfg.DirectURL) != "" ||
-		strings.TrimSpace(cfg.RegistryAddress) != "" ||
-		strings.TrimSpace(cfg.RegistryProtocol) != "" ||
 		strings.TrimSpace(cfg.Protocol) != "" ||
 		strings.TrimSpace(cfg.Serialization) != "" ||
 		strings.TrimSpace(cfg.UniqueID) != "" ||

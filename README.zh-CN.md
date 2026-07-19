@@ -13,9 +13,9 @@
 | `sofarpc_init_project` | 为 Java 项目初始化 `.sofarpc/config*.json`，包含自动发现的 `allowedServices`。 |
 | `sofarpc_open` | 打开工作区。返回项目根目录、已解析 target、能力标识和 session id。 |
 | `sofarpc_target` | 解析目标并探测可达性。 |
-| `sofarpc_describe` | 当存在 contract information 时，解析重载并生成 JSON skeleton。 |
+| `sofarpc_describe` | 当存在 contract information 时，解析重载并生成 JSON skeleton。省略 `method` 列出该服务的可调用方法；连 `service` 也省略则列出已知服务。 |
 | `sofarpc_invoke` | 构建 plan 并执行调用。`dryRun=true` 只返回 plan。 |
-| `sofarpc_replay` | 用 `sessionId` 或完整 `payload` 加 project/session 安全上下文重放 plan。 |
+| `sofarpc_replay` | 用 `sessionId`（可加 `planId` 选择历史中某个 plan）或完整 `payload` 加 project/session 安全上下文重放 plan。 |
 | `sofarpc_doctor` | 对 target、workspace 状态和 invoke 前提做结构化诊断。 |
 
 所有失败都会返回稳定的 `errcode.Code`，并且可能带有结构化的
@@ -100,7 +100,7 @@ sofarpc-mcp setup --scope=project --project-root . --local \
   --allowed-services=com.foo.UserFacade
 
 sofarpc-mcp setup --scope=project --project-root . --shared \
-  --registry-address=zookeeper://zk.example.com:2181 --protocol=bolt \
+  --direct-url=bolt://dev-rpc.example.com:12200 --protocol=bolt \
   --allowed-services=com.foo.UserFacade,com.foo.OrderFacade
 ```
 
@@ -129,7 +129,7 @@ Agent 也可以通过 MCP 完成同样的首次项目初始化：
 
 如果省略 `services`，tool 会按已解析项目加载 source-contract information，
 并把有方法的 `*Facade` 接口写入 `allowedServices`。它不会猜 target；需要显式传
-`directUrl` 或 `registryAddress`，否则只写 allowlist-only config 并返回下一步。
+`directUrl`，否则只写 allowlist-only config 并返回下一步。
 如果发现不到服务白名单，需要显式传 `services`，或者有意设置
 `allowAllServices: true` 写入 `allowedServices: ["*"]`。
 
@@ -177,9 +177,10 @@ Server 使用 stdio MCP 协议。project root 回退到进程 CWD；
 }
 ```
 
-项目配置里不要写 `mode`。mode 会按优先级从第一个 endpoint 原子推导：
-`directUrl` 表示 direct，`registryAddress` 表示 registry，并且低优先级
-layer 的另一个 endpoint 会被忽略。
+项目配置里不要写 `mode`。mode 由解析出的 `directUrl` 推导为 direct，
+低优先级 layer 的 endpoint 会被忽略。纯 Go 主线只执行 direct 的
+`bolt + hessian2` 目标——不接受 `registryAddress`/`registryProtocol`,
+含这两个字段的配置会作为未知字段被拒绝。
 
 target 解析优先级是：
 
@@ -224,6 +225,30 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
 已安装的 `sofarpc-invoke` skill 把这条链条变成机器可读的 playbook，
 包含 errcode 恢复协议。源文件在 `cmd/sofarpc-mcp/skill/SKILL.md`。
 
+## 单次 CLI 调用
+
+`sofarpc-mcp call` 用与 MCP 工具完全相同的 plan/execute 管道和守护栏跑一次
+调用——适合人工冒烟、CI 脚本、以及在 MCP client 之外复现 agent 的调用：
+
+```sh
+# 只看 plan，不碰网络
+sofarpc-mcp call -project . -service com.foo.UserFacade -method query \
+  -types java.lang.String -args '["id-1"]' \
+  -direct-url bolt://127.0.0.1:12200 -dry-run
+
+# 真实调用（与 MCP 工具相同的 opt-in 和 allowlist 规则）
+SOFARPC_ALLOW_INVOKE=true sofarpc-mcp call -project . \
+  -service com.foo.UserFacade -method query \
+  -types java.lang.String -args '["id-1"]'
+
+# 重放捕获的 plan（裸 plan JSON 或 invoke dry-run 输出都行）
+sofarpc-mcp call -plan plan.json
+```
+
+输出与 `sofarpc_invoke` 相同的 JSON 形状（`ok`、`plan`、`result`、
+`diagnostics`、`error`）。真实调用仍要求 `SOFARPC_ALLOW_INVOKE=true` 加项目
+`allowedServices`；`-dry-run` 永不执行。
+
 ## `sofarpc_invoke` 形状
 
 ```json
@@ -253,7 +278,7 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
   服务在 provider baggage 启用时可用 `RpcInvokeContext.getRequestBaggage(...)`
   读取。`value` 是字面值；`env` 只在真实 invoke/replay 时解析，并在 plan 中保持
   redacted。
-- `directUrl` / `registryAddress` 是单次覆盖。否则先使用项目配置；进程 env
+- `directUrl` 是单次覆盖。否则先使用项目配置；进程 env
   只作为旧用法/手工运行兜底。用户级 setup 不再写 target 默认值。
 - `dryRun=true` 返回的 plan 可以直接交给 `sofarpc_replay`；replay 也接受包含
   `plan` 字段的 dry-run 输出对象。literal payload replay 可以同时传

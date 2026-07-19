@@ -19,13 +19,21 @@ import (
 
 func main() {
 	// "setup" handles user-level MCP registration and project-level
-	// .sofarpc target config. "version" / --version are side-effect-free
-	// inspection paths. Everything else falls through to the MCP stdio
-	// server — that is the binary's job.
+	// .sofarpc target config. "call" is the human/script one-shot invoke
+	// path over the same core pipeline and guardrails as the MCP tools.
+	// "version" / --version are side-effect-free inspection paths.
+	// Everything else falls through to the MCP stdio server — that is the
+	// binary's job.
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case "setup":
 			if err := runSetup(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "call":
+			if err := runCall(os.Stdout, os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}

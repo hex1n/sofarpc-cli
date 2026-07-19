@@ -100,7 +100,6 @@ func TestRead_RejectsInvalidProjectConfig(t *testing.T) {
 	tests := map[string]string{
 		"unknown field":        `{"mode":"direct"}`,
 		"multiple json values": `{"directUrl":"bolt://a:1"} {}`,
-		"direct and registry":  `{"directUrl":"bolt://a:1","registryAddress":"zookeeper://zk:2181"}`,
 		"redacted env input":   `{"invocationProperties":{"authToken":{"env":"TOKEN","redacted":true}}}`,
 	}
 	for name, body := range tests {
@@ -114,6 +113,35 @@ func TestRead_RejectsInvalidProjectConfig(t *testing.T) {
 			}
 			if !result.Exists {
 				t.Fatalf("invalid existing file should report Exists: %+v", result)
+			}
+		})
+	}
+}
+
+// TestParse_RejectsRegistryAddress documents that registry is retired: a
+// stale config carrying registryAddress is rejected (unknown field) rather
+// than silently ignored, both at the top level and inside a profile.
+func TestParse_RejectsRegistryAddress(t *testing.T) {
+	cases := map[string]string{
+		"base registryAddress":     `{"registryAddress":"zookeeper://zk:2181","allowedServices":["com.foo.Svc"]}`,
+		"base registryProtocol":    `{"registryProtocol":"zookeeper","allowedServices":["com.foo.Svc"]}`,
+		"profile registryAddress":  `{"profiles":{"test":{"registryAddress":"zookeeper://zk:2181"}}}`,
+		"profile registryProtocol": `{"profiles":{"test":{"registryProtocol":"zookeeper"}}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, KindShared, body)
+
+			result, err := Read(root, KindShared)
+			if err == nil {
+				t.Fatalf("registry config must be rejected, got result %+v", result)
+			}
+			if !result.Exists {
+				t.Fatalf("rejected existing file should still report Exists: %+v", result)
+			}
+			if !strings.Contains(err.Error(), "registry") {
+				t.Fatalf("error should name the offending registry field: %v", err)
 			}
 		})
 	}

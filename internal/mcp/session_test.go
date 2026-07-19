@@ -151,3 +151,50 @@ func TestSessionStore_UpdatePlan_UnknownIDIsNoop(t *testing.T) {
 		t.Fatal("UpdatePlan should return false for empty id")
 	}
 }
+
+func TestSessionStore_CapturesPlanHistory(t *testing.T) {
+	store := NewSessionStoreWithLimits(0, 0).WithIDFunc(seqIDs())
+	session := store.Create(Session{ProjectRoot: "/tmp/proj"})
+
+	var planIDs []string
+	for i := 0; i < defaultSessionPlanHistory+2; i++ {
+		plan := invoke.Plan{Service: "com.foo.Svc", Method: fmt.Sprintf("m%d", i)}
+		capture := store.CapturePlan(session.ID, plan)
+		if !capture.Captured || capture.PlanID == "" {
+			t.Fatalf("capture %d should succeed with a planId: %+v", i, capture)
+		}
+		planIDs = append(planIDs, capture.PlanID)
+	}
+
+	got, ok := store.Get(session.ID)
+	if !ok {
+		t.Fatal("session should exist")
+	}
+	if len(got.Plans) != defaultSessionPlanHistory {
+		t.Fatalf("history should be bounded to %d, got %d", defaultSessionPlanHistory, len(got.Plans))
+	}
+	newest := planIDs[len(planIDs)-1]
+	if got.Plans[0].ID != newest {
+		t.Fatalf("history should be newest-first: got %q want %q", got.Plans[0].ID, newest)
+	}
+	if got.LastPlan == nil || got.LastPlan.Method != got.Plans[0].Plan.Method {
+		t.Fatalf("lastPlan should mirror the newest history entry: %+v vs %+v", got.LastPlan, got.Plans[0].Plan)
+	}
+
+	// The oldest two captures rotated out; the newest is addressable by ID.
+	if _, ok := store.PlanByID(session.ID, planIDs[0]); ok {
+		t.Fatalf("rotated-out plan %q should not be addressable", planIDs[0])
+	}
+	entry, ok := store.PlanByID(session.ID, newest)
+	if !ok || entry.Plan.Method != got.Plans[0].Plan.Method {
+		t.Fatalf("newest plan should be addressable by ID: ok=%v entry=%+v", ok, entry)
+	}
+
+	seen := map[string]bool{}
+	for _, id := range planIDs {
+		if seen[id] {
+			t.Fatalf("planIds must be unique, %q repeated", id)
+		}
+		seen[id] = true
+	}
+}

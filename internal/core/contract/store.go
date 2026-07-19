@@ -10,6 +10,8 @@
 package contract
 
 import (
+	"sort"
+
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"github.com/hex1n/sofarpc-cli/internal/javatype"
 )
@@ -72,6 +74,21 @@ func (s *InMemoryStore) Class(fqn string) (javamodel.Class, bool) {
 	}
 	c, ok := s.classes[fqn]
 	return c, ok
+}
+
+// IndexedClasses implements IndexedClassStore with the stored FQNs sorted,
+// so service discovery and listings behave the same on the in-memory store
+// as on the production source-contract store.
+func (s *InMemoryStore) IndexedClasses() []string {
+	if s == nil || s.classes == nil {
+		return nil
+	}
+	out := make([]string, 0, len(s.classes))
+	for fqn := range s.classes {
+		out = append(out, fqn)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ClassLookup adapts a Store to javatype.ClassLookup so javatype.Classify

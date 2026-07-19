@@ -628,6 +628,55 @@ func TestBuildSkeleton_IncludesInheritedFields(t *testing.T) {
 	}
 }
 
+func TestListMethods_RequiresService(t *testing.T) {
+	store := NewInMemoryStore()
+	_, _, err := ListMethods(store, "")
+	assertCode(t, err, errcode.ServiceMissing)
+}
+
+func TestListMethods_ServiceNotInStore(t *testing.T) {
+	store := NewInMemoryStore()
+	_, _, err := ListMethods(store, "com.foo.Svc")
+	assertCode(t, err, errcode.ContractUnresolvable)
+}
+
+func TestListMethods_IncludesInheritedMethodsSorted(t *testing.T) {
+	store := NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.BaseFacade",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "query", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
+			},
+		},
+		javamodel.Class{
+			FQN:        "com.foo.UserFacade",
+			Kind:       javamodel.KindInterface,
+			Interfaces: []string{"com.foo.BaseFacade"},
+			Methods: []javamodel.Method{
+				{Name: "update", ParamTypes: []string{"java.lang.Long"}, ReturnType: "void"},
+				{Name: "create", ParamTypes: []string{"java.lang.String"}, ReturnType: "void"},
+			},
+		},
+	)
+
+	cls, methods, err := ListMethods(store, "com.foo.UserFacade")
+	if err != nil {
+		t.Fatalf("ListMethods: %v", err)
+	}
+	if cls.FQN != "com.foo.UserFacade" {
+		t.Fatalf("class: got %q", cls.FQN)
+	}
+	var names []string
+	for _, m := range methods {
+		names = append(names, m.Name)
+	}
+	want := []string{"create", "query", "update"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("methods: got %v want %v (inherited method must be included, sorted by name)", names, want)
+	}
+}
+
 func assertCode(t *testing.T, err error, want errcode.Code) {
 	t.Helper()
 	var ecerr *errcode.Error

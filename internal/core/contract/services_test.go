@@ -108,14 +108,27 @@ func TestDiscoverServiceInterfaces_CustomSuffixAndWildcard(t *testing.T) {
 	}
 }
 
+// classOnlyStore implements Store without IndexedClasses, standing in for
+// contract sources that can look up classes but cannot enumerate them.
+type classOnlyStore struct {
+	classes map[string]javamodel.Class
+}
+
+func (s classOnlyStore) Class(fqn string) (javamodel.Class, bool) {
+	c, ok := s.classes[fqn]
+	return c, ok
+}
+
 func TestDiscoverServiceInterfaces_NonIndexedStoreReportsContractStoreSource(t *testing.T) {
-	store := NewInMemoryStore(javamodel.Class{
-		FQN:  "com.foo.UserFacade",
-		Kind: javamodel.KindInterface,
-		Methods: []javamodel.Method{{
-			Name: "query",
-		}},
-	})
+	store := classOnlyStore{classes: map[string]javamodel.Class{
+		"com.foo.UserFacade": {
+			FQN:  "com.foo.UserFacade",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{{
+				Name: "query",
+			}},
+		},
+	}}
 
 	discovery := DiscoverServiceInterfaces(store, ServiceDiscoveryOptions{StoreSource: "contract-store"})
 	if discovery.Source != "contract-store" {

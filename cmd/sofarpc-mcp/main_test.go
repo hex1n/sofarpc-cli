@@ -9,12 +9,11 @@ import (
 func TestEnvConfig_IgnoresProjectScopedTargetEnv(t *testing.T) {
 	clearTargetEnv(t)
 	t.Setenv("SOFARPC_DIRECT_URL", "bolt://host:12200")
-	t.Setenv("SOFARPC_REGISTRY_ADDRESS", "zookeeper://host:2181")
 	t.Setenv("SOFARPC_PROTOCOL", "bolt")
 	t.Setenv("SOFARPC_TIMEOUT_MS", "2500")
 
 	cfg := envConfig()
-	if cfg.Mode != "" || cfg.DirectURL != "" || cfg.RegistryAddress != "" || cfg.Protocol != "" || cfg.TimeoutMS != 0 {
+	if cfg.Mode != "" || cfg.DirectURL != "" || cfg.Protocol != "" || cfg.TimeoutMS != 0 {
 		t.Fatalf("envConfig should ignore project-scoped target env, got %+v", cfg)
 	}
 }
@@ -75,8 +74,6 @@ func clearTargetEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"SOFARPC_DIRECT_URL",
-		"SOFARPC_REGISTRY_ADDRESS",
-		"SOFARPC_REGISTRY_PROTOCOL",
 		"SOFARPC_PROTOCOL",
 		"SOFARPC_SERIALIZATION",
 		"SOFARPC_UNIQUE_ID",

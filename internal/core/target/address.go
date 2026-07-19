@@ -7,21 +7,12 @@ import (
 	"strings"
 )
 
-const (
-	DefaultBoltPort     = "12200"
-	DefaultRegistryPort = "2181"
-)
+const DefaultBoltPort = "12200"
 
 // ParseDirectDialAddress canonicalizes a direct SOFARPC target into host:port.
 // It accepts bolt://host[:port], host[:port], and bracketed IPv6 literals.
 func ParseDirectDialAddress(raw string) (string, error) {
 	return parseDialAddress(raw, DefaultBoltPort, "directUrl")
-}
-
-// ParseRegistryDialAddress canonicalizes a registry target into host:port.
-// It accepts scheme://host[:port], host[:port], and bracketed IPv6 literals.
-func ParseRegistryDialAddress(raw string) (string, error) {
-	return parseDialAddress(raw, DefaultRegistryPort, "registryAddress")
 }
 
 func parseDialAddress(raw, defaultPort, field string) (string, error) {

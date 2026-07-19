@@ -135,8 +135,6 @@ func buildProjectProfileConfig(opts setupOptions) (projectconfig.ProfileConfig, 
 	}
 	return projectconfig.ProfileConfig{
 		DirectURL:        cfg.DirectURL,
-		RegistryAddress:  cfg.RegistryAddress,
-		RegistryProtocol: cfg.RegistryProtocol,
 		Protocol:         cfg.Protocol,
 		Serialization:    cfg.Serialization,
 		UniqueID:         cfg.UniqueID,
@@ -208,19 +206,9 @@ func resolveProjectSetupRoot(raw string) (string, error) {
 }
 
 func buildProjectTargetConfig(opts setupOptions) (projectconfig.Config, error) {
-	if opts.set["direct-url"] && strings.TrimSpace(opts.directURL) != "" &&
-		opts.set["registry-address"] && strings.TrimSpace(opts.registryAddr) != "" {
-		return projectconfig.Config{}, fmt.Errorf("--direct-url and --registry-address are mutually exclusive")
-	}
 	var cfg projectconfig.Config
 	if v := projectStringFlag(opts, "direct-url", opts.directURL); v != "" {
 		cfg.DirectURL = v
-	}
-	if v := projectStringFlag(opts, "registry-address", opts.registryAddr); v != "" {
-		cfg.RegistryAddress = v
-	}
-	if v := projectStringFlag(opts, "registry-protocol", opts.registryProtocol); v != "" {
-		cfg.RegistryProtocol = v
 	}
 	if v := projectStringFlag(opts, "protocol", opts.protocol); v != "" {
 		cfg.Protocol = v

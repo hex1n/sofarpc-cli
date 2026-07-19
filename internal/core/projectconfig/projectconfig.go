@@ -27,8 +27,6 @@ const LocalGitignoreEntry = ".sofarpc/config.local.json"
 
 type Config struct {
 	DirectURL            string                       `json:"directUrl,omitempty"`
-	RegistryAddress      string                       `json:"registryAddress,omitempty"`
-	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
 	Protocol             string                       `json:"protocol,omitempty"`
 	Serialization        string                       `json:"serialization,omitempty"`
 	UniqueID             string                       `json:"uniqueId,omitempty"`
@@ -52,8 +50,6 @@ type Config struct {
 // is rejected automatically.
 type ProfileConfig struct {
 	DirectURL            string                       `json:"directUrl,omitempty"`
-	RegistryAddress      string                       `json:"registryAddress,omitempty"`
-	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
 	Protocol             string                       `json:"protocol,omitempty"`
 	Serialization        string                       `json:"serialization,omitempty"`
 	UniqueID             string                       `json:"uniqueId,omitempty"`
@@ -72,8 +68,6 @@ type ReadResult struct {
 
 type fileConfig struct {
 	DirectURL            string                       `json:"directUrl,omitempty"`
-	RegistryAddress      string                       `json:"registryAddress,omitempty"`
-	RegistryProtocol     string                       `json:"registryProtocol,omitempty"`
 	Protocol             string                       `json:"protocol,omitempty"`
 	Serialization        string                       `json:"serialization,omitempty"`
 	UniqueID             string                       `json:"uniqueId,omitempty"`
@@ -202,8 +196,6 @@ func prepareForMarshal(cfg Config) (Config, error) {
 func configToFile(cfg Config, allowedServicesSet bool) fileConfig {
 	fc := fileConfig{
 		DirectURL:            cfg.DirectURL,
-		RegistryAddress:      cfg.RegistryAddress,
-		RegistryProtocol:     cfg.RegistryProtocol,
 		Protocol:             cfg.Protocol,
 		Serialization:        cfg.Serialization,
 		UniqueID:             cfg.UniqueID,
@@ -252,8 +244,6 @@ func HasProfile(cfg Config, name string) bool {
 // invocation property — an empty profile is a no-op and callers should reject it.
 func ProfileHasFields(p ProfileConfig) bool {
 	return strings.TrimSpace(p.DirectURL) != "" ||
-		strings.TrimSpace(p.RegistryAddress) != "" ||
-		strings.TrimSpace(p.RegistryProtocol) != "" ||
 		strings.TrimSpace(p.Protocol) != "" ||
 		strings.TrimSpace(p.Serialization) != "" ||
 		strings.TrimSpace(p.UniqueID) != "" ||
@@ -263,9 +253,6 @@ func ProfileHasFields(p ProfileConfig) bool {
 }
 
 func Validate(cfg Config) error {
-	if strings.TrimSpace(cfg.DirectURL) != "" && strings.TrimSpace(cfg.RegistryAddress) != "" {
-		return fmt.Errorf("directUrl and registryAddress are mutually exclusive")
-	}
 	if _, err := invocationprops.NormalizeInput(cfg.InvocationProperties); err != nil {
 		return err
 	}
@@ -277,8 +264,6 @@ func Validate(cfg Config) error {
 
 func Normalize(cfg Config) Config {
 	cfg.DirectURL = strings.TrimSpace(cfg.DirectURL)
-	cfg.RegistryAddress = strings.TrimSpace(cfg.RegistryAddress)
-	cfg.RegistryProtocol = strings.TrimSpace(cfg.RegistryProtocol)
 	cfg.Protocol = strings.TrimSpace(cfg.Protocol)
 	cfg.Serialization = strings.TrimSpace(cfg.Serialization)
 	cfg.UniqueID = strings.TrimSpace(cfg.UniqueID)
@@ -312,9 +297,6 @@ func validateProfileKeys(profiles map[string]ProfileConfig) error {
 func validateProfileContents(profiles map[string]ProfileConfig) error {
 	for rawName, p := range profiles {
 		name := strings.TrimSpace(rawName)
-		if strings.TrimSpace(p.DirectURL) != "" && strings.TrimSpace(p.RegistryAddress) != "" {
-			return fmt.Errorf("profile %q: directUrl and registryAddress are mutually exclusive", name)
-		}
 		if _, err := invocationprops.NormalizeInput(p.InvocationProperties); err != nil {
 			return fmt.Errorf("profile %q: %w", name, err)
 		}
@@ -335,8 +317,6 @@ func normalizeProfiles(in map[string]ProfileConfig) map[string]ProfileConfig {
 
 func normalizeProfile(p ProfileConfig) ProfileConfig {
 	p.DirectURL = strings.TrimSpace(p.DirectURL)
-	p.RegistryAddress = strings.TrimSpace(p.RegistryAddress)
-	p.RegistryProtocol = strings.TrimSpace(p.RegistryProtocol)
 	p.Protocol = strings.TrimSpace(p.Protocol)
 	p.Serialization = strings.TrimSpace(p.Serialization)
 	p.UniqueID = strings.TrimSpace(p.UniqueID)
@@ -394,8 +374,6 @@ func parse(body []byte) (Config, bool, error) {
 func configFromFile(raw fileConfig) Config {
 	cfg := Config{
 		DirectURL:            strings.TrimSpace(raw.DirectURL),
-		RegistryAddress:      strings.TrimSpace(raw.RegistryAddress),
-		RegistryProtocol:     strings.TrimSpace(raw.RegistryProtocol),
 		Protocol:             strings.TrimSpace(raw.Protocol),
 		Serialization:        strings.TrimSpace(raw.Serialization),
 		UniqueID:             strings.TrimSpace(raw.UniqueID),

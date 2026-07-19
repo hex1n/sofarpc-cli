@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
@@ -27,15 +28,20 @@ func decodedSkeleton(raw []json.RawMessage) []any {
 	return out
 }
 
-// DescribeOutput is the structured payload for sofarpc_describe. On
-// success, Overloads + Selected + Skeleton are populated; on failure,
-// Error is set and the CallToolResult reports IsError=true.
+// DescribeOutput is the structured payload for sofarpc_describe. For a full
+// service+method describe, Overloads + Selected + Skeleton are populated.
+// When method is omitted, Methods lists the service's callable methods; when
+// service is also omitted, Services lists the method-bearing interfaces in
+// the contract index. On failure, Error is set and the CallToolResult
+// reports IsError=true.
 type DescribeOutput struct {
 	Service     string              `json:"service,omitempty"`
 	Method      string              `json:"method,omitempty"`
 	Overloads   []javamodel.Method  `json:"overloads,omitempty"`
 	Selected    int                 `json:"selected,omitempty"`
 	Skeleton    []any               `json:"skeleton,omitempty"`
+	Methods     []javamodel.Method  `json:"methods,omitempty"`
+	Services    []string            `json:"services,omitempty"`
 	Diagnostics DescribeDiagnostics `json:"diagnostics,omitempty"`
 	Error       *errcode.Error      `json:"error,omitempty"`
 }
@@ -54,7 +60,7 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolde
 	sdkmcp.AddTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_describe",
 		Title:       "Describe SOFARPC Method",
-		Description: "Describe a service method: resolve overloads, list param/return types, and return a JSON skeleton when contract information is available.",
+		Description: "Describe a service method: resolve overloads, list param/return types, and return a JSON skeleton when contract information is available. Omit method to list the service's callable methods; omit service and method to list known services.",
 		Annotations: localReadOnlyAnnotations("Describe SOFARPC Method"),
 	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in DescribeInput) (*sdkmcp.CallToolResult, DescribeOutput, error) {
 		notifyToolProgress(ctx, req, 0, 3, "loading contract context")
@@ -71,6 +77,15 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolde
 				Error:   contractNotConfiguredError(),
 			}
 			return errorResult(out), out, nil
+		}
+
+		if strings.TrimSpace(in.Method) == "" {
+			out := describeListing(in, store, toolCtx.Contract)
+			if out.Error != nil {
+				return errorResult(out), out, nil
+			}
+			notifyToolProgress(ctx, req, 3, 3, "listing complete")
+			return toolResult(out, summarizeDescribeListing(out), false), out, nil
 		}
 
 		notifyToolProgress(ctx, req, 1, 3, "resolving method")
@@ -97,6 +112,42 @@ func registerDescribe(server *sdkmcp.Server, opts Options, holder *contractHolde
 		notifyToolProgress(ctx, req, 3, 3, "method described")
 		return toolResult(out, summarizeDescribe(out), false), out, nil
 	})
+}
+
+// describeListing handles the two method-less describe modes: with a service
+// it lists that service's callable methods, without one it lists the
+// method-bearing interfaces known to the contract index.
+func describeListing(in DescribeInput, store contract.Store, snapshot contractSnapshot) DescribeOutput {
+	banner := buildContractBannerForSnapshot(snapshot)
+	diagnostics := DescribeDiagnostics{
+		ContractSource: banner.Source,
+		Contract:       banner,
+	}
+	if strings.TrimSpace(in.Service) == "" {
+		discovery := contract.DiscoverServiceInterfaces(store, contract.ServiceDiscoveryOptions{
+			Suffixes: []string{"*"},
+		})
+		return DescribeOutput{
+			Services:    discovery.CandidateServices,
+			Diagnostics: diagnostics,
+		}
+	}
+	cls, methods, err := contract.ListMethods(store, in.Service)
+	if err != nil {
+		return DescribeOutput{Service: in.Service, Error: asErrcodeError(err)}
+	}
+	return DescribeOutput{
+		Service:     cls.FQN,
+		Methods:     methods,
+		Diagnostics: diagnostics,
+	}
+}
+
+func summarizeDescribeListing(out DescribeOutput) string {
+	if out.Service != "" {
+		return fmt.Sprintf("%s: %d methods", out.Service, len(out.Methods))
+	}
+	return fmt.Sprintf("%d services in contract index", len(out.Services))
 }
 
 func errorResult(out DescribeOutput) *sdkmcp.CallToolResult {

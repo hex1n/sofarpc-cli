@@ -10,6 +10,7 @@ import (
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/projectconfig"
+	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -73,8 +74,19 @@ public class UserDTO {
 	}
 }
 
+// canonicalTempDir resolves t.TempDir() through symlinks so roots compare
+// equal with discovery output (/var vs /private/var on macOS).
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	return dir
+}
+
 func TestInitProject_NoScopeHighConfidenceDiscoveryRequiresExplicitProjectForWrite(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir git: %v", err)
 	}
@@ -193,7 +205,7 @@ func TestInitProject_NoScopeLowConfidenceRejectsWrite(t *testing.T) {
 }
 
 func TestInitProject_NoScopeLowConfidenceDryRunReturnsCandidates(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	if err := os.WriteFile(filepath.Join(root, "pom.xml"), []byte("<project/>"), 0o644); err != nil {
 		t.Fatalf("write pom: %v", err)
 	}
@@ -319,6 +331,28 @@ func sourceContractLoader(t *testing.T) func(string) (contract.Store, error) {
 	t.Helper()
 	return func(projectRoot string) (contract.Store, error) {
 		return sourcecontract.Load(projectRoot)
+	}
+}
+
+func TestInitProject_RejectsRetiredRegistryField(t *testing.T) {
+	for _, key := range []string{"registryAddress", "registryProtocol"} {
+		t.Run(key, func(t *testing.T) {
+			root := t.TempDir()
+			out, result := callInitProject(t, Options{}, map[string]any{
+				"project":  root,
+				"services": []string{"com.foo.UserFacade"},
+				key:        "zookeeper://host:2181",
+			})
+			if !result.IsError || out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
+				t.Fatalf("a retired registry field must be rejected: result=%+v out=%+v", result, out)
+			}
+			if !strings.Contains(out.Error.Message, key) {
+				t.Fatalf("error should name the retired field %q: %+v", key, out.Error)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".sofarpc")); !os.IsNotExist(err) {
+				t.Fatalf("rejected init must not write config: %v", err)
+			}
+		})
 	}
 }
 

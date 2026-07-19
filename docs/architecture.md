@@ -25,7 +25,8 @@ Everything else exists only to make that loop reliable for agents.
 1. **Agent-first surface.** The public API is a small MCP tool set with typed
    JSON inputs and outputs.
 2. **Single visible runtime.** Users and agents interact with one binary:
-   `cmd/sofarpc-mcp`.
+   `cmd/sofarpc-mcp`. The `call` subcommand gives humans and scripts a
+   one-shot invoke path over the same core pipeline and guardrails.
 3. **Pure-Go invoke path.** Direct invocation is implemented in Go for
    `direct + bolt + hessian2`.
 4. **Source-first contract guidance, mandatory execution.** `describe`
@@ -98,9 +99,9 @@ agent how to use the tools and resources safely.
 | `sofarpc_init_project` | Initialize `.sofarpc/config*.json` for a Java project, including service allowlist discovery. |
 | `sofarpc_open` | Open a workspace and return project root, resolved target, capabilities, and a session id. |
 | `sofarpc_target` | Resolve the effective target and optionally probe reachability. |
-| `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. |
+| `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. Without `method` it lists the service's callable methods; without `service` it lists known services. |
 | `sofarpc_invoke` | Build a plan and execute it. `dryRun=true` returns the plan only. |
-| `sofarpc_replay` | Re-run a captured plan from `sessionId` or a literal `payload`. |
+| `sofarpc_replay` | Re-run a captured plan from `sessionId` (optionally a specific `planId` from the session's history) or a literal `payload`. |
 | `sofarpc_doctor` | Run structured diagnostics across target, workspace state, and invoke prerequisites. |
 
 All tools speak JSON. All tool failures use stable `errcode` values and may
@@ -145,8 +146,6 @@ Resolved target config contains:
 
 - `mode`
 - `directUrl`
-- `registryAddress`
-- `registryProtocol`
 - `protocol`
 - `serialization`
 - `uniqueId`
@@ -163,8 +162,21 @@ Built-in defaults:
 `mode` is inferred from the resolved fields:
 
 - `directUrl != ""` -> `direct`
-- `registryAddress != ""` -> `registry`
-- neither -> unresolved target
+- otherwise -> unresolved target
+
+The pure-Go mainline executes only `direct` targets (`bolt + hessian2`).
+Registry-based resolution is not part of the tool surface. Every entrypoint
+rejects a `registryAddress`/`registryProtocol` rather than silently ignoring
+it:
+
+- the `.sofarpc` config parser rejects the key as an unknown field;
+- `sofarpc-mcp setup` rejects the removed `--registry-address`/
+  `--registry-protocol` flags;
+- `sofarpc_invoke`, `sofarpc_replay`, and `sofarpc_init_project` reject the
+  field in tool arguments with an `input.args-invalid` error (their argument
+  decoders are otherwise lenient, so the retired keys are rejected explicitly);
+- `sofarpc_target`/`sofarpc_describe` reject the unknown property through
+  input-schema validation.
 
 ### 5.2 Setup scopes and project defaults
 
@@ -184,8 +196,7 @@ client env. User setup scrubs stale target and service allowlist env such as
 entrypoint ignores those project-specific env keys at runtime. With project
 config, normal `sofarpc_invoke` requests do not need to repeat `directUrl`.
 Per-call target fields exist only for explicit override. Project config does
-not accept a literal `mode`; the mode is derived from the first endpoint
-selected by priority (`directUrl` for direct, `registryAddress` for registry).
+not accept a literal `mode`; the mode is derived from the resolved `directUrl`.
 
 ### 5.3 `sofarpc_init_project`
 
@@ -208,8 +219,8 @@ is conservative by default: it first filters indexed Java FQNs by simple-name
 suffix (`Facade` by default), then parses only those matches to verify they are
 method-bearing interfaces. Agents can pass `serviceNameSuffixes` such as
 `["Facade", "Service"]`, or `["*"]` when they intentionally want to inspect all
-method-bearing interfaces. It never infers `directUrl` or `registryAddress`;
-those targets must be supplied explicitly. The tool refuses to write a config
+method-bearing interfaces. It never infers `directUrl`; the target must be
+supplied explicitly. The tool refuses to write a config
 without `allowedServices`; callers must pass `services`, rely on successful
 discovery, or set `allowAllServices=true` intentionally.
 
@@ -278,9 +289,17 @@ Each session stores:
 - `target`
 - `createdAt`
 - `lastPlan`
+- `plans`: a newest-first, bounded history (10 entries) of captured plans,
+  each with a `planId` handle
 
-This is enough to support `replay` and avoid forcing the agent to respecify the
-same call context repeatedly.
+Successful plan capture returns the `planId` in invoke diagnostics
+(`sessionPlanCapture`), and the session resources expose the history
+(`sofarpc://session/{sessionId}` and
+`sofarpc://session/{sessionId}/plans/{planId}`). `sofarpc_replay` accepts
+`planId` to re-run an older captured plan — for example to compare the last
+successful call against a failing one — while plain `sessionId` replay keeps
+using the most recent capture. This is enough to support `replay` and avoid
+forcing the agent to respecify the same call context repeatedly.
 
 ## 7. Contract model
 
@@ -303,6 +322,11 @@ This logic lives in `internal/core/contract`.
 1. resolve matching overloads
 2. pick the selected signature
 3. build a JSON skeleton for agent editing
+
+It also has two listing modes so agents can discover the surface instead of
+guessing names: without `method` it lists the service's callable methods
+(including inherited ones, sorted), and without `service` it lists the
+method-bearing interfaces in the contract index.
 
 Describe diagnostics include:
 
@@ -547,7 +571,8 @@ arguments or target context.
 
 Input is exactly one of:
 
-- `sessionId`
+- `sessionId`, optionally with `planId` to select an older plan from the
+  session's captured history instead of the most recent one
 - `payload`
 
 `payload` is either a serialized invoke plan or a structured dry-run output

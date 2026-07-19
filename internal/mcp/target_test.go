@@ -115,7 +115,7 @@ func TestTargetHandler_ReportsLayers(t *testing.T) {
 func TestTargetHandler_UsesProjectContextForConfigErrors(t *testing.T) {
 	serverRoot := t.TempDir()
 	sessionRoot := t.TempDir()
-	writeMCPProjectFile(t, sessionRoot, ".sofarpc/config.json", `{"mode":"registry","directUrl":"bolt://project-host:12200"}`)
+	writeMCPProjectFile(t, sessionRoot, ".sofarpc/config.json", `{"mode":"direct","directUrl":"bolt://project-host:12200"}`)
 
 	server := New(Options{
 		TargetSources: target.ProjectSources(serverRoot, target.Config{DirectURL: "bolt://server-host:12200"}),
@@ -198,6 +198,36 @@ func TestTargetHandler_RejectsMismatchedSessionAndProject(t *testing.T) {
 	text := result.Content[0].(*sdkmcp.TextContent).Text
 	if !strings.Contains(text, "does not match") {
 		t.Fatalf("error should mention mismatch, got %q", text)
+	}
+}
+
+func TestTarget_RejectsRetiredRegistryField(t *testing.T) {
+	for _, key := range []string{"registryAddress", "registryProtocol"} {
+		t.Run(key, func(t *testing.T) {
+			server := New(Options{})
+			ctx := context.Background()
+			client := connect(t, ctx, server)
+			defer client.Close()
+
+			result, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
+				Name: "sofarpc_target",
+				Arguments: map[string]any{
+					"cwd": t.TempDir(),
+					key:   "zookeeper://host:2181",
+				},
+			})
+			// The field must be rejected somewhere: either the SDK's inferred
+			// input schema rejects the unknown property (CallTool errors), or
+			// the handler surfaces a tool error. It must never be accepted and
+			// silently dropped into a successful resolution.
+			if err != nil {
+				return
+			}
+			out := decodeTargetOutput(t, result)
+			if !result.IsError && out.Target.Mode != "" {
+				t.Fatalf("a retired registry field must not resolve a target silently: %+v", out)
+			}
+		})
 	}
 }
 
