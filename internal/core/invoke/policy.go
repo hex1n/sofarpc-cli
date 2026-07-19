@@ -12,10 +12,13 @@ import (
 )
 
 const (
-	EnvAllowInvoke         = "SOFARPC_ALLOW_INVOKE"
-	EnvAllowedServices     = "SOFARPC_ALLOWED_SERVICES"
-	EnvAllowTargetOverride = "SOFARPC_ALLOW_TARGET_OVERRIDE"
-	EnvAllowedTargetHosts  = "SOFARPC_ALLOWED_TARGET_HOSTS"
+	EnvAllowInvoke                   = "SOFARPC_ALLOW_INVOKE"
+	EnvAllowedServices               = "SOFARPC_ALLOWED_SERVICES"
+	EnvAllowTargetOverride           = "SOFARPC_ALLOW_TARGET_OVERRIDE"
+	EnvAllowedTargetHosts            = "SOFARPC_ALLOWED_TARGET_HOSTS"
+	EnvMaxConcurrentInvokes          = "SOFARPC_MAX_CONCURRENT_INVOKES"
+	EnvMaxConcurrentInvokesPerTarget = "SOFARPC_MAX_CONCURRENT_INVOKES_PER_TARGET"
+	EnvInvokeQueueTimeoutMS          = "SOFARPC_INVOKE_QUEUE_TIMEOUT_MS"
 )
 
 // EnvFlag reports whether the named guardrail environment variable is set to

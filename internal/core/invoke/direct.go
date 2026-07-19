@@ -134,9 +134,16 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 			errcode.New(errcode.InvocationRejected, phase, msg)
 	}
 
+	formatted, err := sofarpcwire.FormatValueSafe(result.Decoded.AppResponse)
+	if err != nil {
+		return DirectExecution{Handled: true, Diagnostics: diagnostics},
+			errcode.New(errcode.DeserializeFailed, phase,
+				fmt.Sprintf("format SOFARPC response: %v", err))
+	}
+
 	return DirectExecution{
 		Handled:     true,
-		Result:      sofarpcwire.FormatValue(result.Decoded.AppResponse),
+		Result:      formatted,
 		Diagnostics: diagnostics,
 	}, nil
 }

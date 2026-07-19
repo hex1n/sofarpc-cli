@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hex1n/sofarpc-cli/internal/errcode"
+
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,9 +26,10 @@ type OpenOutput struct {
 	// AvailableProfiles lists every profile defined across both config files;
 	// ProfileError is set (and no session is opened) when the requested
 	// profile is defined in neither file.
-	ActiveProfile     string   `json:"activeProfile,omitempty"`
-	AvailableProfiles []string `json:"availableProfiles,omitempty"`
-	ProfileError      string   `json:"profileError,omitempty"`
+	ActiveProfile     string         `json:"activeProfile,omitempty"`
+	AvailableProfiles []string       `json:"availableProfiles,omitempty"`
+	ProfileError      string         `json:"profileError,omitempty"`
+	Error             *errcode.Error `json:"error,omitempty"`
 }
 
 // Capabilities is an up-front capability banner so agents know which
@@ -57,12 +60,12 @@ type ContractBanner struct {
 
 func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sessions := opts.Sessions
-	sdkmcp.AddTool(server, &sdkmcp.Tool{
+	addTypedTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_open",
 		Title:       "Open SOFARPC Workspace",
 		Description: "Open a sofarpc workspace. Returns the resolved target, a capability banner, and a session id the agent can reuse in subsequent calls.",
 		Annotations: localReadOnlyAnnotations("Open SOFARPC Workspace"),
-	}, func(ctx context.Context, req *sdkmcp.CallToolRequest, in OpenInput) (*sdkmcp.CallToolResult, OpenOutput, error) {
+	}, "open", func(ecerr *errcode.Error) OpenOutput { return OpenOutput{Error: ecerr} }, func(ctx context.Context, req *sdkmcp.CallToolRequest, in OpenInput) (*sdkmcp.CallToolResult, OpenOutput, error) {
 		notifyToolProgress(ctx, req, 0, 3, "resolving workspace")
 		toolCtx, err := resolveOpenContext(opts.TargetSources, holder, in.Cwd, in.Project)
 		if err != nil {

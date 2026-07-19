@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -74,19 +75,8 @@ public class UserDTO {
 	}
 }
 
-// canonicalTempDir resolves t.TempDir() through symlinks so roots compare
-// equal with discovery output (/var vs /private/var on macOS).
-func canonicalTempDir(t *testing.T) string {
-	t.Helper()
-	dir, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatalf("EvalSymlinks: %v", err)
-	}
-	return dir
-}
-
 func TestInitProject_NoScopeHighConfidenceDiscoveryRequiresExplicitProjectForWrite(t *testing.T) {
-	root := canonicalTempDir(t)
+	root := isolatedInitProjectTempDir(t)
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir git: %v", err)
 	}
@@ -186,7 +176,10 @@ func TestInitProject_AllowAllServicesWritesExplicitWildcard(t *testing.T) {
 }
 
 func TestInitProject_NoScopeLowConfidenceRejectsWrite(t *testing.T) {
-	root := t.TempDir()
+	root := isolatedInitProjectTempDir(t)
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir git: %v", err)
+	}
 	restoreCwd := chdirForInitProject(t, root)
 	defer restoreCwd()
 
@@ -205,7 +198,10 @@ func TestInitProject_NoScopeLowConfidenceRejectsWrite(t *testing.T) {
 }
 
 func TestInitProject_NoScopeLowConfidenceDryRunReturnsCandidates(t *testing.T) {
-	root := canonicalTempDir(t)
+	root := isolatedInitProjectTempDir(t)
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir git: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "pom.xml"), []byte("<project/>"), 0o644); err != nil {
 		t.Fatalf("write pom: %v", err)
 	}
@@ -392,6 +388,25 @@ func writeInitProjectJava(t *testing.T, root, rel, body string) {
 	}
 }
 
+func isolatedInitProjectTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		base := `C:\tmp`
+		if err := os.MkdirAll(base, 0o755); err == nil {
+			if d, err := os.MkdirTemp(base, "sofarpc-init-project-*"); err == nil {
+				t.Cleanup(func() { _ = os.RemoveAll(d) })
+				dir = d
+			}
+		}
+	}
+	// Resolve symlinks so the root compares equal with discovery output, which
+	// canonicalizes its start dir (/var vs /private/var on macOS).
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return dir
+}
 func chdirForInitProject(t *testing.T, dir string) func() {
 	t.Helper()
 	prev, err := os.Getwd()
