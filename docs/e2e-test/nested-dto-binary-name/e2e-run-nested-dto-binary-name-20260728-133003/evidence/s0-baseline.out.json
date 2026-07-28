@@ -1,0 +1,145 @@
+{
+  "ok": true,
+  "plan": {
+    "schemaVersion": "sofarpc.invoke.plan/v2",
+    "service": "com.thfund.sales.fundsalesmrksupport.facade.background.SeasonBgFacade",
+    "method": "querySeasonTimeWindow",
+    "paramTypes": [
+      "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.SeasonIdRequest"
+    ],
+    "returnType": "com.thfund.sales.fundsalesmrksupport.facade.model.MrkWebResult\u003ccom.thfund.sales.fundsalesmrksupport.facade.model.response.challenge.SeasonTimeWindowResponse\u003e",
+    "args": [
+      {
+        "@type": "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.SeasonIdRequest",
+        "seasonId": "1000002925130006"
+      }
+    ],
+    "target": {
+      "mode": "direct",
+      "directUrl": "bolt://10.74.194.42:12200",
+      "protocol": "bolt",
+      "serialization": "hessian2",
+      "timeoutMs": 10000,
+      "connectTimeoutMs": 1000
+    },
+    "overloads": [
+      {
+        "name": "querySeasonTimeWindow",
+        "paramTypes": [
+          "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.SeasonIdRequest"
+        ],
+        "returnType": "com.thfund.sales.fundsalesmrksupport.facade.model.MrkWebResult\u003ccom.thfund.sales.fundsalesmrksupport.facade.model.response.challenge.SeasonTimeWindowResponse\u003e"
+      }
+    ],
+    "selected": 0,
+    "contractSource": "facade-store",
+    "targetLayers": [
+      {
+        "name": "project-local",
+        "appliedFields": [
+          "directUrl",
+          "protocol",
+          "serialization",
+          "timeoutMs"
+        ]
+      },
+      {
+        "name": "defaults",
+        "appliedFields": [
+          "connectTimeoutMs"
+        ]
+      }
+    ],
+    "argSource": "user"
+  },
+  "result": {
+    "fieldNames": [
+      "traceId",
+      "showType",
+      "redirectUrl",
+      "success",
+      "errorCode",
+      "errorMsg",
+      "errorContext",
+      "data"
+    ],
+    "fields": {
+      "data": {
+        "fieldNames": [
+          "defaultPeriodStrategy",
+          "seasonTimeWindows"
+        ],
+        "fields": {
+          "defaultPeriodStrategy": "FIXED",
+          "seasonTimeWindows": [
+            {
+              "fieldNames": [
+                "code",
+                "name",
+                "startDate",
+                "endDate",
+                "source",
+                "isDefault",
+                "status"
+              ],
+              "fields": {
+                "code": "c7a4b9d2",
+                "endDate": "20260803",
+                "isDefault": false,
+                "name": "E2E_READD",
+                "source": "CUSTOM",
+                "startDate": "20260720",
+                "status": "VALID"
+              },
+              "type": "com.thfund.sales.fundsalesmrksupport.facade.model.response.challenge.SeasonTimeWindowResponse$TimeWindowItem"
+            },
+            {
+              "fieldNames": [
+                "code",
+                "name",
+                "startDate",
+                "endDate",
+                "source",
+                "isDefault",
+                "status"
+              ],
+              "fields": {
+                "code": "ALL",
+                "endDate": null,
+                "isDefault": true,
+                "name": "本赛季",
+                "source": "SYSTEM",
+                "startDate": null,
+                "status": "VALID"
+              },
+              "type": "com.thfund.sales.fundsalesmrksupport.facade.model.response.challenge.SeasonTimeWindowResponse$TimeWindowItem"
+            }
+          ]
+        },
+        "type": "com.thfund.sales.fundsalesmrksupport.facade.model.response.challenge.SeasonTimeWindowResponse"
+      },
+      "errorCode": null,
+      "errorContext": null,
+      "errorMsg": null,
+      "redirectUrl": null,
+      "showType": null,
+      "success": true,
+      "traceId": ""
+    },
+    "type": "com.thfund.sales.fundsalesmrksupport.facade.model.MrkWebResult"
+  },
+  "diagnostics": {
+    "dialTarget": "10.74.194.42:12200",
+    "maxResponseBytes": 16777216,
+    "requestClass": "com.alipay.sofa.rpc.core.request.SofaRequest",
+    "requestCodec": 1,
+    "requestId": 625244025,
+    "responseClass": "com.alipay.sofa.rpc.core.response.SofaResponse",
+    "responseCodec": 1,
+    "responseContentLength": 644,
+    "responseStatus": 0,
+    "target": "bolt://10.74.194.42:12200",
+    "targetServiceUniqueName": "com.thfund.sales.fundsalesmrksupport.facade.background.SeasonBgFacade:1.0",
+    "transport": "direct-bolt"
+  }
+}

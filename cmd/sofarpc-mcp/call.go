@@ -86,11 +86,25 @@ func runCall(w io.Writer, args []string) error {
 		return writeCallOutput(w, callOutput{Ok: true, Plan: &plan}, nil)
 	}
 
+	// A captured plan may predate the nested-class type-name fix and carry
+	// source-canonical @type / paramTypes that Hessian2 cannot resolve.
+	// Rescue a copy before execution, mirroring sofarpc_replay: the reported
+	// plan keeps the captured spelling, the caller's archive file is never
+	// rewritten, and an unresolvable store leaves the plan exactly as
+	// captured so a replay that worked before cannot start failing.
+	execPlan := plan
+	if strings.TrimSpace(in.planFile) != "" {
+		if store := callContractStore(projectRoot); store != nil {
+			execPlan.Args = contract.RewriteWireTypeNames(execPlan.Args, store)
+			execPlan.ParamTypes = contract.WireParamTypes(execPlan.ParamTypes, store)
+		}
+	}
+
 	policy := callExecutionPolicy(sources)
-	if err := policy.Validate(plan, "call"); err != nil {
+	if err := policy.Validate(execPlan, "call"); err != nil {
 		return writeCallOutput(w, callOutput{Plan: &plan, Error: asCallError(err)}, err)
 	}
-	outcome, err := invoke.Execute(context.Background(), plan, "call")
+	outcome, err := invoke.Execute(context.Background(), execPlan, "call")
 	if err != nil {
 		return writeCallOutput(w, callOutput{Plan: &plan, Diagnostics: outcome.Diagnostics, Error: asCallError(err)}, err)
 	}
