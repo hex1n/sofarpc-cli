@@ -174,7 +174,7 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 		SchemaVersion:        PlanSchemaVersion,
 		Service:              in.Service,
 		Method:               in.Method,
-		ParamTypes:           resolved.Method.ParamTypes,
+		ParamTypes:           contract.WireParamTypes(resolved.Method.ParamTypes, facade),
 		ReturnType:           resolved.Method.ReturnType,
 		Args:                 args,
 		Version:              strings.TrimSpace(in.Version),
@@ -297,7 +297,10 @@ func invocationPropertiesInvalidError(phase string, err error) *errcode.Error {
 func resolveArgs(service, method string, userArgs any, paramTypes []string, facade contract.Store) ([]any, string, error) {
 	if userArgs == nil {
 		skeleton := contract.BuildSkeleton(paramTypes, facade)
-		return decodeSkeleton(skeleton), "skeleton", nil
+		// The skeleton renders source-canonical type names for readability;
+		// this branch skips NormalizeArgs, so nested-class @type values must
+		// be rewritten to JVM binary names here before they reach the wire.
+		return contract.RewriteWireTypeNames(decodeSkeleton(skeleton), facade), "skeleton", nil
 	}
 	expandedArgs, err := expandStringifiedJSONArgs(userArgs, paramTypes)
 	if err != nil {

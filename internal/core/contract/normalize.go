@@ -19,6 +19,10 @@ func NormalizeArgs(paramTypes []string, args []any, store Store) ([]any, error) 
 	if len(paramTypes) != len(args) {
 		return nil, fmt.Errorf("arity mismatch: got %d args for %d paramTypes", len(args), len(paramTypes))
 	}
+	// One shared resolution budget for the whole call: the args tree is
+	// caller-supplied and processed before the invoke limiter, so '$'-name
+	// fallback work must not scale with the number of values in it.
+	store = withRequestScopedResolution(store)
 	lookup := ClassLookup(store)
 	out := make([]any, len(args))
 	for i, arg := range args {
@@ -62,7 +66,7 @@ func normalizeForType(spec TypeSpec, raw any, store Store, lookup javatype.Class
 	}
 
 	if isEnumType(spec.Base, store, lookup) {
-		return normalizeEnum(spec.Base, raw), nil
+		return normalizeEnum(spec.Base, raw, store), nil
 	}
 
 	role := javatype.Classify(spec.Base, lookup)
@@ -172,9 +176,9 @@ func normalizeObject(spec TypeSpec, raw any, store Store, lookup javatype.ClassL
 			return nil, err
 		}
 	}
-	fieldTypes := resolvedFieldMap(store, typeName)
+	fieldTypes := resolvedFieldMap(store, storeTypeName(typeName, store))
 	out := make(map[string]any, len(values)+1)
-	out["@type"] = typeName
+	out["@type"] = wireTypeName(typeName, store)
 
 	for key, value := range values {
 		if key == "@type" {
@@ -198,16 +202,16 @@ func normalizeObject(spec TypeSpec, raw any, store Store, lookup javatype.ClassL
 	return out, nil
 }
 
-func normalizeEnum(base string, raw any) any {
+func normalizeEnum(base string, raw any, store Store) any {
 	switch value := raw.(type) {
 	case string:
-		return enumObject(base, value)
+		return enumObject(wireTypeName(base, store), value)
 	case map[string]any:
 		out := make(map[string]any, len(value)+1)
 		if explicit, ok := value["@type"].(string); ok && strings.TrimSpace(explicit) != "" {
-			out["@type"] = strings.TrimSpace(explicit)
+			out["@type"] = wireTypeName(strings.TrimSpace(explicit), store)
 		} else {
-			out["@type"] = base
+			out["@type"] = wireTypeName(base, store)
 		}
 		for key, field := range value {
 			if key == "@type" {
@@ -267,15 +271,17 @@ func normalizeScalar(base string, raw any) (any, error) {
 }
 
 func validateExplicitType(declared, actual string, store Store) error {
-	declared = rawJavaTypeName(declared)
-	actual = rawJavaTypeName(actual)
-	if declared == "" || actual == "" || declared == "java.lang.Object" || declared == actual {
+	declaredName := storeTypeName(rawJavaTypeName(declared), store)
+	actualName := storeTypeName(rawJavaTypeName(actual), store)
+	if declaredName == "" || actualName == "" || declaredName == "java.lang.Object" || declaredName == actualName {
 		return nil
 	}
-	if typeAssignable(store, actual, declared) {
+	if typeAssignable(store, actualName, declaredName) {
 		return nil
 	}
-	return fmt.Errorf("explicit @type %q is not assignable to declared type %s", actual, declared)
+	// Echo the caller's own spelling, not the resolved lookup keys.
+	return fmt.Errorf("explicit @type %q is not assignable to declared type %s",
+		strings.TrimSpace(actual), strings.TrimSpace(declared))
 }
 
 func typeAssignable(store Store, actual, declared string) bool {
@@ -285,7 +291,7 @@ func typeAssignable(store Store, actual, declared string) bool {
 	seen := map[string]bool{}
 	var walk func(string) bool
 	walk = func(name string) bool {
-		name = rawJavaTypeName(name)
+		name = storeTypeName(rawJavaTypeName(name), store)
 		if name == "" || seen[name] {
 			return false
 		}
@@ -310,6 +316,10 @@ func typeAssignable(store Store, actual, declared string) bool {
 	return walk(actual)
 }
 
+// rawJavaTypeName reduces a type expression to its base class name.
+// '$'-vs-'.' equivalence is NOT applied here — that requires the Store
+// (a literal '$' may name a real top-level class); callers that compare
+// or look up identities resolve through storeTypeName.
 func rawJavaTypeName(name string) string {
 	spec := ParseTypeSpec(strings.TrimSpace(name))
 	if spec.Base == "" {

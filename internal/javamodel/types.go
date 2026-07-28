@@ -12,8 +12,12 @@ package javamodel
 // so downstream code can skip enums during method resolution and walk
 // enumConstants for describe-time rendering.
 type Class struct {
-	FQN           string      `json:"fqn"`
-	SimpleName    string      `json:"simpleName"`
+	FQN        string `json:"fqn"`
+	SimpleName string `json:"simpleName"`
+	// BinaryName is the JVM binary name: nested classes join their
+	// enclosing chain with '$' (Outer$Inner) instead of the FQN's '.'.
+	// Empty means unknown — consumers must fall back to FQN.
+	BinaryName    string      `json:"binaryName,omitempty"`
 	File          string      `json:"file,omitempty"`
 	Kind          string      `json:"kind"`
 	TypeParams    []TypeParam `json:"typeParams,omitempty"`

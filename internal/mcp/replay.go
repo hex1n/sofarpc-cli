@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,7 +24,7 @@ type ReplayOutput struct {
 	Error       *errcode.Error `json:"error,omitempty"`
 }
 
-func registerReplay(server *sdkmcp.Server, opts Options) {
+func registerReplay(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	sessions := opts.Sessions
 	sources := opts.TargetSources
 	addRawTool(server, &sdkmcp.Tool{
@@ -57,15 +58,25 @@ func registerReplay(server *sdkmcp.Server, opts Options) {
 		}
 
 		notifyToolProgress(ctx, req, 2, 4, "resolving replay safety scope")
-		scope, scopeErr := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
+		toolCtx, scopeErr := resolveToolContext(sources, sessions, holder, in.SessionID, in.Cwd, in.Project)
 		if scopeErr != nil {
 			ecerr := errcode.New(errcode.ArgsInvalid, "replay", scopeErr.Error())
 			out := ReplayOutput{Plan: plan, Source: source, Error: ecerr}
 			return invokeToolResult(out, errorText("replay failed", ecerr), true), nil
 		}
-		toolSources := scope.Sources
+		toolSources := toolCtx.Sources
 		notifyToolProgress(ctx, req, 3, 4, "executing replay plan")
-		execution := executePlanWithPolicy(ctx, *plan, "replay", toolSources, nil, opts.InvokeLimiter)
+		// Plans captured before nested type names were fixed carry dot-form
+		// names in both Args (@type) and ParamTypes (methodArgSigs). Rescue
+		// them on a copy right before execution: the reported Plan keeps the
+		// captured spelling, and an unresolvable store leaves everything
+		// exactly as captured.
+		execPlan := *plan
+		if store := toolCtx.Contract.store; store != nil {
+			execPlan.Args = contract.RewriteWireTypeNames(execPlan.Args, store)
+			execPlan.ParamTypes = contract.WireParamTypes(execPlan.ParamTypes, store)
+		}
+		execution := executePlanWithPolicy(ctx, execPlan, "replay", toolSources, nil, opts.InvokeLimiter)
 		if execution.Err != nil {
 			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: execution.Outcome.Diagnostics, Error: asErrcodeError(execution.Err)}
 			return invokeToolResultWithLinks(out, planExecutionErrorText("replay", execution), true, replayResourceLinks(in.SessionID, source)...), nil

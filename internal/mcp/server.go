@@ -72,7 +72,7 @@ func New(opts Options) *sdkmcp.Server {
 	registerDescribe(server, opts, holder)
 	registerTarget(server, opts)
 	registerInvoke(server, opts, holder)
-	registerReplay(server, opts)
+	registerReplay(server, opts, holder)
 	registerDoctor(server, opts, holder)
 	return server
 }
