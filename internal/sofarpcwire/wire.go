@@ -248,6 +248,8 @@ func (s *formatState) formatValue(v any, path string, depth int) (any, error) {
 	switch value := v.(type) {
 	case nil, bool, string, int64, float64, int32, int16, int8, int, uint64, uint32, uint16, uint8, uint:
 		return value, nil
+	case *decodedList:
+		return s.formatDecodedList(value, path, depth)
 	case map[string]interface{}:
 		return s.formatStringMap(value, path, depth)
 	case map[interface{}]interface{}:
@@ -345,6 +347,33 @@ func (s *formatState) formatValue(v any, path string, depth int) (any, error) {
 	}
 }
 
+func (s *formatState) formatDecodedList(value *decodedList, path string, depth int) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	leave, err := s.enter(value, path)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+
+	items := make([]any, len(value.items))
+	for i, item := range value.items {
+		formatted, err := s.formatValue(item, fmt.Sprintf("%s[%d]", path, i), depth+1)
+		if err != nil {
+			return nil, err
+		}
+		items[i] = formatted
+	}
+	if value.typeName == "" {
+		return items, nil
+	}
+	return map[string]any{
+		"type":  value.typeName,
+		"items": items,
+	}, nil
+}
+
 func (s *formatState) enter(v any, path string) (func(), error) {
 	return s.enterReflect(reflect.ValueOf(v), path)
 }
@@ -368,7 +397,7 @@ func formatVisitKey(rv reflect.Value) (formatVisit, bool) {
 		return formatVisit{}, false
 	}
 	switch rv.Kind() {
-	case reflect.Map, reflect.Slice:
+	case reflect.Map, reflect.Ptr, reflect.Slice:
 		if rv.IsNil() {
 			return formatVisit{}, false
 		}

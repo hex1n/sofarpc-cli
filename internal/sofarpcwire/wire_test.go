@@ -398,9 +398,13 @@ func TestDecodeResponse_RoundTripsSuccessEnvelope(t *testing.T) {
 		t.Fatalf("resp.ErrorMsg = %q", resp.ErrorMsg)
 	}
 
-	app, ok := resp.AppResponse.(map[string]any)
+	formatted, err := FormatValueSafe(resp.AppResponse)
+	if err != nil {
+		t.Fatalf("FormatValueSafe() error = %v", err)
+	}
+	app, ok := formatted.(map[string]any)
 	if !ok {
-		t.Fatalf("AppResponse type = %T", resp.AppResponse)
+		t.Fatalf("formatted AppResponse type = %T", formatted)
 	}
 	if got := app["type"]; got != "com.example.demo.Result" {
 		t.Fatalf("app.type = %v", got)
@@ -510,6 +514,71 @@ func TestFormatValueSafeRejectsCyclicMap(t *testing.T) {
 		t.Fatalf("error = %v, want cycle detection", err)
 	}
 }
+
+func TestHessianDecoderRegistersListBeforeItsItems(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		data  []byte
+		types []string
+	}{
+		{
+			name: "fixed untyped list",
+			data: []byte{'V', 'n', 0x01, 'M', 'z', 'J', 0x01},
+		},
+		{
+			name: "variable untyped list",
+			data: []byte{'V', 'M', 'z', 'z', 'J', 0x01},
+		},
+		{
+			name:  "compact fixed typed list",
+			data:  []byte{'v', 0x90, 0x91, 'M', 'z', 'J', 0x01},
+			types: []string{"java.util.ArrayList"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := hessianDecoder{data: tt.data, types: tt.types}
+			if _, err := decoder.readValue(); err != nil {
+				t.Fatalf("decode list: %v", err)
+			}
+			later, err := decoder.readValue()
+			if err != nil {
+				t.Fatalf("decode later reference: %v", err)
+			}
+			laterMap, ok := later.(map[string]any)
+			if !ok {
+				t.Fatalf("later reference type = %T, want map item", later)
+			}
+			if len(laterMap) != 0 {
+				t.Fatalf("later reference = %#v, want empty map item", laterMap)
+			}
+		})
+	}
+}
+
+func TestFormatValueSafeRejectsCyclicDecodedList(t *testing.T) {
+	t.Parallel()
+
+	decoder := hessianDecoder{data: []byte{'V', 'n', 0x01, 'J', 0x00}}
+	value, err := decoder.readValue()
+	if err != nil {
+		t.Fatalf("decode cyclic list: %v", err)
+	}
+
+	_, err = FormatValueSafe(value)
+	if err == nil {
+		t.Fatal("expected cycle error")
+	}
+	if !strings.Contains(err.Error(), "cycle detected") {
+		t.Fatalf("error = %v, want cycle detection", err)
+	}
+}
+
 func TestDecodeResponseRejectsOverlargeFixedList(t *testing.T) {
 	t.Parallel()
 

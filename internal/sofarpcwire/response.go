@@ -154,6 +154,8 @@ func summarizeValue(value any) string {
 		return ""
 	case string:
 		return typed
+	case *decodedList:
+		return fmt.Sprintf("list(len=%d)", len(typed.items))
 	case []any:
 		return fmt.Sprintf("list(len=%d)", len(typed))
 	case map[string]any:

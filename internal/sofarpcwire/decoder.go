@@ -45,6 +45,14 @@ type hessianClassDef struct {
 	FieldNames []string
 }
 
+// decodedList keeps a stable identity while its elements are still being
+// decoded. Unlike maps, a Go slice header is copied when stored in the ref
+// table and can become stale after append reallocates its backing array.
+type decodedList struct {
+	typeName string
+	items    []any
+}
+
 type hessianDecoderLimits struct {
 	MaxDepth           int
 	MaxCollectionItems int
@@ -222,18 +230,26 @@ func (d *hessianDecoder) readList() (any, error) {
 		return nil, err
 	}
 
-	items := make([]any, 0)
+	list := &decodedList{typeName: typeName}
 	if length >= 0 {
 		if err := d.checkCollectionLength("list", length); err != nil {
 			return nil, err
 		}
-		items = make([]any, 0, length)
+		list.items = make([]any, length)
+	} else {
+		list.items = make([]any, 0)
+	}
+	if err := d.addRef(list); err != nil {
+		return nil, err
+	}
+
+	if length >= 0 {
 		for i := 0; i < length; i++ {
 			value, err := d.readValue()
 			if err != nil {
 				return nil, err
 			}
-			items = append(items, value)
+			list.items[i] = value
 		}
 		if next, ok := d.peekByte(); ok && next == 'z' {
 			d.offset++
@@ -253,7 +269,7 @@ func (d *hessianDecoder) readList() (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			items = append(items, value)
+			list.items = append(list.items, value)
 			count++
 			if err := d.checkCollectionLength("list", count); err != nil {
 				return nil, err
@@ -261,19 +277,6 @@ func (d *hessianDecoder) readList() (any, error) {
 		}
 	}
 
-	if typeName == "" {
-		if err := d.addRef(items); err != nil {
-			return nil, err
-		}
-		return items, nil
-	}
-	list := map[string]any{
-		"type":  typeName,
-		"items": items,
-	}
-	if err := d.addRef(list); err != nil {
-		return nil, err
-	}
 	return list, nil
 }
 
@@ -293,20 +296,19 @@ func (d *hessianDecoder) readFixedTypedList() (any, error) {
 		return nil, err
 	}
 
-	items := make([]any, 0, length)
+	list := &decodedList{
+		typeName: d.types[ref],
+		items:    make([]any, length),
+	}
+	if err := d.addRef(list); err != nil {
+		return nil, err
+	}
 	for i := 0; i < length; i++ {
 		value, err := d.readValue()
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, value)
-	}
-	list := map[string]any{
-		"type":  d.types[ref],
-		"items": items,
-	}
-	if err := d.addRef(list); err != nil {
-		return nil, err
+		list.items[i] = value
 	}
 	return list, nil
 }

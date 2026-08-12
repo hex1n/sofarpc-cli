@@ -1,0 +1,30 @@
+{
+  "contentHex" : "4fbe636f6d2e616c697061792e736f66612e7270632e636f72652e726573706f6e73652e536f6661526573706f6e7365940769734572726f72086572726f724d73670b617070526573706f6e73650d726573706f6e736550726f70736f90464e4fab636f6d2e6578616d706c652e4c6973744669727374526573756c7492056974656d730b6c61746572416d6f756e746f91566e014fa7636f6d2e6578616d706c652e466978747572654974656d9304636f64650673746174757306616d6f756e746f9206736861726564064143544956454fa46a6176612e6d6174682e426967446563696d616c910576616c75656f9301317a4a044e",
+  "description" : "Guards Hessian reference-table order when a shared BigDecimal is first encountered inside a list",
+  "kind" : "response-content",
+  "name" : "Java-encoded response with an object first seen in a list and referenced later",
+  "want" : {
+    "appResponseJson" : {
+      "fields" : {
+        "items" : [ {
+          "fields" : {
+            "amount" : {
+              "type" : "java.math.BigDecimal",
+              "value" : "1"
+            },
+            "code" : "shared",
+            "status" : "ACTIVE"
+          },
+          "type" : "com.example.FixtureItem"
+        } ],
+        "laterAmount" : {
+          "type" : "java.math.BigDecimal",
+          "value" : "1"
+        }
+      },
+      "type" : "com.example.ListFirstResult"
+    },
+    "appResponseType" : "com.example.ListFirstResult",
+    "isError" : false
+  }
+}

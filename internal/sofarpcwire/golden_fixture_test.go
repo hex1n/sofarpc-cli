@@ -183,7 +183,11 @@ func assertGoldenAppResponseJSON(t *testing.T, want json.RawMessage, got any) {
 	if err != nil {
 		t.Fatalf("response-content want.appResponseJson is not valid JSON: %v", err)
 	}
-	actual, err := normalizeGoldenJSON(goldenCanonicalValue(got))
+	formatted, err := FormatValueSafe(got)
+	if err != nil {
+		t.Fatalf("format AppResponse: %v", err)
+	}
+	actual, err := normalizeGoldenJSON(goldenCanonicalValue(formatted))
 	if err != nil {
 		t.Fatalf("canonicalize AppResponse: %v", err)
 	}
