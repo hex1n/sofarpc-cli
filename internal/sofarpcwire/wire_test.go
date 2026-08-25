@@ -634,3 +634,64 @@ func TestHessianDecoderRejectsOverlargeBytes(t *testing.T) {
 		t.Fatalf("error = %v, want scalar byte limit message", err)
 	}
 }
+
+func TestPrepareArgs_BoxedScalarWrapperEncodesAsNativeScalar(t *testing.T) {
+	args := PrepareArgs([]any{map[string]any{
+		"@type":  "com.foo.Req",
+		"mpCode": map[string]any{"@type": "java.lang.Long", "value": "482723555369426944"},
+		"count":  map[string]any{"@type": "java.lang.Integer", "value": json.Number("7")},
+	}})
+	w := newHessianWriter()
+	if err := w.writeValue(args[0]); err != nil {
+		t.Fatalf("writeValue: %v", err)
+	}
+	encoded := w.Bytes()
+	if bytes.Contains(encoded, []byte("java.lang.Long")) {
+		t.Fatalf("wrapper leaked onto the wire as an object definition: %q", encoded)
+	}
+	// 'L' + big-endian int64(482723555369426944)
+	want := []byte{'L', 0x06, 0xB2, 0xFA, 0x84, 0x1A, 0x82, 0x20, 0x00} // 482723555369426944
+	if !bytes.Contains(encoded, want) {
+		t.Fatalf("native long not found in %q", encoded)
+	}
+	if !bytes.Contains(encoded, []byte{'I', 0, 0, 0, 7}) {
+		t.Fatalf("native int not found in %q", encoded)
+	}
+}
+
+func TestPrepareArgs_MalformedBoxedScalarWrapperIsRejected(t *testing.T) {
+	args := PrepareArgs([]any{map[string]any{
+		"@type": "java.lang.Long",
+		"value": "not-a-number",
+	}})
+	if err := newHessianWriter().writeValue(args[0]); err == nil {
+		t.Fatal("expected an encode error for a malformed wrapper")
+	}
+}
+
+func TestFormatValue_UnsafeLongRoundTripsBackIntoAnArgument(t *testing.T) {
+	const id = int64(482723555369426944)
+
+	formatted := FormatValue(map[string]interface{}{"mpCode": id, "count": int64(7)})
+	fields := formatted.(map[string]interface{})
+	if fields["count"] != int64(7) {
+		t.Fatalf("safe long was rewritten: %#v", fields["count"])
+	}
+	wrapper, ok := fields["mpCode"].(map[string]any)
+	if !ok {
+		t.Fatalf("mpCode: %#v", fields["mpCode"])
+	}
+	if wrapper[javaTypeKey] != "java.lang.Long" || wrapper["value"] != "482723555369426944" {
+		t.Fatalf("wrapper: %#v", wrapper)
+	}
+
+	// What the caller reads back must be sendable verbatim.
+	w := newHessianWriter()
+	if err := w.writeValue(PrepareArgs([]any{wrapper})[0]); err != nil {
+		t.Fatalf("writeValue: %v", err)
+	}
+	want := []byte{'L', 0x06, 0xB2, 0xFA, 0x84, 0x1A, 0x82, 0x20, 0x00}
+	if !bytes.Equal(w.Bytes(), want) {
+		t.Fatalf("re-encoded %q, want %q", w.Bytes(), want)
+	}
+}

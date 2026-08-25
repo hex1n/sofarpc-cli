@@ -534,3 +534,53 @@ func TestNormalizeArgs_Golden(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeArgs_LongKeepsPrecisionOutsideJSSafeRange(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN:  "com.foo.Req",
+		Kind: javamodel.KindClass,
+		Fields: []javamodel.Field{
+			{Name: "mpCode", JavaType: "java.lang.Long"},
+			{Name: "small", JavaType: "long"},
+		},
+	})
+	wrapper := map[string]any{"@type": "java.lang.Long", "value": "482723555369426944"}
+
+	for name, input := range map[string]any{
+		"string":  "482723555369426944",
+		"number":  json.Number("482723555369426944"),
+		"wrapper": map[string]any{"@type": "java.lang.Long", "value": "482723555369426944"},
+	} {
+		args, err := NormalizeArgs([]string{"com.foo.Req"}, []any{
+			map[string]any{"mpCode": input, "small": "12"},
+		}, store)
+		if err != nil {
+			t.Fatalf("%s: NormalizeArgs: %v", name, err)
+		}
+		obj := args[0].(map[string]any)
+		if !reflect.DeepEqual(obj["mpCode"], wrapper) {
+			t.Fatalf("%s: mpCode: %#v", name, obj["mpCode"])
+		}
+		if obj["small"] != int64(12) {
+			t.Fatalf("%s: small: %#v", name, obj["small"])
+		}
+	}
+}
+
+func TestNormalizeArgs_RejectsMismatchedAndMalformedLongWrapper(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN:    "com.foo.Req",
+		Kind:   javamodel.KindClass,
+		Fields: []javamodel.Field{{Name: "mpCode", JavaType: "java.lang.Long"}},
+	})
+	for name, value := range map[string]any{
+		"wrong type":    map[string]any{"@type": "java.lang.Integer", "value": "1"},
+		"missing value": map[string]any{"@type": "java.lang.Long"},
+	} {
+		if _, err := NormalizeArgs([]string{"com.foo.Req"}, []any{
+			map[string]any{"mpCode": value},
+		}, store); err == nil {
+			t.Fatalf("%s: expected error", name)
+		}
+	}
+}

@@ -229,8 +229,73 @@ func enumObject(base, name string) map[string]any {
 	return map[string]any{"@type": base, "name": name}
 }
 
+// jsSafeInteger is Number.MAX_SAFE_INTEGER. Plans travel to the agent as JSON
+// and are re-read by JavaScript clients, which silently round any bare number
+// past this — a Snowflake id comes back pointing at a neighbouring entity. Long
+// values outside the range are carried as an explicit wrapper instead; the wire
+// layer folds it back into a native Hessian long.
+const jsSafeInteger = 1<<53 - 1
+
+func jsSafeLong(value int64) any {
+	if value > jsSafeInteger || value < -jsSafeInteger {
+		return map[string]any{"@type": "java.lang.Long", "value": strconv.FormatInt(value, 10)}
+	}
+	return value
+}
+
+// boxedScalar names the wrapper class a scalar type accepts as an explicit
+// {"@type": ..., "value": ...} envelope.
+func boxedScalar(base string) (string, bool) {
+	switch base {
+	case "boolean", "java.lang.Boolean":
+		return "java.lang.Boolean", true
+	case "byte", "java.lang.Byte":
+		return "java.lang.Byte", true
+	case "short", "java.lang.Short":
+		return "java.lang.Short", true
+	case "int", "java.lang.Integer":
+		return "java.lang.Integer", true
+	case "long", "java.lang.Long":
+		return "java.lang.Long", true
+	case "float", "java.lang.Float":
+		return "java.lang.Float", true
+	case "double", "java.lang.Double":
+		return "java.lang.Double", true
+	default:
+		return "", false
+	}
+}
+
+// unwrapBoxedScalar reduces an explicit wrapper envelope to its inner value so
+// the rest of normalization sees a plain scalar and the plan shows what really
+// goes on the wire.
+func unwrapBoxedScalar(base, wrapper string, raw any) (any, error) {
+	values, ok := stringMap(raw)
+	if !ok {
+		return raw, nil
+	}
+	if explicit, ok := values["@type"].(string); ok {
+		if explicit = strings.TrimSpace(explicit); explicit != "" && explicit != wrapper && explicit != base {
+			return nil, fmt.Errorf("explicit @type %q is not assignable to declared type %s", explicit, base)
+		}
+	}
+	value, ok := values["value"]
+	if !ok || len(values) != 2 {
+		return nil, fmt.Errorf("%s wrapper expects exactly one \"value\" field", wrapper)
+	}
+	return value, nil
+}
+
 func normalizeScalar(base string, raw any) (any, error) {
-	switch strings.TrimSpace(base) {
+	base = strings.TrimSpace(base)
+	if wrapper, ok := boxedScalar(base); ok {
+		unwrapped, err := unwrapBoxedScalar(base, wrapper, raw)
+		if err != nil {
+			return nil, err
+		}
+		raw = unwrapped
+	}
+	switch base {
 	case "boolean", "java.lang.Boolean":
 		return normalizeBool(raw), nil
 	case "byte", "java.lang.Byte":
@@ -247,7 +312,7 @@ func normalizeScalar(base string, raw any) (any, error) {
 		}
 	case "long", "java.lang.Long":
 		if value, ok := toInt64(raw); ok {
-			return value, nil
+			return jsSafeLong(value), nil
 		}
 	case "float", "java.lang.Float":
 		if value, ok := toFloat64(raw); ok {
@@ -371,6 +436,14 @@ func normalizeLoose(raw any, store Store, lookup javatype.ClassLookup) (any, err
 			out[i] = normalized
 		}
 		return out, nil
+	}
+	// An untyped integer literal this large can only be a Java long, and it
+	// would not survive the plan's round trip through a JS client as a bare
+	// number. Same wrapper, same wire bytes.
+	if number, ok := raw.(json.Number); ok && !strings.ContainsAny(number.String(), ".eE") {
+		if value, err := number.Int64(); err == nil && (value > jsSafeInteger || value < -jsSafeInteger) {
+			return jsSafeLong(value), nil
+		}
 	}
 	return raw, nil
 }
