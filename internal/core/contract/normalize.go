@@ -19,6 +19,9 @@ func NormalizeArgs(paramTypes []string, args []any, store Store) ([]any, error) 
 	if len(paramTypes) != len(args) {
 		return nil, fmt.Errorf("arity mismatch: got %d args for %d paramTypes", len(args), len(paramTypes))
 	}
+	if err := ValidateJSONNumberSafety(args); err != nil {
+		return nil, err
+	}
 	// One shared resolution budget for the whole call: the args tree is
 	// caller-supplied and processed before the invoke limiter, so '$'-name
 	// fallback work must not scale with the number of values in it.
@@ -235,6 +238,40 @@ func enumObject(base, name string) map[string]any {
 // values outside the range are carried as an explicit wrapper instead; the wire
 // layer folds it back into a native Hessian long.
 const jsSafeInteger = 1<<53 - 1
+
+// ValidateJSONNumberSafety rejects bare integer JSON numbers that cannot cross
+// a JavaScript MCP client's numeric boundary without losing identity. Callers
+// must use a decimal string or an explicit boxed Long wrapper for those values.
+func ValidateJSONNumberSafety(raw any) error {
+	return validateJSONNumberSafety(raw, "args")
+}
+
+func validateJSONNumberSafety(raw any, path string) error {
+	switch value := raw.(type) {
+	case json.Number:
+		text := value.String()
+		if strings.ContainsAny(text, ".eE") {
+			return nil
+		}
+		parsed, err := value.Int64()
+		if err != nil || parsed > jsSafeInteger || parsed < -jsSafeInteger {
+			return fmt.Errorf("unsafe integer literal %q at %s cannot cross the JSON/JavaScript boundary; send it as a decimal string or explicit {\"@type\":\"java.lang.Long\",\"value\":\"...\"} wrapper", text, path)
+		}
+	case []any:
+		for i, item := range value {
+			if err := validateJSONNumberSafety(item, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		for key, item := range value {
+			if err := validateJSONNumberSafety(item, path+"."+key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 func jsSafeLong(value int64) any {
 	if value > jsSafeInteger || value < -jsSafeInteger {

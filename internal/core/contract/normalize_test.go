@@ -3,6 +3,7 @@ package contract
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
@@ -548,7 +549,6 @@ func TestNormalizeArgs_LongKeepsPrecisionOutsideJSSafeRange(t *testing.T) {
 
 	for name, input := range map[string]any{
 		"string":  "482723555369426944",
-		"number":  json.Number("482723555369426944"),
 		"wrapper": map[string]any{"@type": "java.lang.Long", "value": "482723555369426944"},
 	} {
 		args, err := NormalizeArgs([]string{"com.foo.Req"}, []any{
@@ -564,6 +564,11 @@ func TestNormalizeArgs_LongKeepsPrecisionOutsideJSSafeRange(t *testing.T) {
 		if obj["small"] != int64(12) {
 			t.Fatalf("%s: small: %#v", name, obj["small"])
 		}
+	}
+	if _, err := NormalizeArgs([]string{"com.foo.Req"}, []any{
+		map[string]any{"mpCode": json.Number("482723555369426944")},
+	}, store); err == nil || !strings.Contains(err.Error(), "decimal string") {
+		t.Fatalf("bare unsafe JSON number should fail with an exact-channel hint: %v", err)
 	}
 }
 
@@ -581,6 +586,31 @@ func TestNormalizeArgs_RejectsMismatchedAndMalformedLongWrapper(t *testing.T) {
 			map[string]any{"mpCode": value},
 		}, store); err == nil {
 			t.Fatalf("%s: expected error", name)
+		}
+	}
+}
+
+func TestValidateJSONNumberSafety_RejectsUnsafeBareInteger(t *testing.T) {
+	err := ValidateJSONNumberSafety(map[string]any{
+		"mpCode": json.Number("482723555369426944"),
+	})
+	if err == nil {
+		t.Fatal("expected unsafe JSON integer to be rejected")
+	}
+	if !strings.Contains(err.Error(), "482723555369426944") || !strings.Contains(err.Error(), "decimal string") {
+		t.Fatalf("error should identify the exact value and safe channel: %v", err)
+	}
+}
+
+func TestValidateJSONNumberSafety_AllowsSafeAndExplicitStringValues(t *testing.T) {
+	values := []any{
+		json.Number("9007199254740991"),
+		map[string]any{"@type": "java.lang.Long", "value": "482723555369426944"},
+		map[string]any{"mpCode": "482723555369426944"},
+	}
+	for _, value := range values {
+		if err := ValidateJSONNumberSafety(value); err != nil {
+			t.Fatalf("value %#v: unexpected error: %v", value, err)
 		}
 	}
 }

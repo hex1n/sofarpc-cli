@@ -37,9 +37,11 @@ All notable changes to this project are recorded here.
 - `sofarpc_replay` now requires captured plans to use the current `sofarpc.invoke.plan/v1` schema.
 - Oversized plans are still returned by `sofarpc_invoke`, but are no longer retained in session memory for `sessionId` replay.
 - `sofarpc-mcp setup` now merges existing sofarpc env by default; use `--replace-env` for the previous replacement behavior.
-- `long`/`java.lang.Long` values outside the JavaScript safe-integer range are
-  now carried in plans as `{"@type":"java.lang.Long","value":"<digits>"}` so a
-  JS MCP client cannot silently round a Snowflake id or order number.
+- `long`/`java.lang.Long` values outside the JavaScript safe-integer range must
+  enter through a decimal string or explicit `{"@type":"java.lang.Long","value":"<digits>"}`
+  wrapper. Bare unsafe integer JSON literals are rejected before planning so a
+  JS MCP client cannot silently route a Snowflake id or order number to a
+  neighbouring entity.
 - Response values follow the same rule: a returned `long` outside the safe range
   is rendered as that wrapper instead of a bare number, so an id read out of a
   result can be pasted straight back into the next call.

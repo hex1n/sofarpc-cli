@@ -97,6 +97,9 @@ func ValidateReplayPlan(plan Plan, phase string) error {
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
 				"use invoke dryRun to get a validated plan")
 	}
+	if err := contract.ValidateJSONNumberSafety(plan.Args); err != nil {
+		return unsafeJSONNumberError(phase, plan.Service, plan.Method, err)
+	}
 	if strings.TrimSpace(plan.Target.Mode) == "" {
 		return errcode.New(errcode.TargetMissing, phase,
 			"plan has no target mode").
@@ -229,6 +232,9 @@ func buildTrustedPlan(in Input, report target.Report, plannedInvocationPropertie
 				describeHintArgs(in.Service, in.Method),
 				"align args shape with paramTypes")
 	}
+	if err := contract.ValidateJSONNumberSafety(expandedArgs); err != nil {
+		return Plan{}, unsafeJSONNumberError("invoke", in.Service, in.Method, err)
+	}
 	args, err := coerceArgsVector(expandedArgs, len(in.ParamTypes))
 	if err != nil {
 		return Plan{}, errcode.New(errcode.ArgsInvalid, "invoke",
@@ -278,6 +284,12 @@ func invocationPropertiesInvalidError(phase string, err error) *errcode.Error {
 	return errcode.New(errcode.ArgsInvalid, phase, fmt.Sprintf("invalid invocationProperties: %v", err)).
 		WithHint("sofarpc_doctor", nil,
 			"inspect invocationProperties declarations and missing environment references")
+}
+
+func unsafeJSONNumberError(phase, service, method string, err error) *errcode.Error {
+	return errcode.New(errcode.ArgsInvalid, phase, err.Error()).
+		WithHint("sofarpc_describe", describeHintArgs(service, method),
+			"send large Java Long values as decimal strings or explicit java.lang.Long wrappers")
 }
 
 // resolveArgs chooses the arg vector that will go on the wire.

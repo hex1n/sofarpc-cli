@@ -797,6 +797,30 @@ func TestDecodeInvokeInput_PreservesLargeLongFromRawJSON(t *testing.T) {
 	}
 }
 
+func TestInvoke_RejectsUnsafeBareJSONInteger(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"java.lang.Long"}},
+			},
+		},
+	)
+	out := callInvokeRaw(t, Options{Contract: store}, json.RawMessage(`{
+		"service":"com.foo.Svc",
+		"method":"doThing",
+		"directUrl":"bolt://h:1",
+		"args":[482723555369426944]
+	}`))
+	if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
+		t.Fatalf("expected ArgsInvalid, got %+v", out.Error)
+	}
+	if !strings.Contains(out.Error.Message, "decimal string") {
+		t.Fatalf("error should explain the exact input channel: %q", out.Error.Message)
+	}
+}
+
 func TestInvoke_ArgsEmptyAtIsErrcode(t *testing.T) {
 	store := contract.NewInMemoryStore(
 		javamodel.Class{

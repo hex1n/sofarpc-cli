@@ -55,6 +55,8 @@ Contract-assisted shape:
 
 Use `args` as an inline JSON array. Contract-assisted planning injects DTO `@type`, numeric wrappers, enum shapes, and nested collection normalization where the Java contract makes that safe.
 
+Never send a bare JSON integer outside JavaScript's safe-integer range for a Java `long`/`Long`: the MCP boundary rejects it because a calling JavaScript host may already have rounded the value. Send the exact decimal as a string or as `{"@type":"java.lang.Long","value":"<digits>"}`; `@file` can carry that string/wrapper payload without another object serialization step.
+
 For overloads, include `types` from `sofarpc_describe`. Use `contractMode: "trusted"` or `trusted: true` only when the user intentionally bypasses contract parsing and provides the complete `service`, `method`, `types`, and ordered `args` tuple.
 
 ## Invocation Properties
