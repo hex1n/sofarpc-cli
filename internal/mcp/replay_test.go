@@ -530,6 +530,27 @@ func TestReplay_DecodePayloadPreservesLargeLongString(t *testing.T) {
 	}
 }
 
+func TestReplay_RejectsUnsafeBareJSONInteger(t *testing.T) {
+	out := callReplayRaw(t, Options{}, json.RawMessage(`{
+		"dryRun": true,
+		"payload": {
+			"schemaVersion": "sofarpc.invoke.plan/v2",
+			"service": "com.foo.Svc",
+			"method": "doThing",
+			"paramTypes": ["java.lang.Long"],
+			"args": [482723555369426944],
+			"target": {"mode":"direct","directUrl":"bolt://h:1"},
+			"argSource": "user"
+		}
+	}`))
+	if out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
+		t.Fatalf("expected ArgsInvalid, got %+v", out.Error)
+	}
+	if !strings.Contains(out.Error.Message, "decimal string") {
+		t.Fatalf("error should explain the exact input channel: %q", out.Error.Message)
+	}
+}
+
 func samplePlan() invoke.Plan {
 	return invoke.Plan{
 		SchemaVersion: invoke.PlanSchemaVersion,

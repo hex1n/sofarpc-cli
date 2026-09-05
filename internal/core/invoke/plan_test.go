@@ -3,6 +3,7 @@ package invoke
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
@@ -99,6 +100,80 @@ func TestBuildPlan_UserArgsPassThrough(t *testing.T) {
 	}
 	if plan.Args[0] != "hello" {
 		t.Fatalf("user args should pass through, got %v", plan.Args[0])
+	}
+}
+
+func TestBuildPlan_RejectsUnsafeBareJSONIntegerBeforeWire(t *testing.T) {
+	facade := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"java.lang.Long"}},
+			},
+		},
+	)
+	_, err := BuildPlan(
+		Input{
+			Service: "com.foo.Svc",
+			Method:  "doThing",
+			Args:    []any{json.Number("482723555369426944")},
+			Target:  target.Input{DirectURL: "bolt://h:1"},
+		},
+		facade,
+		target.Sources{},
+	)
+	assertCode(t, err, errcode.ArgsInvalid)
+	var ecerr *errcode.Error
+	if !errors.As(err, &ecerr) {
+		t.Fatalf("error is not *errcode.Error: %T", err)
+	}
+	if !strings.Contains(ecerr.Message, "decimal string") {
+		t.Fatalf("error should explain the exact input channel: %q", ecerr.Message)
+	}
+}
+
+func TestBuildPlan_TrustedModeRejectsUnsafeBareJSONInteger(t *testing.T) {
+	_, err := BuildPlan(
+		Input{
+			Service:    "com.foo.Svc",
+			Method:     "doThing",
+			ParamTypes: []string{"java.lang.Long"},
+			Args:       []any{json.Number("482723555369426944")},
+			Target:     target.Input{DirectURL: "bolt://h:1"},
+		},
+		nil,
+		target.Sources{},
+	)
+	assertCode(t, err, errcode.ArgsInvalid)
+}
+
+func TestBuildPlan_AllowsExactLongDecimalString(t *testing.T) {
+	facade := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"java.lang.Long"}},
+			},
+		},
+	)
+	plan, err := BuildPlan(
+		Input{
+			Service: "com.foo.Svc",
+			Method:  "doThing",
+			Args:    []any{"482723555369426944"},
+			Target:  target.Input{DirectURL: "bolt://h:1"},
+		},
+		facade,
+		target.Sources{},
+	)
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+	wrapper, ok := plan.Args[0].(map[string]any)
+	if !ok || wrapper["@type"] != "java.lang.Long" || wrapper["value"] != "482723555369426944" {
+		t.Fatalf("exact Long should remain a typed decimal wrapper: %#v", plan.Args[0])
 	}
 }
 

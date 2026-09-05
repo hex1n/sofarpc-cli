@@ -3,9 +3,11 @@ package sofarpcwire
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -246,8 +248,17 @@ func (s *formatState) formatValue(v any, path string, depth int) (any, error) {
 		return nil, fmt.Errorf("format value depth at %s exceeds limit %d", path, defaultHessianMaxDepth)
 	}
 	switch value := v.(type) {
-	case nil, bool, string, int64, float64, int32, int16, int8, int, uint64, uint32, uint16, uint8, uint:
+	case nil, bool, string, float64, int32, int16, int8, int, uint32, uint16, uint8, uint:
 		return value, nil
+	case int64:
+		return jsSafeInt64(value), nil
+	case uint64:
+		if value > math.MaxInt64 {
+			return value, nil
+		}
+		return jsSafeInt64(int64(value)), nil
+	case *decodedList:
+		return s.formatDecodedList(value, path, depth)
 	case map[string]interface{}:
 		return s.formatStringMap(value, path, depth)
 	case map[interface{}]interface{}:
@@ -285,7 +296,7 @@ func (s *formatState) formatValue(v any, path string, depth int) (any, error) {
 	case []int64:
 		out := make([]any, len(value))
 		for i, item := range value {
-			out[i] = item
+			out[i] = jsSafeInt64(item)
 		}
 		return out, nil
 	case []float64:
@@ -345,6 +356,33 @@ func (s *formatState) formatValue(v any, path string, depth int) (any, error) {
 	}
 }
 
+func (s *formatState) formatDecodedList(value *decodedList, path string, depth int) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	leave, err := s.enter(value, path)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
+
+	items := make([]any, len(value.items))
+	for i, item := range value.items {
+		formatted, err := s.formatValue(item, fmt.Sprintf("%s[%d]", path, i), depth+1)
+		if err != nil {
+			return nil, err
+		}
+		items[i] = formatted
+	}
+	if value.typeName == "" {
+		return items, nil
+	}
+	return map[string]any{
+		"type":  value.typeName,
+		"items": items,
+	}, nil
+}
+
 func (s *formatState) enter(v any, path string) (func(), error) {
 	return s.enterReflect(reflect.ValueOf(v), path)
 }
@@ -368,7 +406,7 @@ func formatVisitKey(rv reflect.Value) (formatVisit, bool) {
 		return formatVisit{}, false
 	}
 	switch rv.Kind() {
-	case reflect.Map, reflect.Slice:
+	case reflect.Map, reflect.Ptr, reflect.Slice:
 		if rv.IsNil() {
 			return formatVisit{}, false
 		}
@@ -418,6 +456,9 @@ func normalizeSlice(items []any) any {
 
 func normalizeStringMap(input map[string]interface{}) any {
 	if className, ok := input[javaTypeKey].(string); ok && strings.TrimSpace(className) != "" {
+		if unwrapped, ok := unwrapBoxedScalar(strings.TrimSpace(className), input); ok {
+			return unwrapped
+		}
 		fields := make(map[string]interface{}, len(input)-1)
 		for key, value := range input {
 			if key == javaTypeKey {
@@ -435,6 +476,115 @@ func normalizeStringMap(input map[string]interface{}) any {
 		out[key] = normalizeValue(value)
 	}
 	return out
+}
+
+// jsSafeInteger is Number.MAX_SAFE_INTEGER. A Java long past it cannot survive
+// the tool result's trip through a JavaScript MCP client as a bare JSON number:
+// an id read back rounded, then pasted into the next call, silently addresses a
+// neighbouring entity. Values outside the range are rendered in the same
+// wrapper form unwrapBoxedScalar accepts, so what the caller sees is exactly
+// what it can send back. contract.jsSafeLong applies the same rule to plans.
+const jsSafeInteger = 1<<53 - 1
+
+func jsSafeInt64(value int64) any {
+	if value > jsSafeInteger || value < -jsSafeInteger {
+		return map[string]any{
+			javaTypeKey: "java.lang.Long",
+			"value":     strconv.FormatInt(value, 10),
+		}
+	}
+	return value
+}
+
+// invalidBoxedScalar carries a malformed {"@type":"java.lang.Long", ...}
+// wrapper to the encoder, which rejects it. Falling back to a typed object
+// would land the field as null on the server — a silent wrong value is worse
+// than a failed call.
+type invalidBoxedScalar struct {
+	typeName string
+	reason   string
+}
+
+// unwrapBoxedScalar folds {"@type":"java.lang.Long","value":"4827235553694269
+// 44"} into a native Hessian scalar. Java's Hessian2 has no field-based
+// deserializer for the wrapper classes, so writing one as an object definition
+// gives the server a null field. Callers use this form to carry a value beyond
+// the JS safe-integer range as a string, so it has to reach the wire intact.
+func unwrapBoxedScalar(className string, input map[string]interface{}) (any, bool) {
+	switch className {
+	case "java.lang.Long", "java.lang.Integer", "java.lang.Short", "java.lang.Byte",
+		"java.lang.Double", "java.lang.Float", "java.lang.Boolean",
+		"java.lang.Character", "java.lang.String":
+	default:
+		return nil, false
+	}
+	raw, ok := input["value"]
+	if !ok || len(input) != 2 {
+		return invalidBoxedScalar{className, `expects exactly one "value" field`}, true
+	}
+	value, err := coerceBoxedScalar(className, normalizeValue(raw))
+	if err != nil {
+		return invalidBoxedScalar{className, err.Error()}, true
+	}
+	return value, true
+}
+
+func coerceBoxedScalar(className string, value any) (any, error) {
+	switch className {
+	case "java.lang.Boolean":
+		switch typed := value.(type) {
+		case bool:
+			return typed, nil
+		case string:
+			return strconv.ParseBool(strings.TrimSpace(typed))
+		}
+	case "java.lang.Character", "java.lang.String":
+		if typed, ok := value.(string); ok {
+			return typed, nil
+		}
+	case "java.lang.Double", "java.lang.Float":
+		switch typed := value.(type) {
+		case float64:
+			return typed, nil
+		case int64:
+			return float64(typed), nil
+		case string:
+			return strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		}
+	default:
+		var number int64
+		switch typed := value.(type) {
+		case int64:
+			number = typed
+		case string:
+			parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+			if err != nil {
+				return nil, err
+			}
+			number = parsed
+		default:
+			return nil, fmt.Errorf("value %v is not an integer", value)
+		}
+		switch className {
+		case "java.lang.Integer":
+			if number < math.MinInt32 || number > math.MaxInt32 {
+				return nil, fmt.Errorf("value %d is out of int range", number)
+			}
+			return int32(number), nil
+		case "java.lang.Short":
+			if number < math.MinInt16 || number > math.MaxInt16 {
+				return nil, fmt.Errorf("value %d is out of short range", number)
+			}
+			return int16(number), nil
+		case "java.lang.Byte":
+			if number < math.MinInt8 || number > math.MaxInt8 {
+				return nil, fmt.Errorf("value %d is out of byte range", number)
+			}
+			return int8(number), nil
+		}
+		return number, nil
+	}
+	return nil, fmt.Errorf("value %v is not a %s", value, className)
 }
 
 func formatStringMap(input map[string]interface{}) any {

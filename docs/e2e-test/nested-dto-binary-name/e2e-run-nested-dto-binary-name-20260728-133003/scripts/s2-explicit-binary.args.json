@@ -1,0 +1,1 @@
+[{"seasonId":"1000002925130006","dictWindowCodes":["ALL"],"defaultCode":"ALL","customTimeWindows":[{"@type":"com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.bg.UpsertSeasonTimeWindowRequest$CustomTimeWindow","code":"E2EBIN_S2","name":"E2E_S2","startDate":"2026-07-32","endDate":"20260820"}]}]

@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "sofarpc.invoke.plan/v2",
+  "service": "com.thfund.sales.fundsalesmrksupport.facade.background.SeasonBgFacade",
+  "method": "upsertSeasonTimeWindow",
+  "paramTypes": [
+    "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.bg.UpsertSeasonTimeWindowRequest"
+  ],
+  "returnType": "com.thfund.sales.fundsalesmrksupport.facade.model.MrkWebResult<java.lang.String>",
+  "args": [
+    {
+      "@type": "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.bg.UpsertSeasonTimeWindowRequest",
+      "customTimeWindows": [
+        {
+          "@type": "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.bg.UpsertSeasonTimeWindowRequest.CustomTimeWindow",
+          "code": "E2EBIN_S5",
+          "endDate": "20260820",
+          "name": "E2E_S5_REPLAY",
+          "startDate": "2026-07-32"
+        }
+      ],
+      "defaultCode": "ALL",
+      "dictWindowCodes": [
+        "ALL"
+      ],
+      "seasonId": "1000002925130006"
+    }
+  ],
+  "target": {
+    "mode": "direct",
+    "directUrl": "bolt://10.74.194.42:12200",
+    "protocol": "bolt",
+    "serialization": "hessian2",
+    "timeoutMs": 10000,
+    "connectTimeoutMs": 1000
+  },
+  "overloads": [
+    {
+      "name": "upsertSeasonTimeWindow",
+      "paramTypes": [
+        "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.bg.UpsertSeasonTimeWindowRequest"
+      ],
+      "returnType": "com.thfund.sales.fundsalesmrksupport.facade.model.MrkWebResult<java.lang.String>"
+    }
+  ],
+  "selected": 0,
+  "contractSource": "facade-store",
+  "targetLayers": [
+    {
+      "name": "project-local",
+      "appliedFields": [
+        "directUrl",
+        "protocol",
+        "serialization",
+        "timeoutMs"
+      ]
+    },
+    {
+      "name": "defaults",
+      "appliedFields": [
+        "connectTimeoutMs"
+      ]
+    }
+  ],
+  "argSource": "user"
+}

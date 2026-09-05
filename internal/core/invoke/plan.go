@@ -97,6 +97,9 @@ func ValidateReplayPlan(plan Plan, phase string) error {
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true},
 				"use invoke dryRun to get a validated plan")
 	}
+	if err := contract.ValidateJSONNumberSafety(plan.Args); err != nil {
+		return unsafeJSONNumberError(phase, plan.Service, plan.Method, err)
+	}
 	if strings.TrimSpace(plan.Target.Mode) == "" {
 		return errcode.New(errcode.TargetMissing, phase,
 			"plan has no target mode").
@@ -168,7 +171,7 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 		SchemaVersion:        PlanSchemaVersion,
 		Service:              in.Service,
 		Method:               in.Method,
-		ParamTypes:           resolved.Method.ParamTypes,
+		ParamTypes:           contract.WireParamTypes(resolved.Method.ParamTypes, facade),
 		ReturnType:           resolved.Method.ReturnType,
 		Args:                 args,
 		Version:              strings.TrimSpace(in.Version),
@@ -223,6 +226,9 @@ func buildTrustedPlan(in Input, report target.Report, plannedInvocationPropertie
 				describeHintArgs(in.Service, in.Method),
 				"align args shape with paramTypes")
 	}
+	if err := contract.ValidateJSONNumberSafety(expandedArgs); err != nil {
+		return Plan{}, unsafeJSONNumberError("invoke", in.Service, in.Method, err)
+	}
 	args, err := coerceArgsVector(expandedArgs, len(in.ParamTypes))
 	if err != nil {
 		return Plan{}, errcode.New(errcode.ArgsInvalid, "invoke",
@@ -274,6 +280,12 @@ func invocationPropertiesInvalidError(phase string, err error) *errcode.Error {
 			"inspect invocationProperties declarations and missing environment references")
 }
 
+func unsafeJSONNumberError(phase, service, method string, err error) *errcode.Error {
+	return errcode.New(errcode.ArgsInvalid, phase, err.Error()).
+		WithHint("sofarpc_describe", describeHintArgs(service, method),
+			"send large Java Long values as decimal strings or explicit java.lang.Long wrappers")
+}
+
 // resolveArgs chooses the arg vector that will go on the wire.
 //
 //   - user args == nil          → render skeleton from paramTypes.
@@ -291,7 +303,10 @@ func invocationPropertiesInvalidError(phase string, err error) *errcode.Error {
 func resolveArgs(service, method string, userArgs any, paramTypes []string, facade contract.Store) ([]any, string, error) {
 	if userArgs == nil {
 		skeleton := contract.BuildSkeleton(paramTypes, facade)
-		return decodeSkeleton(skeleton), "skeleton", nil
+		// The skeleton renders source-canonical type names for readability;
+		// this branch skips NormalizeArgs, so nested-class @type values must
+		// be rewritten to JVM binary names here before they reach the wire.
+		return contract.RewriteWireTypeNames(decodeSkeleton(skeleton), facade), "skeleton", nil
 	}
 	expandedArgs, err := expandStringifiedJSONArgs(userArgs, paramTypes)
 	if err != nil {

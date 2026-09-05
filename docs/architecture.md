@@ -437,6 +437,9 @@ execution:
   recursively
 - common numeric Java types such as `BigDecimal` and `BigInteger` are wrapped
   into typed-object form
+- Bare integer JSON values outside JavaScript's safe-integer range are rejected
+  at the plan boundary; callers must use a decimal string or explicit Java
+  `Long` wrapper so the original identifier cannot be rounded by the MCP host.
 - enum constants are wrapped into SOFA's canonical enum object shape,
   `{"@type":"com.foo.Status","name":"ACTIVE"}`, so `GenericUtils` can realize
   them into Java enum constants

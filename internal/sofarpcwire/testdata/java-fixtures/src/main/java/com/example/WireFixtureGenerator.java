@@ -33,6 +33,7 @@ public final class WireFixtureGenerator {
                 : Paths.get("..", "golden");
         Files.createDirectories(outputDir);
         writeResponseSuccessFixture(outputDir);
+        writeListFirstSharedReferenceFixture(outputDir);
         writeResponseErrorFixture(outputDir);
         writeRemoteExceptionFixture(outputDir);
     }
@@ -96,6 +97,32 @@ public final class WireFixtureGenerator {
                         "responseProps", object("traceId", "fixture-error-trace"))));
     }
 
+    private static void writeListFirstSharedReferenceFixture(Path outputDir) throws IOException {
+        BigDecimal sharedAmount = new BigDecimal("1");
+        FixtureItem item = new FixtureItem("shared", sharedAmount, FixtureStatus.ACTIVE.name());
+        ArrayList<FixtureItem> items = new ArrayList<FixtureItem>();
+        items.add(item);
+
+        SofaResponse response = new SofaResponse();
+        response.setAppResponse(new ListFirstResult(items, sharedAmount));
+
+        writeFixture(outputDir, "response-list-first-shared-reference.json", object(
+                "name", "Java-encoded response with an object first seen in a list and referenced later",
+                "description", "Guards Hessian reference-table order when a shared BigDecimal is first encountered inside a list",
+                "kind", "response-content",
+                "contentHex", hex(encode(response)),
+                "want", object(
+                        "isError", false,
+                        "appResponseType", "com.example.ListFirstResult",
+                        "appResponseJson", object(
+                                "type", "com.example.ListFirstResult",
+                                "fields", object(
+                                        "items", Arrays.asList(fixtureItemJson("shared", "1", "ACTIVE")),
+                                        "laterAmount", object(
+                                                "type", "java.math.BigDecimal",
+                                                "value", "1"))))));
+    }
+
     private static void writeRemoteExceptionFixture(Path outputDir) throws IOException {
         IllegalStateException exception = new IllegalStateException("fixture remote failure");
         exception.setStackTrace(new StackTraceElement[0]);
@@ -113,14 +140,18 @@ public final class WireFixtureGenerator {
     }
 
     private static Map<String, Object> fixtureItemJson() {
+        return fixtureItemJson("primary", "1000.50", "ACTIVE");
+    }
+
+    private static Map<String, Object> fixtureItemJson(String code, String amount, String status) {
         return object(
                 "type", "com.example.FixtureItem",
                 "fields", object(
-                        "code", "primary",
+                        "code", code,
                         "amount", object(
                                 "type", "java.math.BigDecimal",
-                                "value", "1000.50"),
-                        "status", "ACTIVE"));
+                                "value", amount),
+                        "status", status));
     }
 
     private static void writeFixture(Path outputDir, String fileName, Map<String, Object> fixture) throws IOException {

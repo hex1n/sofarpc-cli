@@ -129,6 +129,8 @@ func (w *hessianWriter) writeValue(value any) error {
 		return nil
 	case []string:
 		return w.writeTypedList("[string]", stringsToAny(typed))
+	case invalidBoxedScalar:
+		return fmt.Errorf(`%s wrapper is not encodable: %s`, typed.typeName, typed.reason)
 	case javaTypedObject:
 		return w.writeTypedObject(typed)
 	case javaLinkedHashMap:

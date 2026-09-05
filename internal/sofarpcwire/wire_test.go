@@ -398,9 +398,13 @@ func TestDecodeResponse_RoundTripsSuccessEnvelope(t *testing.T) {
 		t.Fatalf("resp.ErrorMsg = %q", resp.ErrorMsg)
 	}
 
-	app, ok := resp.AppResponse.(map[string]any)
+	formatted, err := FormatValueSafe(resp.AppResponse)
+	if err != nil {
+		t.Fatalf("FormatValueSafe() error = %v", err)
+	}
+	app, ok := formatted.(map[string]any)
 	if !ok {
-		t.Fatalf("AppResponse type = %T", resp.AppResponse)
+		t.Fatalf("formatted AppResponse type = %T", formatted)
 	}
 	if got := app["type"]; got != "com.example.demo.Result" {
 		t.Fatalf("app.type = %v", got)
@@ -510,6 +514,71 @@ func TestFormatValueSafeRejectsCyclicMap(t *testing.T) {
 		t.Fatalf("error = %v, want cycle detection", err)
 	}
 }
+
+func TestHessianDecoderRegistersListBeforeItsItems(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		data  []byte
+		types []string
+	}{
+		{
+			name: "fixed untyped list",
+			data: []byte{'V', 'n', 0x01, 'M', 'z', 'J', 0x01},
+		},
+		{
+			name: "variable untyped list",
+			data: []byte{'V', 'M', 'z', 'z', 'J', 0x01},
+		},
+		{
+			name:  "compact fixed typed list",
+			data:  []byte{'v', 0x90, 0x91, 'M', 'z', 'J', 0x01},
+			types: []string{"java.util.ArrayList"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			decoder := hessianDecoder{data: tt.data, types: tt.types}
+			if _, err := decoder.readValue(); err != nil {
+				t.Fatalf("decode list: %v", err)
+			}
+			later, err := decoder.readValue()
+			if err != nil {
+				t.Fatalf("decode later reference: %v", err)
+			}
+			laterMap, ok := later.(map[string]any)
+			if !ok {
+				t.Fatalf("later reference type = %T, want map item", later)
+			}
+			if len(laterMap) != 0 {
+				t.Fatalf("later reference = %#v, want empty map item", laterMap)
+			}
+		})
+	}
+}
+
+func TestFormatValueSafeRejectsCyclicDecodedList(t *testing.T) {
+	t.Parallel()
+
+	decoder := hessianDecoder{data: []byte{'V', 'n', 0x01, 'J', 0x00}}
+	value, err := decoder.readValue()
+	if err != nil {
+		t.Fatalf("decode cyclic list: %v", err)
+	}
+
+	_, err = FormatValueSafe(value)
+	if err == nil {
+		t.Fatal("expected cycle error")
+	}
+	if !strings.Contains(err.Error(), "cycle detected") {
+		t.Fatalf("error = %v, want cycle detection", err)
+	}
+}
+
 func TestDecodeResponseRejectsOverlargeFixedList(t *testing.T) {
 	t.Parallel()
 
@@ -563,5 +632,66 @@ func TestHessianDecoderRejectsOverlargeBytes(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "bytes byte length") || !strings.Contains(err.Error(), "exceeds limit") {
 		t.Fatalf("error = %v, want scalar byte limit message", err)
+	}
+}
+
+func TestPrepareArgs_BoxedScalarWrapperEncodesAsNativeScalar(t *testing.T) {
+	args := PrepareArgs([]any{map[string]any{
+		"@type":  "com.foo.Req",
+		"mpCode": map[string]any{"@type": "java.lang.Long", "value": "482723555369426944"},
+		"count":  map[string]any{"@type": "java.lang.Integer", "value": json.Number("7")},
+	}})
+	w := newHessianWriter()
+	if err := w.writeValue(args[0]); err != nil {
+		t.Fatalf("writeValue: %v", err)
+	}
+	encoded := w.Bytes()
+	if bytes.Contains(encoded, []byte("java.lang.Long")) {
+		t.Fatalf("wrapper leaked onto the wire as an object definition: %q", encoded)
+	}
+	// 'L' + big-endian int64(482723555369426944)
+	want := []byte{'L', 0x06, 0xB2, 0xFA, 0x84, 0x1A, 0x82, 0x20, 0x00} // 482723555369426944
+	if !bytes.Contains(encoded, want) {
+		t.Fatalf("native long not found in %q", encoded)
+	}
+	if !bytes.Contains(encoded, []byte{'I', 0, 0, 0, 7}) {
+		t.Fatalf("native int not found in %q", encoded)
+	}
+}
+
+func TestPrepareArgs_MalformedBoxedScalarWrapperIsRejected(t *testing.T) {
+	args := PrepareArgs([]any{map[string]any{
+		"@type": "java.lang.Long",
+		"value": "not-a-number",
+	}})
+	if err := newHessianWriter().writeValue(args[0]); err == nil {
+		t.Fatal("expected an encode error for a malformed wrapper")
+	}
+}
+
+func TestFormatValue_UnsafeLongRoundTripsBackIntoAnArgument(t *testing.T) {
+	const id = int64(482723555369426944)
+
+	formatted := FormatValue(map[string]interface{}{"mpCode": id, "count": int64(7)})
+	fields := formatted.(map[string]interface{})
+	if fields["count"] != int64(7) {
+		t.Fatalf("safe long was rewritten: %#v", fields["count"])
+	}
+	wrapper, ok := fields["mpCode"].(map[string]any)
+	if !ok {
+		t.Fatalf("mpCode: %#v", fields["mpCode"])
+	}
+	if wrapper[javaTypeKey] != "java.lang.Long" || wrapper["value"] != "482723555369426944" {
+		t.Fatalf("wrapper: %#v", wrapper)
+	}
+
+	// What the caller reads back must be sendable verbatim.
+	w := newHessianWriter()
+	if err := w.writeValue(PrepareArgs([]any{wrapper})[0]); err != nil {
+		t.Fatalf("writeValue: %v", err)
+	}
+	want := []byte{'L', 0x06, 0xB2, 0xFA, 0x84, 0x1A, 0x82, 0x20, 0x00}
+	if !bytes.Equal(w.Bytes(), want) {
+		t.Fatalf("re-encoded %q, want %q", w.Bytes(), want)
 	}
 }

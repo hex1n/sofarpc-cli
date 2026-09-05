@@ -397,6 +397,9 @@ normalizes common Java shapes before the wire step:
   objects
 - enum constants are wrapped into SOFA's canonical enum object shape,
   `{"@type":"com.foo.Status","name":"ACTIVE"}`
+- Bare integer JSON values outside JavaScript's safe-integer range are rejected
+  before planning; send Java `Long` values as decimal strings or explicit
+  `{"@type":"java.lang.Long","value":"<digits>"}` wrappers.
 
 For example, a dry-run plan may turn:
 

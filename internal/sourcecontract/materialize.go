@@ -14,6 +14,7 @@ type parsedClass struct {
 	path           string
 	packageName    string
 	fqn            string
+	binaryName     string
 	simpleName     string
 	typeParams     []parsedTypeParam
 	resolverParams map[string]string
@@ -51,6 +52,7 @@ type importTable struct {
 func materializeClass(src parsedClass) (javamodel.Class, []typeResolutionIssue) {
 	cls := javamodel.Class{
 		FQN:        src.fqn,
+		BinaryName: src.binaryName,
 		SimpleName: src.simpleName,
 		File:       src.path,
 		Kind:       src.kind,
@@ -140,6 +142,7 @@ func flattenDeclarations(path, pkg string, imports importTable, decl declaration
 		path:           path,
 		packageName:    pkg,
 		fqn:            currentFQN,
+		binaryName:     joinBinaryName(pkg, currentOuters),
 		simpleName:     decl.simpleName,
 		typeParams:     cloneParsedTypeParams(decl.typeParams),
 		resolverParams: cloneVisibleMap(typeParams),
@@ -198,6 +201,17 @@ func cloneParsedTypeParams(input []parsedTypeParam) []parsedTypeParam {
 
 func joinFQN(pkg string, names []string) string {
 	name := strings.Join(names, ".")
+	if pkg == "" {
+		return name
+	}
+	return pkg + "." + name
+}
+
+// joinBinaryName mirrors joinFQN but joins the nesting chain with '$',
+// producing the JVM binary name (Outer$Inner). Top-level classes have a
+// single-element chain, so their binary name equals the FQN.
+func joinBinaryName(pkg string, names []string) string {
+	name := strings.Join(names, "$")
 	if pkg == "" {
 		return name
 	}

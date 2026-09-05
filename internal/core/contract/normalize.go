@@ -19,6 +19,13 @@ func NormalizeArgs(paramTypes []string, args []any, store Store) ([]any, error) 
 	if len(paramTypes) != len(args) {
 		return nil, fmt.Errorf("arity mismatch: got %d args for %d paramTypes", len(args), len(paramTypes))
 	}
+	if err := ValidateJSONNumberSafety(args); err != nil {
+		return nil, err
+	}
+	// One shared resolution budget for the whole call: the args tree is
+	// caller-supplied and processed before the invoke limiter, so '$'-name
+	// fallback work must not scale with the number of values in it.
+	store = withRequestScopedResolution(store)
 	lookup := ClassLookup(store)
 	out := make([]any, len(args))
 	for i, arg := range args {
@@ -62,7 +69,7 @@ func normalizeForType(spec TypeSpec, raw any, store Store, lookup javatype.Class
 	}
 
 	if isEnumType(spec.Base, store, lookup) {
-		return normalizeEnum(spec.Base, raw), nil
+		return normalizeEnum(spec.Base, raw, store), nil
 	}
 
 	role := javatype.Classify(spec.Base, lookup)
@@ -172,9 +179,9 @@ func normalizeObject(spec TypeSpec, raw any, store Store, lookup javatype.ClassL
 			return nil, err
 		}
 	}
-	fieldTypes := resolvedFieldMap(store, typeName)
+	fieldTypes := resolvedFieldMap(store, storeTypeName(typeName, store))
 	out := make(map[string]any, len(values)+1)
-	out["@type"] = typeName
+	out["@type"] = wireTypeName(typeName, store)
 
 	for key, value := range values {
 		if key == "@type" {
@@ -198,16 +205,16 @@ func normalizeObject(spec TypeSpec, raw any, store Store, lookup javatype.ClassL
 	return out, nil
 }
 
-func normalizeEnum(base string, raw any) any {
+func normalizeEnum(base string, raw any, store Store) any {
 	switch value := raw.(type) {
 	case string:
-		return enumObject(base, value)
+		return enumObject(wireTypeName(base, store), value)
 	case map[string]any:
 		out := make(map[string]any, len(value)+1)
 		if explicit, ok := value["@type"].(string); ok && strings.TrimSpace(explicit) != "" {
-			out["@type"] = strings.TrimSpace(explicit)
+			out["@type"] = wireTypeName(strings.TrimSpace(explicit), store)
 		} else {
-			out["@type"] = base
+			out["@type"] = wireTypeName(base, store)
 		}
 		for key, field := range value {
 			if key == "@type" {
@@ -225,8 +232,107 @@ func enumObject(base, name string) map[string]any {
 	return map[string]any{"@type": base, "name": name}
 }
 
+// jsSafeInteger is Number.MAX_SAFE_INTEGER. Plans travel to the agent as JSON
+// and are re-read by JavaScript clients, which silently round any bare number
+// past this — a Snowflake id comes back pointing at a neighbouring entity. Long
+// values outside the range are carried as an explicit wrapper instead; the wire
+// layer folds it back into a native Hessian long.
+const jsSafeInteger = 1<<53 - 1
+
+// ValidateJSONNumberSafety rejects bare integer JSON numbers that cannot cross
+// a JavaScript MCP client's numeric boundary without losing identity. Callers
+// must use a decimal string or an explicit boxed Long wrapper for those values.
+func ValidateJSONNumberSafety(raw any) error {
+	return validateJSONNumberSafety(raw, "args")
+}
+
+func validateJSONNumberSafety(raw any, path string) error {
+	switch value := raw.(type) {
+	case json.Number:
+		text := value.String()
+		if strings.ContainsAny(text, ".eE") {
+			return nil
+		}
+		parsed, err := value.Int64()
+		if err != nil || parsed > jsSafeInteger || parsed < -jsSafeInteger {
+			return fmt.Errorf("unsafe integer literal %q at %s cannot cross the JSON/JavaScript boundary; send it as a decimal string or explicit {\"@type\":\"java.lang.Long\",\"value\":\"...\"} wrapper", text, path)
+		}
+	case []any:
+		for i, item := range value {
+			if err := validateJSONNumberSafety(item, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		for key, item := range value {
+			if err := validateJSONNumberSafety(item, path+"."+key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func jsSafeLong(value int64) any {
+	if value > jsSafeInteger || value < -jsSafeInteger {
+		return map[string]any{"@type": "java.lang.Long", "value": strconv.FormatInt(value, 10)}
+	}
+	return value
+}
+
+// boxedScalar names the wrapper class a scalar type accepts as an explicit
+// {"@type": ..., "value": ...} envelope.
+func boxedScalar(base string) (string, bool) {
+	switch base {
+	case "boolean", "java.lang.Boolean":
+		return "java.lang.Boolean", true
+	case "byte", "java.lang.Byte":
+		return "java.lang.Byte", true
+	case "short", "java.lang.Short":
+		return "java.lang.Short", true
+	case "int", "java.lang.Integer":
+		return "java.lang.Integer", true
+	case "long", "java.lang.Long":
+		return "java.lang.Long", true
+	case "float", "java.lang.Float":
+		return "java.lang.Float", true
+	case "double", "java.lang.Double":
+		return "java.lang.Double", true
+	default:
+		return "", false
+	}
+}
+
+// unwrapBoxedScalar reduces an explicit wrapper envelope to its inner value so
+// the rest of normalization sees a plain scalar and the plan shows what really
+// goes on the wire.
+func unwrapBoxedScalar(base, wrapper string, raw any) (any, error) {
+	values, ok := stringMap(raw)
+	if !ok {
+		return raw, nil
+	}
+	if explicit, ok := values["@type"].(string); ok {
+		if explicit = strings.TrimSpace(explicit); explicit != "" && explicit != wrapper && explicit != base {
+			return nil, fmt.Errorf("explicit @type %q is not assignable to declared type %s", explicit, base)
+		}
+	}
+	value, ok := values["value"]
+	if !ok || len(values) != 2 {
+		return nil, fmt.Errorf("%s wrapper expects exactly one \"value\" field", wrapper)
+	}
+	return value, nil
+}
+
 func normalizeScalar(base string, raw any) (any, error) {
-	switch strings.TrimSpace(base) {
+	base = strings.TrimSpace(base)
+	if wrapper, ok := boxedScalar(base); ok {
+		unwrapped, err := unwrapBoxedScalar(base, wrapper, raw)
+		if err != nil {
+			return nil, err
+		}
+		raw = unwrapped
+	}
+	switch base {
 	case "boolean", "java.lang.Boolean":
 		return normalizeBool(raw), nil
 	case "byte", "java.lang.Byte":
@@ -243,7 +349,7 @@ func normalizeScalar(base string, raw any) (any, error) {
 		}
 	case "long", "java.lang.Long":
 		if value, ok := toInt64(raw); ok {
-			return value, nil
+			return jsSafeLong(value), nil
 		}
 	case "float", "java.lang.Float":
 		if value, ok := toFloat64(raw); ok {
@@ -267,15 +373,17 @@ func normalizeScalar(base string, raw any) (any, error) {
 }
 
 func validateExplicitType(declared, actual string, store Store) error {
-	declared = rawJavaTypeName(declared)
-	actual = rawJavaTypeName(actual)
-	if declared == "" || actual == "" || declared == "java.lang.Object" || declared == actual {
+	declaredName := storeTypeName(rawJavaTypeName(declared), store)
+	actualName := storeTypeName(rawJavaTypeName(actual), store)
+	if declaredName == "" || actualName == "" || declaredName == "java.lang.Object" || declaredName == actualName {
 		return nil
 	}
-	if typeAssignable(store, actual, declared) {
+	if typeAssignable(store, actualName, declaredName) {
 		return nil
 	}
-	return fmt.Errorf("explicit @type %q is not assignable to declared type %s", actual, declared)
+	// Echo the caller's own spelling, not the resolved lookup keys.
+	return fmt.Errorf("explicit @type %q is not assignable to declared type %s",
+		strings.TrimSpace(actual), strings.TrimSpace(declared))
 }
 
 func typeAssignable(store Store, actual, declared string) bool {
@@ -285,7 +393,7 @@ func typeAssignable(store Store, actual, declared string) bool {
 	seen := map[string]bool{}
 	var walk func(string) bool
 	walk = func(name string) bool {
-		name = rawJavaTypeName(name)
+		name = storeTypeName(rawJavaTypeName(name), store)
 		if name == "" || seen[name] {
 			return false
 		}
@@ -310,6 +418,10 @@ func typeAssignable(store Store, actual, declared string) bool {
 	return walk(actual)
 }
 
+// rawJavaTypeName reduces a type expression to its base class name.
+// '$'-vs-'.' equivalence is NOT applied here — that requires the Store
+// (a literal '$' may name a real top-level class); callers that compare
+// or look up identities resolve through storeTypeName.
 func rawJavaTypeName(name string) string {
 	spec := ParseTypeSpec(strings.TrimSpace(name))
 	if spec.Base == "" {
@@ -361,6 +473,14 @@ func normalizeLoose(raw any, store Store, lookup javatype.ClassLookup) (any, err
 			out[i] = normalized
 		}
 		return out, nil
+	}
+	// An untyped integer literal this large can only be a Java long, and it
+	// would not survive the plan's round trip through a JS client as a bare
+	// number. Same wrapper, same wire bytes.
+	if number, ok := raw.(json.Number); ok && !strings.ContainsAny(number.String(), ".eE") {
+		if value, err := number.Int64(); err == nil && (value > jsSafeInteger || value < -jsSafeInteger) {
+			return jsSafeLong(value), nil
+		}
 	}
 	return raw, nil
 }

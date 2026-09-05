@@ -3,6 +3,7 @@ package contract
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/javamodel"
@@ -532,5 +533,84 @@ func TestNormalizeArgs_Golden(t *testing.T) {
 				t.Fatalf("mismatch\n got:  %#v\nwant: %#v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestNormalizeArgs_LongKeepsPrecisionOutsideJSSafeRange(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN:  "com.foo.Req",
+		Kind: javamodel.KindClass,
+		Fields: []javamodel.Field{
+			{Name: "mpCode", JavaType: "java.lang.Long"},
+			{Name: "small", JavaType: "long"},
+		},
+	})
+	wrapper := map[string]any{"@type": "java.lang.Long", "value": "482723555369426944"}
+
+	for name, input := range map[string]any{
+		"string":  "482723555369426944",
+		"wrapper": map[string]any{"@type": "java.lang.Long", "value": "482723555369426944"},
+	} {
+		args, err := NormalizeArgs([]string{"com.foo.Req"}, []any{
+			map[string]any{"mpCode": input, "small": "12"},
+		}, store)
+		if err != nil {
+			t.Fatalf("%s: NormalizeArgs: %v", name, err)
+		}
+		obj := args[0].(map[string]any)
+		if !reflect.DeepEqual(obj["mpCode"], wrapper) {
+			t.Fatalf("%s: mpCode: %#v", name, obj["mpCode"])
+		}
+		if obj["small"] != int64(12) {
+			t.Fatalf("%s: small: %#v", name, obj["small"])
+		}
+	}
+	if _, err := NormalizeArgs([]string{"com.foo.Req"}, []any{
+		map[string]any{"mpCode": json.Number("482723555369426944")},
+	}, store); err == nil || !strings.Contains(err.Error(), "decimal string") {
+		t.Fatalf("bare unsafe JSON number should fail with an exact-channel hint: %v", err)
+	}
+}
+
+func TestNormalizeArgs_RejectsMismatchedAndMalformedLongWrapper(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN:    "com.foo.Req",
+		Kind:   javamodel.KindClass,
+		Fields: []javamodel.Field{{Name: "mpCode", JavaType: "java.lang.Long"}},
+	})
+	for name, value := range map[string]any{
+		"wrong type":    map[string]any{"@type": "java.lang.Integer", "value": "1"},
+		"missing value": map[string]any{"@type": "java.lang.Long"},
+	} {
+		if _, err := NormalizeArgs([]string{"com.foo.Req"}, []any{
+			map[string]any{"mpCode": value},
+		}, store); err == nil {
+			t.Fatalf("%s: expected error", name)
+		}
+	}
+}
+
+func TestValidateJSONNumberSafety_RejectsUnsafeBareInteger(t *testing.T) {
+	err := ValidateJSONNumberSafety(map[string]any{
+		"mpCode": json.Number("482723555369426944"),
+	})
+	if err == nil {
+		t.Fatal("expected unsafe JSON integer to be rejected")
+	}
+	if !strings.Contains(err.Error(), "482723555369426944") || !strings.Contains(err.Error(), "decimal string") {
+		t.Fatalf("error should identify the exact value and safe channel: %v", err)
+	}
+}
+
+func TestValidateJSONNumberSafety_AllowsSafeAndExplicitStringValues(t *testing.T) {
+	values := []any{
+		json.Number("9007199254740991"),
+		map[string]any{"@type": "java.lang.Long", "value": "482723555369426944"},
+		map[string]any{"mpCode": "482723555369426944"},
+	}
+	for _, value := range values {
+		if err := ValidateJSONNumberSafety(value); err != nil {
+			t.Fatalf("value %#v: unexpected error: %v", value, err)
+		}
 	}
 }

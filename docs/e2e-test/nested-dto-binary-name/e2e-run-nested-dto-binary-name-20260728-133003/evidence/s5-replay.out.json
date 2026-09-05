@@ -1,0 +1,105 @@
+{
+  "ok": true,
+  "plan": {
+    "schemaVersion": "sofarpc.invoke.plan/v2",
+    "service": "com.thfund.sales.fundsalesmrksupport.facade.background.SeasonBgFacade",
+    "method": "upsertSeasonTimeWindow",
+    "paramTypes": [
+      "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.bg.UpsertSeasonTimeWindowRequest"
+    ],
+    "returnType": "com.thfund.sales.fundsalesmrksupport.facade.model.MrkWebResult\u003cjava.lang.String\u003e",
+    "args": [
+      {
+        "@type": "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.bg.UpsertSeasonTimeWindowRequest",
+        "customTimeWindows": [
+          {
+            "@type": "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.bg.UpsertSeasonTimeWindowRequest.CustomTimeWindow",
+            "code": "E2EBIN_S5",
+            "endDate": "20260820",
+            "name": "E2E_S5_REPLAY",
+            "startDate": "2026-07-32"
+          }
+        ],
+        "defaultCode": "ALL",
+        "dictWindowCodes": [
+          "ALL"
+        ],
+        "seasonId": "1000002925130006"
+      }
+    ],
+    "target": {
+      "mode": "direct",
+      "directUrl": "bolt://10.74.194.42:12200",
+      "protocol": "bolt",
+      "serialization": "hessian2",
+      "timeoutMs": 10000,
+      "connectTimeoutMs": 1000
+    },
+    "overloads": [
+      {
+        "name": "upsertSeasonTimeWindow",
+        "paramTypes": [
+          "com.thfund.sales.fundsalesmrksupport.facade.model.request.challenge.bg.UpsertSeasonTimeWindowRequest"
+        ],
+        "returnType": "com.thfund.sales.fundsalesmrksupport.facade.model.MrkWebResult\u003cjava.lang.String\u003e"
+      }
+    ],
+    "selected": 0,
+    "contractSource": "facade-store",
+    "targetLayers": [
+      {
+        "name": "project-local",
+        "appliedFields": [
+          "directUrl",
+          "protocol",
+          "serialization",
+          "timeoutMs"
+        ]
+      },
+      {
+        "name": "defaults",
+        "appliedFields": [
+          "connectTimeoutMs"
+        ]
+      }
+    ],
+    "argSource": "user"
+  },
+  "result": {
+    "fieldNames": [
+      "traceId",
+      "showType",
+      "redirectUrl",
+      "success",
+      "errorCode",
+      "errorMsg",
+      "errorContext",
+      "data"
+    ],
+    "fields": {
+      "data": null,
+      "errorCode": "000",
+      "errorContext": null,
+      "errorMsg": "系统异常,请稍后再试!",
+      "redirectUrl": null,
+      "showType": null,
+      "success": false,
+      "traceId": ""
+    },
+    "type": "com.thfund.sales.fundsalesmrksupport.facade.model.MrkWebResult"
+  },
+  "diagnostics": {
+    "dialTarget": "10.74.194.42:12200",
+    "maxResponseBytes": 16777216,
+    "requestClass": "com.alipay.sofa.rpc.core.request.SofaRequest",
+    "requestCodec": 1,
+    "requestId": 1938466501,
+    "responseClass": "com.alipay.sofa.rpc.core.response.SofaResponse",
+    "responseCodec": 1,
+    "responseContentLength": 279,
+    "responseStatus": 0,
+    "target": "bolt://10.74.194.42:12200",
+    "targetServiceUniqueName": "com.thfund.sales.fundsalesmrksupport.facade.background.SeasonBgFacade:1.0",
+    "transport": "direct-bolt"
+  }
+}
