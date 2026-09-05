@@ -69,6 +69,10 @@ func TestValidateReplayPlanRejectsArityMismatch(t *testing.T) {
 	}
 }
 
+// A replay plan must name its target mode explicitly. This is deliberately
+// stricter than resolving a target from config layers: a replay payload is
+// meant to be an invoke dryRun plan passed verbatim, so a plan that omits the
+// field did not come from one and is rejected rather than normalized.
 func TestValidateReplayPlanRejectsMissingTargetMode(t *testing.T) {
 	t.Parallel()
 

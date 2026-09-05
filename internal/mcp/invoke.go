@@ -253,24 +253,9 @@ func resolveContractMode(in InvokeInput) (string, error) {
 }
 
 func shouldAutoTrustedFallback(in InvokeInput, args any, err error, mode string) bool {
-	if mode != contractModeAuto {
-		return false
-	}
-	if !hasCompleteTrustedTuple(in, args) {
-		return false
-	}
-	var ecerr *errcode.Error
-	if !errors.As(err, &ecerr) {
-		return false
-	}
-	return ecerr.Code == errcode.ContractUnresolvable
-}
-
-func hasCompleteTrustedTuple(in InvokeInput, args any) bool {
-	return strings.TrimSpace(in.Service) != "" &&
-		strings.TrimSpace(in.Method) != "" &&
-		len(in.Types) > 0 &&
-		args != nil
+	return mode == contractModeAuto &&
+		invoke.TrustedTupleComplete(in.Service, in.Method, in.Types, args) &&
+		invoke.IsContractUnresolvable(err)
 }
 
 func strictContractUnavailableError(snapshot contractSnapshot) *errcode.Error {

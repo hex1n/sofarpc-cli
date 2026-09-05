@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -403,95 +404,19 @@ func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 		data["target"] = report.Target
 	}
 
-	if !policy.AllowInvoke {
-		return DoctorCheck{
-			Name:   "invoke-policy",
-			Ok:     false,
-			Detail: invoke.EnvAllowInvoke + " is not enabled; real invoke and replay are blocked",
-			Data:   data,
-			NextStep: &DoctorAction{
-				Tool: "sofarpc_invoke",
-				Args: map[string]any{"dryRun": true},
-			},
+	// The execution policy owns every rule; doctor sequences them in the
+	// order invoke applies them and translates the first rejection.
+	if err := invokePolicyRejection(policy, in.Service, report.Target, "doctor"); err != nil {
+		check := DoctorCheck{Name: "invoke-policy", Ok: false, Detail: err.Error(), Data: data}
+		var ecerr *errcode.Error
+		if errors.As(err, &ecerr) {
+			check.Detail = ecerr.Message
+			check.NextStep = doctorActionFromHint(ecerr.Hint, sources)
 		}
-	}
-	if len(report.ConfigErrors) > 0 {
-		return DoctorCheck{
-			Name:   "invoke-policy",
-			Ok:     false,
-			Detail: "project target config errors block real invoke",
-			Data:   data,
-			NextStep: &DoctorAction{
-				Tool: "sofarpc_target",
-				Args: targetHintArgs(sources),
-			},
-		}
-	}
-	if !policyDiagnostics.AllowedServicesConfigured {
-		return DoctorCheck{
-			Name:   "invoke-policy",
-			Ok:     false,
-			Detail: "project allowedServices is required for real invoke",
-			Data:   data,
-			NextStep: &DoctorAction{
-				Tool: "sofarpc_init_project",
-				Args: initProjectPolicyHintArgs(sources),
-			},
-		}
-	}
-	if strings.TrimSpace(in.Service) != "" && !policy.ServiceAllowed(in.Service) {
-		source := strings.TrimSpace(policy.AllowedServicesSource)
-		if source == "" {
-			source = "configured service allowlist"
-		}
-		return DoctorCheck{
-			Name:   "invoke-policy",
-			Ok:     false,
-			Detail: fmt.Sprintf("service %q is not allowed by %s", in.Service, source),
-			Data:   data,
-			NextStep: &DoctorAction{
-				Tool: "sofarpc_doctor",
-			},
-		}
-	}
-	if report.Target.Mode == "" {
-		return DoctorCheck{
-			Name:   "invoke-policy",
-			Ok:     false,
-			Detail: "real invoke policy is enabled, but no executable target is resolved",
-			Data:   data,
-			NextStep: &DoctorAction{
-				Tool: "sofarpc_target",
-				Args: map[string]any{"explain": true},
-			},
-		}
-	}
-	if !target.SupportsDirectBolt(report.Target) {
-		return DoctorCheck{
-			Name:   "invoke-policy",
-			Ok:     false,
-			Detail: fmt.Sprintf("pure-Go invoke supports only direct+bolt+hessian2; got mode=%s protocol=%s serialization=%s", report.Target.Mode, report.Target.Protocol, report.Target.Serialization),
-			Data:   data,
-			NextStep: &DoctorAction{
-				Tool: "sofarpc_target",
-				Args: targetHintArgs(sources),
-			},
-		}
-	}
-	if err := policy.ValidateTarget(invoke.Plan{Target: report.Target}, "doctor"); err != nil {
-		return DoctorCheck{
-			Name:   "invoke-policy",
-			Ok:     false,
-			Detail: err.Error(),
-			Data:   data,
-			NextStep: &DoctorAction{
-				Tool: "sofarpc_target",
-				Args: targetHintArgs(sources),
-			},
-		}
+		return check
 	}
 	detail := "real invoke policy allows the resolved direct target"
-	if len(policy.AllowedServices) > 0 && strings.TrimSpace(in.Service) == "" {
+	if policyDiagnostics.AllowedServicesConfigured && strings.TrimSpace(in.Service) == "" {
 		detail += "; pass service to doctor to verify service allowlisting"
 	}
 	return DoctorCheck{
@@ -500,6 +425,72 @@ func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 		Detail: detail,
 		Data:   data,
 	}
+}
+
+// invokePolicyRejection walks the execution policy rules and returns the
+// first rejection. Within the policy the order matches what a real invoke
+// applies: config, enablement, service, target override and host, then the
+// transport rule the wire path reaches last.
+//
+// Two rules are deliberately placed differently from a real invoke. The
+// service rule runs only when doctor was given a service to check, and the
+// "no target resolved" rule runs after the enablement and service rules
+// rather than ahead of everything, because doctor's own target check already
+// reports a missing target and the actionable answer here is the policy gap.
+func invokePolicyRejection(policy invoke.ExecutionPolicy, service string, cfg target.Config, phase string) error {
+	if err := policy.ValidateProjectConfig(phase); err != nil {
+		return err
+	}
+	if err := policy.ValidateRealInvokeEnabled(phase); err != nil {
+		return err
+	}
+	if strings.TrimSpace(service) != "" {
+		if err := policy.ValidateServiceAllowed(service, phase); err != nil {
+			return err
+		}
+	}
+	if err := invoke.ValidateTargetResolved(cfg, phase); err != nil {
+		return err
+	}
+	if err := policy.ValidateTarget(invoke.Plan{Target: cfg}, phase); err != nil {
+		return err
+	}
+	return invoke.ValidateTargetTransport(cfg, phase)
+}
+
+// doctorActionFromHint carries an execution policy hint through as doctor's
+// next step, with one translation. A hint that sends an agent to doctor is
+// asking it to read the policy doctor has already rendered in this check's
+// data, so the useful next step is the tool that writes that policy instead.
+// Project-aware tools are scoped to the project root when the hint left it
+// unset.
+func doctorActionFromHint(hint *errcode.Hint, sources target.Sources) *DoctorAction {
+	if hint == nil {
+		return nil
+	}
+	tool := strings.TrimSpace(hint.NextTool)
+	if tool == "" {
+		return nil
+	}
+	args := map[string]any{}
+	for key, value := range hint.NextArgs {
+		args[key] = value
+	}
+	if tool == "sofarpc_doctor" {
+		tool = "sofarpc_init_project"
+		args = map[string]any{"dryRun": true}
+	}
+	if tool == "sofarpc_target" || tool == "sofarpc_init_project" {
+		if root := strings.TrimSpace(sources.ProjectRoot); root != "" {
+			if _, ok := args["project"]; !ok {
+				args["project"] = root
+			}
+		}
+	}
+	if len(args) == 0 {
+		args = nil
+	}
+	return &DoctorAction{Tool: tool, Args: args}
 }
 
 func checkContract(snapshot contractSnapshot, targetRoot string, cache map[string]any) DoctorCheck {

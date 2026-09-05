@@ -32,6 +32,6 @@ func unsupportedTargetError(phase string, plan Plan) *errcode.Error {
 	return errcode.New(errcode.InvocationRejected, phase,
 		fmt.Sprintf("pure-Go invoke supports only direct+bolt+hessian2; got mode=%s protocol=%s serialization=%s",
 			plan.Target.Mode, plan.Target.Protocol, plan.Target.Serialization)).
-		WithHint("sofarpc_doctor", nil,
-			"doctor shows whether the resolved target fits the direct invoke path")
+		WithHint("sofarpc_target", map[string]any{"explain": true},
+			"inspect the resolved target protocol and serialization")
 }

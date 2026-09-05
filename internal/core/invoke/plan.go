@@ -115,10 +115,7 @@ func ValidateExecutablePlan(plan Plan, phase string) error {
 	if err := ValidateReplayPlan(plan, phase); err != nil {
 		return err
 	}
-	if !target.SupportsDirectBolt(plan.Target) {
-		return unsupportedTargetError(phase, plan)
-	}
-	return nil
+	return ValidateTargetTransport(plan.Target, phase)
 }
 
 // BuildPlan resolves target + contract + args and returns a Plan.
@@ -146,11 +143,8 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 			WithHint("sofarpc_target", map[string]any{"explain": true},
 				"list available profiles before selecting one")
 	}
-	if report.Target.Mode == "" {
-		return Plan{}, errcode.New(errcode.TargetMissing, "invoke",
-			"no target resolved; call sofarpc_target for the layer breakdown").
-			WithHint("sofarpc_target", map[string]any{"explain": true},
-				"inspect config layers to see which field is missing")
+	if err := ValidateTargetResolved(report.Target, "invoke"); err != nil {
+		return Plan{}, err
 	}
 	plannedInvocationProperties, err := planInvocationProperties(in, sources)
 	if err != nil {

@@ -93,7 +93,18 @@ func (p ExecutionPolicy) Validate(plan Plan, phase string) error {
 	return p.ValidateTarget(plan, phase)
 }
 
+// ValidateRealInvoke is the real-invoke gate in the order invoke applies it:
+// the policy must be enabled, then the service must be allowed.
 func (p ExecutionPolicy) ValidateRealInvoke(service string, phase string) error {
+	if err := p.ValidateRealInvokeEnabled(phase); err != nil {
+		return err
+	}
+	return p.ValidateServiceAllowed(service, phase)
+}
+
+// ValidateRealInvokeEnabled rejects when real invoke is disabled or no
+// project allowlist is configured; it looks at no service.
+func (p ExecutionPolicy) ValidateRealInvokeEnabled(phase string) error {
 	phase = normalizePolicyPhase(phase)
 	if !p.AllowInvoke {
 		return errcode.New(errcode.InvocationRejected, phase,
@@ -103,9 +114,15 @@ func (p ExecutionPolicy) ValidateRealInvoke(service string, phase string) error 
 	if !p.serviceAllowlistConfigured() {
 		return errcode.New(errcode.InvocationRejected, phase,
 			"project allowedServices is required for real invoke; configure .sofarpc/config.local.json or .sofarpc/config.json").
-			WithHint("sofarpc_init_project", map[string]any{"dryRun": true},
+			WithHint("sofarpc_init_project", InitProjectHintArgs(p.Sources),
 				"initialize project allowedServices before enabling real invoke")
 	}
+	return nil
+}
+
+// ValidateServiceAllowed rejects a service outside the configured allowlist.
+func (p ExecutionPolicy) ValidateServiceAllowed(service string, phase string) error {
+	phase = normalizePolicyPhase(phase)
 	if !p.ServiceAllowed(service) {
 		source := strings.TrimSpace(p.AllowedServicesSource)
 		if source == "" {
@@ -113,7 +130,8 @@ func (p ExecutionPolicy) ValidateRealInvoke(service string, phase string) error 
 		}
 		return errcode.New(errcode.InvocationRejected, phase,
 			fmt.Sprintf("service %q is not allowed by %s", service, source)).
-			WithHint("sofarpc_doctor", nil, "inspect invoke safety configuration")
+			WithHint("sofarpc_doctor", map[string]any{"service": service},
+				"doctor reports the configured allowedServices this service was checked against")
 	}
 	return nil
 }
@@ -151,19 +169,19 @@ func (p ExecutionPolicy) ValidateTarget(plan Plan, phase string) error {
 		case ambientCfg.DirectURL == "":
 			return errcode.New(errcode.InvocationRejected, phase,
 				fmt.Sprintf("direct target %q is not allowed; configure .sofarpc/config.local.json, .sofarpc/config.json, or set %s=true", cfg.DirectURL, EnvAllowTargetOverride)).
-				WithHint("sofarpc_target", policyTargetHintArgs(p.Sources),
+				WithHint("sofarpc_target", TargetHintArgs(p.Sources),
 					"inspect the resolved target before enabling real invoke")
 		default:
 			same, err := SameDirectTarget(cfg.DirectURL, ambientCfg.DirectURL)
 			if err != nil {
 				return errcode.New(errcode.TargetInvalid, phase, err.Error()).
-					WithHint("sofarpc_target", policyTargetHintArgs(p.Sources),
+					WithHint("sofarpc_target", TargetHintArgs(p.Sources),
 						"inspect the resolved direct target address")
 			}
 			if !same {
 				return errcode.New(errcode.InvocationRejected, phase,
 					fmt.Sprintf("direct target %q does not match the resolved ambient target; set %s=true to allow per-call target overrides", cfg.DirectURL, EnvAllowTargetOverride)).
-					WithHint("sofarpc_target", policyTargetHintArgs(p.Sources),
+					WithHint("sofarpc_target", TargetHintArgs(p.Sources),
 						"inspect the resolved target layers")
 			}
 		}
@@ -172,15 +190,39 @@ func (p ExecutionPolicy) ValidateTarget(plan Plan, phase string) error {
 	allowed, host, err := p.DirectTargetHostAllowed(cfg.DirectURL)
 	if err != nil {
 		return errcode.New(errcode.TargetInvalid, phase, err.Error()).
-			WithHint("sofarpc_target", policyTargetHintArgs(p.Sources),
+			WithHint("sofarpc_target", TargetHintArgs(p.Sources),
 				"inspect the resolved direct target address")
 	}
 	if !allowed {
 		return errcode.New(errcode.InvocationRejected, phase,
 			fmt.Sprintf("direct target host %q is not allowed by %s", host, EnvAllowedTargetHosts)).
-			WithHint("sofarpc_doctor", nil, "inspect invoke safety configuration")
+			WithHint("sofarpc_target", TargetHintArgs(p.Sources),
+				"inspect the resolved direct target host")
 	}
 	return nil
+}
+
+// ValidateTargetResolved rejects when no config layer produced a target to
+// execute against. It is the single owner of the "nothing resolved" rule:
+// BuildPlan and doctor both route here so agents read one message.
+func ValidateTargetResolved(cfg target.Config, phase string) error {
+	if strings.TrimSpace(target.Normalize(cfg).Mode) != "" {
+		return nil
+	}
+	return errcode.New(errcode.TargetMissing, normalizePolicyPhase(phase),
+		"no target resolved; call sofarpc_target for the layer breakdown").
+		WithHint("sofarpc_target", map[string]any{"explain": true},
+			"inspect config layers to see which field is missing")
+}
+
+// ValidateTargetTransport rejects a resolved target the pure-Go transport
+// cannot execute. It is the single owner of the direct+bolt+hessian2 rule:
+// Execute applies it on the wire path, doctor previews it.
+func ValidateTargetTransport(cfg target.Config, phase string) error {
+	if target.SupportsDirectBolt(cfg) {
+		return nil
+	}
+	return unsupportedTargetError(normalizePolicyPhase(phase), Plan{Target: cfg})
 }
 
 func (p ExecutionPolicy) ValidateProjectConfig(phase string) error {
@@ -189,8 +231,8 @@ func (p ExecutionPolicy) ValidateProjectConfig(phase string) error {
 		return nil
 	}
 	return errcode.New(errcode.InvocationRejected, phase,
-		"project target config has errors: "+formatPolicyConfigErrors(p.Sources.ConfigErrors)).
-		WithHint("sofarpc_target", policyTargetHintArgs(p.Sources),
+		"project target config has errors: "+target.FormatConfigErrors(p.Sources.ConfigErrors)).
+		WithHint("sofarpc_target", TargetHintArgs(p.Sources),
 			"inspect project config errors and resolved target layers")
 }
 
@@ -238,27 +280,21 @@ func normalizePolicyPhase(phase string) string {
 	return phase
 }
 
-func policyTargetHintArgs(sources target.Sources) map[string]any {
-	args := map[string]any{"explain": true}
-	if strings.TrimSpace(sources.ProjectRoot) != "" {
-		args["project"] = sources.ProjectRoot
-	}
-	return args
+// TargetHintArgs builds the sofarpc_target arguments that send an agent to
+// the resolved layer breakdown, scoped to the project when one is known.
+func TargetHintArgs(sources target.Sources) map[string]any {
+	return projectScopedHintArgs(sources, map[string]any{"explain": true})
 }
 
-func formatPolicyConfigErrors(errors []target.ConfigError) string {
-	parts := make([]string, 0, len(errors))
-	for _, item := range errors {
-		path := strings.TrimSpace(item.Path)
-		msg := strings.TrimSpace(item.Error)
-		switch {
-		case path != "" && msg != "":
-			parts = append(parts, path+": "+msg)
-		case path != "":
-			parts = append(parts, path)
-		case msg != "":
-			parts = append(parts, msg)
-		}
+// InitProjectHintArgs builds the sofarpc_init_project arguments that let an
+// agent inspect project policy without writing to it.
+func InitProjectHintArgs(sources target.Sources) map[string]any {
+	return projectScopedHintArgs(sources, map[string]any{"dryRun": true})
+}
+
+func projectScopedHintArgs(sources target.Sources, args map[string]any) map[string]any {
+	if root := strings.TrimSpace(sources.ProjectRoot); root != "" {
+		args["project"] = root
 	}
-	return strings.Join(parts, "; ")
+	return args
 }

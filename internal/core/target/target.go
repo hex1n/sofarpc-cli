@@ -573,6 +573,26 @@ func Normalize(cfg Config) Config {
 	return normalizeResolvedTarget(cfg)
 }
 
+// FormatConfigErrors renders project config errors as one human-readable
+// line. It is the single formatter shared by the policy layer and the MCP
+// tools so both report a config problem identically.
+func FormatConfigErrors(errors []ConfigError) string {
+	parts := make([]string, 0, len(errors))
+	for _, item := range errors {
+		path := strings.TrimSpace(item.Path)
+		msg := strings.TrimSpace(item.Error)
+		switch {
+		case path != "" && msg != "":
+			parts = append(parts, path+": "+msg)
+		case path != "":
+			parts = append(parts, path)
+		case msg != "":
+			parts = append(parts, msg)
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
 // SupportsDirectBolt reports whether cfg picks out the single concrete
 // invoke shape the pure-Go runtime can execute today. Empty Protocol /
 // Serialization are treated as "accept defaults"; callers that want to

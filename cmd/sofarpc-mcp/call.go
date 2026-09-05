@@ -142,7 +142,7 @@ func callPlan(in callFlags, projectRoot string, sources target.Sources) (invoke.
 	}
 	store := callContractStore(projectRoot)
 	plan, err := invoke.BuildPlan(input, store, sources)
-	if err != nil && store != nil && callTrustedFallback(err, paramTypes, args) {
+	if err != nil && store != nil && callTrustedFallback(err, in, paramTypes, args) {
 		plan, err = invoke.BuildPlan(input, nil, sources)
 	}
 	return plan, err
@@ -159,12 +159,8 @@ func callContractStore(projectRoot string) contract.Store {
 // callTrustedFallback matches sofarpc_invoke's auto contract mode: an
 // unresolvable local contract falls back to trusted execution only when the
 // caller supplied the complete trusted tuple.
-func callTrustedFallback(err error, paramTypes []string, args any) bool {
-	if len(paramTypes) == 0 || args == nil {
-		return false
-	}
-	var ecerr *errcode.Error
-	return errors.As(err, &ecerr) && ecerr.Code == errcode.ContractUnresolvable
+func callTrustedFallback(err error, in callFlags, paramTypes []string, args any) bool {
+	return invoke.TrustedTupleComplete(in.service, in.method, paramTypes, args) && invoke.IsContractUnresolvable(err)
 }
 
 func callArgs(in callFlags) (any, error) {

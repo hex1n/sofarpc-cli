@@ -169,60 +169,7 @@ func TestDoctor_SummaryListsEachCheck(t *testing.T) {
 	}
 }
 
-func TestDoctor_InvokePolicyReportsDisabledRealInvoke(t *testing.T) {
-	t.Setenv(envAllowInvoke, "false")
-	out := callDoctor(t, Options{}, nil)
-	check := findCheck(t, out, "invoke-policy")
-	if check.Ok {
-		t.Fatalf("invoke-policy should fail when %s is unset, got %+v", envAllowInvoke, check)
-	}
-	if !strings.Contains(check.Detail, envAllowInvoke) {
-		t.Fatalf("detail should mention %s, got %q", envAllowInvoke, check.Detail)
-	}
-	if check.NextStep == nil || check.NextStep.Tool != "sofarpc_invoke" {
-		t.Fatalf("check should point at dry-run invoke, got %+v", check.NextStep)
-	}
-}
-
-func TestDoctor_InvokePolicyReportsMissingProjectAllowedServices(t *testing.T) {
-	t.Setenv(envAllowInvoke, "true")
-
-	out := callDoctor(t, Options{
-		TargetSources: target.Sources{
-			Env: target.Config{DirectURL: "bolt://127.0.0.1:1"},
-		},
-	}, nil)
-	check := findCheck(t, out, "invoke-policy")
-	if check.Ok {
-		t.Fatalf("invoke-policy should fail without project allowedServices, got %+v", check)
-	}
-	if !strings.Contains(check.Detail, "project allowedServices") {
-		t.Fatalf("detail should mention project allowedServices, got %q", check.Detail)
-	}
-	if check.NextStep == nil || check.NextStep.Tool != "sofarpc_init_project" {
-		t.Fatalf("check should point at init_project, got %+v", check.NextStep)
-	}
-}
-
-func TestDoctor_InvokePolicyChecksAllowedServiceWhenProvided(t *testing.T) {
-	t.Setenv(envAllowInvoke, "true")
-
-	out := callDoctor(t, Options{
-		TargetSources: target.Sources{
-			Env: target.Config{DirectURL: "bolt://127.0.0.1:1"},
-			ProjectLocalPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.AllowedFacade"},
-			},
-		},
-	}, map[string]any{"service": "com.foo.BlockedFacade"})
-	check := findCheck(t, out, "invoke-policy")
-	if check.Ok {
-		t.Fatalf("invoke-policy should fail for disallowed service, got %+v", check)
-	}
-	if !strings.Contains(check.Detail, "project allowedServices") {
-		t.Fatalf("detail should mention project allowedServices, got %q", check.Detail)
-	}
-}
+// invoke-policy checks live in doctor_policy_test.go.
 
 func TestDoctor_InvocationPropertiesChecksEnvWithoutLeakingValue(t *testing.T) {
 	t.Setenv("SOFARPC_AUTH_TOKEN", "secret-token")
