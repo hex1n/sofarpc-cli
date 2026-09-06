@@ -1,0 +1,8 @@
+S1                     traceId=c0a812de17886801157011001850  in_provider_digest=True
+S4-call-1              traceId=c0a812de178868016153810011763  in_provider_digest=True
+S4-call-2              traceId=c0a812de178868016158110011765  in_provider_digest=True
+S5                     traceId=c0a812de178868017404610012039  in_provider_digest=True
+S3(timeout)            traceId=c0a812de178868020413210012409  in_provider_digest=False
+S6(connect-failed)     traceId=c0a812de178868020440710012418  in_provider_digest=False
+
+digest lines total: 4

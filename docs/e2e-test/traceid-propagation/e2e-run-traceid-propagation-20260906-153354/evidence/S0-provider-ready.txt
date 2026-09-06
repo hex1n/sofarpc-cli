@@ -1,0 +1,6 @@
+PROVIDER_READY port=21200
+tracelog:
+static-info.log
+tracer-self.log
+listening:
+java    374 hex1n  109u  IPv6 0x6bb06cbc4f627931      0t0  TCP *:21200 (LISTEN)

@@ -33,6 +33,9 @@ type RequestSpec struct {
 	UniqueID       string
 	TargetAppName  string
 	RequestBaggage map[string]string
+	// Trace is the caller's SOFATracer context. The zero value sends no
+	// trace, which leaves the provider to mint its own trace id.
+	Trace TraceContext
 }
 
 type EncodedRequest struct {
@@ -94,6 +97,7 @@ func BuildGenericRequest(spec RequestSpec) (EncodedRequest, error) {
 	if err := addRequestBaggage(requestProps, spec.RequestBaggage); err != nil {
 		return EncodedRequest{}, err
 	}
+	addTraceContext(requestProps, spec.Trace)
 	var targetAppName *string
 	if strings.TrimSpace(spec.TargetAppName) != "" {
 		value := strings.TrimSpace(spec.TargetAppName)
@@ -150,6 +154,16 @@ func addRequestBaggage(requestProps map[string]interface{}, baggage map[string]s
 	}
 	requestProps[RequestBaggageKey] = requestBaggage
 	return nil
+}
+
+// addTraceContext encodes the caller's trace so a SOFATracer-enabled
+// provider adopts our trace id instead of minting its own. An empty
+// trace id means the caller opted out, so nothing is written.
+func addTraceContext(requestProps map[string]interface{}, trace TraceContext) {
+	if strings.TrimSpace(trace.TraceID) == "" {
+		return
+	}
+	requestProps[TraceContextKey] = trace.props()
 }
 
 func validateRequestBaggageKey(key string) error {

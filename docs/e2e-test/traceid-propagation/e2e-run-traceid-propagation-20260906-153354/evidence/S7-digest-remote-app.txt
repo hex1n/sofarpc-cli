@@ -1,0 +1,4 @@
+c0a812de17886801157011001850 | remote.app = sofarpc-cli | result.code = 00 | baggage = ''
+c0a812de178868016153810011763 | remote.app = sofarpc-cli | result.code = 00 | baggage = ''
+c0a812de178868016158110011765 | remote.app = sofarpc-cli | result.code = 00 | baggage = ''
+c0a812de178868017404610012039 | remote.app = sofarpc-cli | result.code = 00 | baggage = ''

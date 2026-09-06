@@ -1,0 +1,7 @@
+{
+  "directUrl": "bolt://127.0.0.1:21200",
+  "protocol": "bolt",
+  "serialization": "hessian2",
+  "timeoutMs": 3000,
+  "allowedServices": ["com.example.demo.EchoFacade"]
+}

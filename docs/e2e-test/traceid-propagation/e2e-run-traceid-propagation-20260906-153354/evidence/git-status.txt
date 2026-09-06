@@ -1,0 +1,14 @@
+ M CHANGELOG.md
+ M README.md
+ M README.zh-CN.md
+ M cmd/sofarpc-mcp/skill/SKILL.md
+ M docs/architecture.md
+ M internal/core/invoke/direct.go
+ M internal/core/invoke/direct_test.go
+ M internal/mcp/invoke_test.go
+ M internal/mcp/prompts.go
+ M internal/mcp/replay_test.go
+ M internal/sofarpcwire/wire.go
+?? docs/e2e-test/traceid-propagation/
+?? internal/sofarpcwire/trace.go
+?? internal/sofarpcwire/trace_test.go

@@ -1,0 +1,58 @@
+{
+  "ok": true,
+  "plan": {
+    "schemaVersion": "sofarpc.invoke.plan/v2",
+    "service": "com.example.demo.EchoFacade",
+    "method": "echo",
+    "paramTypes": [
+      "java.lang.String"
+    ],
+    "args": [
+      "run2"
+    ],
+    "target": {
+      "mode": "direct",
+      "directUrl": "bolt://127.0.0.1:21200",
+      "protocol": "bolt",
+      "serialization": "hessian2",
+      "timeoutMs": 3000,
+      "connectTimeoutMs": 1000
+    },
+    "selected": 0,
+    "contractSource": "trusted",
+    "targetLayers": [
+      {
+        "name": "project",
+        "appliedFields": [
+          "directUrl",
+          "protocol",
+          "serialization",
+          "timeoutMs"
+        ]
+      },
+      {
+        "name": "defaults",
+        "appliedFields": [
+          "connectTimeoutMs"
+        ]
+      }
+    ],
+    "argSource": "user"
+  },
+  "result": "echo:run2",
+  "diagnostics": {
+    "dialTarget": "127.0.0.1:21200",
+    "maxResponseBytes": 16777216,
+    "requestClass": "com.alipay.sofa.rpc.core.request.SofaRequest",
+    "requestCodec": 1,
+    "requestId": 1339499313,
+    "responseClass": "com.alipay.sofa.rpc.core.response.SofaResponse",
+    "responseCodec": 1,
+    "responseContentLength": 107,
+    "responseStatus": 0,
+    "target": "bolt://127.0.0.1:21200",
+    "targetServiceUniqueName": "com.example.demo.EchoFacade:1.0",
+    "traceId": "c0a812de178868016158110011765",
+    "transport": "direct-bolt"
+  }
+}

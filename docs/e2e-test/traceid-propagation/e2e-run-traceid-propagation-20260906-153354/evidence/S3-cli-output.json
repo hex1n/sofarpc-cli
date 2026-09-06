@@ -1,0 +1,66 @@
+{
+  "ok": false,
+  "plan": {
+    "schemaVersion": "sofarpc.invoke.plan/v2",
+    "service": "com.example.demo.EchoFacade",
+    "method": "echo",
+    "paramTypes": [
+      "java.lang.String"
+    ],
+    "args": [
+      "x"
+    ],
+    "target": {
+      "mode": "direct",
+      "directUrl": "bolt://127.0.0.1:21299",
+      "protocol": "bolt",
+      "serialization": "hessian2",
+      "timeoutMs": 200,
+      "connectTimeoutMs": 1000
+    },
+    "selected": 0,
+    "contractSource": "trusted",
+    "targetLayers": [
+      {
+        "name": "input",
+        "appliedFields": [
+          "timeoutMs"
+        ]
+      },
+      {
+        "name": "project",
+        "appliedFields": [
+          "directUrl",
+          "protocol",
+          "serialization"
+        ]
+      },
+      {
+        "name": "defaults",
+        "appliedFields": [
+          "connectTimeoutMs"
+        ]
+      }
+    ],
+    "argSource": "user"
+  },
+  "diagnostics": {
+    "dialTarget": "127.0.0.1:21299",
+    "maxResponseBytes": 16777216,
+    "requestCodec": 1,
+    "requestId": 938064353,
+    "target": "bolt://127.0.0.1:21299",
+    "traceId": "c0a812de178868020413210012409",
+    "transport": "direct-bolt"
+  },
+  "error": {
+    "code": "runtime.timeout",
+    "message": "invoke direct target bolt://127.0.0.1:21299: read response header: read tcp 127.0.0.1:50994-\u003e127.0.0.1:21299: i/o timeout",
+    "phase": "call",
+    "hint": {
+      "nextTool": "sofarpc_doctor",
+      "reason": "inspect timeoutMs, connectTimeoutMs, and target reachability"
+    }
+  }
+}
+invoke direct target bolt://127.0.0.1:21299: read response header: read tcp 127.0.0.1:50994->127.0.0.1:21299: i/o timeout

@@ -74,6 +74,12 @@ On the wire, direct BOLT calls encode resolved entries into `SofaRequest.request
 
 Never put secrets in literal `value` entries. Prefer `env`, run `sofarpc_doctor` if env resolution fails, and keep copied replay plans redacted.
 
+## Trace Correlation
+
+Every real invoke and replay generates a SOFATracer trace context, sends it as `SofaRequest.requestProps["rpc_trace_context"]`, and returns it as `diagnostics.traceId`. A provider running SOFATracer adopts that id for its server span, so search its digest and business logs by that exact string; calls arrive tagged with caller app `sofarpc-cli`.
+
+`traceId` is also reported when the invoke fails on the wire, which is when it matters most: on `runtime.timeout` the request most likely did reach the provider, so report the id with the error instead of asking the user to guess a time window. It is reported on `target.connect-failed` and `target.invalid` too, but nothing left the client there, so a provider log search by that id will find nothing — fix the target first. Each execution mints its own trace, so a replay never reuses the original call's id.
+
 ## Replay And Resources
 
 For unchanged replay, call `sofarpc_replay` with the `sessionId`. For edited replay, first inspect `sofarpc://session/{sessionId}/plan` if the invoke response returned that resource link. Then submit the edited payload with the original `sessionId` and project context.
@@ -87,7 +93,7 @@ Replay supports v2 saved plans. Legacy v1 plans are intentionally rejected. If s
 - `input.args-invalid`, `contract.method-ambiguous`, or `runtime.serialize-failed`: fix payload shape, send `args` as an array, match Java parameter names inside DTO objects, and preserve list/map nesting.
 - Java type mismatch: check primitives, boxed types, enums, arrays, and date/time representations.
 - `invocationProperties` validation or missing env: check key names, remove mixed entry modes, export required env vars, then run `sofarpc_doctor`.
-- Transport errors: verify address, protocol, timeout, and direct-vs-registry target mode.
+- Transport errors: verify address, protocol, timeout, and direct-vs-registry target mode. On `runtime.timeout` quote `diagnostics.traceId` so provider logs can be searched for the request; on `target.connect-failed` the request never left the client, so fix the target instead of searching logs.
 - Hessian/BOLT mismatch: inspect target protocol and contract before forcing a wire mode.
 - Replay failure: read the saved plan resource before retrying and confirm whether the call is still safe.
 

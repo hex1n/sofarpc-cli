@@ -244,6 +244,11 @@ func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
 	if transport, _ := out.Diagnostics["transport"].(string); transport != invoke.DirectTransportName {
 		t.Fatalf("transport: got %q want %q", transport, invoke.DirectTransportName)
 	}
+	// Replay mints its own trace rather than reusing the captured call's,
+	// so it must report one of its own to be searchable in provider logs.
+	if traceID, _ := out.Diagnostics["traceId"].(string); traceID == "" {
+		t.Fatalf("expected traceId in replay diagnostics, got %+v", out.Diagnostics)
+	}
 	result, ok := out.Result.(map[string]any)
 	if !ok {
 		t.Fatalf("result type = %T", out.Result)

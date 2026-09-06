@@ -69,6 +69,24 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		timeout = 3 * time.Second
 	}
 	maxResponseBytes := maxResponseBytesFromEnv()
+	requestID := nextRequestID()
+	// A fresh trace per execution, not per plan: plans are replayable
+	// payloads, so baking an identity into one would make every replay
+	// land on the same trace id in provider logs.
+	trace := sofarpcwire.NewTraceContext()
+
+	// These describe the attempt rather than its outcome, so they are
+	// built before the wire call: a timeout is exactly when the caller
+	// needs traceId to find the request in the provider's logs.
+	diagnostics := map[string]any{
+		"transport":        DirectTransportName,
+		"target":           plan.Target.DirectURL,
+		"dialTarget":       addr,
+		"requestId":        requestID,
+		"requestCodec":     boltclient.CodecHessian2,
+		"traceId":          trace.TraceID,
+		"maxResponseBytes": maxResponseBytes,
+	}
 
 	result, err := sofarpcwire.InvokeDirect(ctx, sofarpcwire.RequestSpec{
 		Service:        plan.Service,
@@ -79,31 +97,25 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		UniqueID:       plan.Target.UniqueID,
 		TargetAppName:  plan.TargetAppName,
 		RequestBaggage: requestBaggage,
+		Trace:          trace,
 	}, sofarpcwire.DirectInvokeOptions{
 		Addr:             addr,
 		Codec:            boltclient.CodecHessian2,
 		Timeout:          timeout,
-		RequestID:        nextRequestID(),
+		RequestID:        requestID,
 		MaxResponseBytes: maxResponseBytes,
 	})
 	if err != nil {
-		return DirectExecution{Handled: true}, classifyDirectInvokeError(phase, plan.Target.DirectURL, err)
+		return DirectExecution{Handled: true, Diagnostics: diagnostics},
+			classifyDirectInvokeError(phase, plan.Target.DirectURL, err)
 	}
 
-	diagnostics := map[string]any{
-		"transport":               DirectTransportName,
-		"target":                  plan.Target.DirectURL,
-		"dialTarget":              addr,
-		"requestId":               result.RequestID,
-		"requestCodec":            boltclient.CodecHessian2,
-		"requestClass":            result.Request.Class,
-		"targetServiceUniqueName": result.Request.TargetServiceUniqueName,
-		"responseStatus":          result.Response.ResponseStatus,
-		"responseClass":           result.Response.ResponseClass,
-		"responseCodec":           result.Response.Codec,
-		"responseContentLength":   len(result.Response.Content),
-		"maxResponseBytes":        maxResponseBytes,
-	}
+	diagnostics["requestClass"] = result.Request.Class
+	diagnostics["targetServiceUniqueName"] = result.Request.TargetServiceUniqueName
+	diagnostics["responseStatus"] = result.Response.ResponseStatus
+	diagnostics["responseClass"] = result.Response.ResponseClass
+	diagnostics["responseCodec"] = result.Response.Codec
+	diagnostics["responseContentLength"] = len(result.Response.Content)
 	if len(result.Response.Header) > 0 {
 		diagnostics["responseHeader"] = cloneStringMap(result.Response.Header)
 	}

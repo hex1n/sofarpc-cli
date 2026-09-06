@@ -278,6 +278,12 @@ sofarpc-mcp call -plan plan.json
   服务在 provider baggage 启用时可用 `RpcInvokeContext.getRequestBaggage(...)`
   读取。`value` 是字面值；`env` 只在真实 invoke/replay 时解析，并在 plan 中保持
   redacted。
+- 每次真实 invoke/replay 都会生成 SOFATracer trace context，编码成
+  `SofaRequest.requestProps["rpc_trace_context"]`，并在 `diagnostics.traceId`
+  返回。provider 侧启用 SOFATracer 时会直接采用这个 traceId 作为 server span
+  的 trace id，因此可以用它检索 provider 的 digest 日志和业务日志；caller app
+  固定上报为 `sofarpc-cli`。trace 标记为已采样，保证 provider 会记录。provider
+  未接入 SOFATracer 时该 map 会被忽略，traceId 在服务端也就没有对应记录。
 - `directUrl` 是单次覆盖。否则先使用项目配置；进程 env
   只作为旧用法/手工运行兜底。用户级 setup 不再写 target 默认值。
 - `dryRun=true` 返回的 plan 可以直接交给 `sofarpc_replay`；replay 也接受包含

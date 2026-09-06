@@ -368,6 +368,13 @@ plus the project's `allowedServices`; `-dry-run` never executes.
   services read them with `RpcInvokeContext.getRequestBaggage(...)` when
   provider baggage is enabled (`invoke.baggage.enable`). `value` is literal;
   `env` is resolved only for real invoke/replay and stays redacted in plans.
+- Every real invoke and replay carries a generated SOFATracer trace context in
+  `SofaRequest.requestProps["rpc_trace_context"]` and reports it back as
+  `diagnostics.traceId`. A provider running SOFATracer adopts that id for its
+  server span, so `traceId` is the key to search its digest and business logs
+  by; the caller app is reported as `sofarpc-cli`. The trace is marked sampled
+  so the provider logs it. Providers without SOFATracer ignore the map, and the
+  id then identifies nothing on their side.
 - `directUrl` is a per-call override. Otherwise project config wins; process
   env is only a legacy/manual fallback. User setup does not write target
   defaults.

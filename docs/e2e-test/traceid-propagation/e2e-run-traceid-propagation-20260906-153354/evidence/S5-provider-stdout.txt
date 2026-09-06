@@ -1,0 +1,1 @@
+SERVER_TRACE traceId=c0a812de178868017404610012039 rpcId=0 baggage={route=blue, tenant=e2e-dev} message=bag

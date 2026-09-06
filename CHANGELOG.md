@@ -6,6 +6,11 @@ All notable changes to this project are recorded here.
 
 ### Added
 
+- SOFATracer trace correlation: direct invokes and replays now generate a trace
+  context, send it as `SofaRequest.requestProps["rpc_trace_context"]`, and
+  return it as `diagnostics.traceId` so provider logs can be searched by the
+  same id. The trace is reported on wire failures too, including timeouts, and
+  is minted per execution so replays stay separately traceable.
 - `sofarpc_describe` listing modes: omit `method` to list a service's callable
   methods (including inherited ones), omit `service` too to list the
   method-bearing interfaces in the contract index.

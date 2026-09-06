@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SOFATracer traceId 透出 —— 端到端测试计划</title>
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{margin:0;padding:2.5rem 2rem;font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+     color:#1c1f23;background:#fbfbfa;max-width:1180px;margin-inline:auto}
+h1{font-size:1.75rem;margin:0 0 .35rem;letter-spacing:-.01em}
+h2{font-size:1.15rem;margin:2.4rem 0 .8rem;padding-bottom:.35rem;border-bottom:1px solid #e3e1dc}
+h3{font-size:1rem;margin:1.6rem 0 .5rem}
+p,li{margin:.5rem 0}
+.lede{font-size:1.05rem;color:#3b3f45;margin:0 0 1.4rem;max-width:78ch}
+.counts{display:flex;gap:.6rem;flex-wrap:wrap;margin:1.2rem 0 1.8rem;padding:0;list-style:none}
+.counts li{padding:.5rem .95rem;border:1px solid #ddd9d2;border-radius:7px;background:#fff;font-variant-numeric:tabular-nums}
+.counts b{font-size:1.3rem;display:block;line-height:1.2}
+.counts small{color:#6b6f76;letter-spacing:.02em}
+.counts li.hit{border-color:#1f7a4d;background:#eef8f2}
+.counts li.hit b{color:#1f7a4d}
+table{border-collapse:collapse;width:100%;margin:.9rem 0;font-size:.9rem}
+th,td{border:1px solid #e3e1dc;padding:.55rem .7rem;text-align:left;vertical-align:top}
+th{background:#f4f2ee;font-weight:600}
+td code,th code{font-size:.86em}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f2f0eb;padding:.08em .35em;border-radius:3px;word-break:break-all}
+pre{background:#f6f4f0;border:1px solid #e3e1dc;border-radius:6px;padding:.85rem 1rem;overflow-x:auto;font-size:.83rem;line-height:1.5}
+pre code{background:none;padding:0}
+.st{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.78rem;font-weight:600;white-space:nowrap;border:1px solid}
+.st-passed{color:#1f7a4d;background:#eef8f2;border-color:#bfe0cd}
+.st-failed{color:#a3282f;background:#fdeff0;border-color:#f0c4c7}
+.st-blocked{color:#8a5a00;background:#fdf4e3;border-color:#eddcb5}
+.st-key{box-shadow:0 0 0 2px #d7ecdf}
+details{margin:.45rem 0;border:1px solid #e3e1dc;border-radius:6px;background:#fff;padding:.5rem .8rem}
+details[open]{background:#fdfdfc}
+summary{cursor:pointer;font-weight:600;font-size:.88rem}
+summary:focus-visible{outline:2px solid #1f5fa8;outline-offset:2px}
+a{color:#1f5fa8}
+a:focus-visible{outline:2px solid #1f5fa8;outline-offset:2px}
+.meta{color:#6b6f76;font-size:.85rem}
+.note{border-left:3px solid #c9a227;background:#fdf9ec;padding:.7rem 1rem;margin:1rem 0;border-radius:0 5px 5px 0}
+.ok{border-left-color:#1f7a4d;background:#f0f8f3}
+@media(prefers-color-scheme:dark){
+ body{background:#16181b;color:#e4e6e9}
+ h2{border-color:#2f3439}
+ .lede{color:#b6bbc2}
+ .counts li,details{background:#1d2024;border-color:#2f3439}
+ .counts li.hit{background:#12291d;border-color:#2c5f43}
+ .counts li.hit b{color:#6fca97}
+ .counts small,.meta{color:#9aa1aa}
+ th{background:#22262b}th,td{border-color:#2f3439}
+ code{background:#22262b}
+ pre{background:#1a1d21;border-color:#2f3439}
+ details[open]{background:#1d2024}
+ .st-passed{color:#6fca97;background:#12291d;border-color:#2c5f43}
+ .st-failed{color:#f08a90;background:#2c1618;border-color:#5f2c30}
+ .st-blocked{color:#e0b45c;background:#2b2313;border-color:#5f4d2c}
+ .st-key{box-shadow:0 0 0 2px #2c5f43}
+ .note{background:#241f10;border-left-color:#c9a227}
+ .note.ok{background:#12291d;border-left-color:#2c5f43}
+ a{color:#7fb2f0}
+}
+</style></head><body>
+
+<h1>SOFATracer traceId 透出 —— 端到端测试计划</h1>
+<p class="meta">Delta Plan ・ 2026-09-06 ・ Execution handoff <code>execution-anchors/v1</code> ・
+canonical <a href="2026-09-06-traceid-propagation-e2e-test-plan.md">2026-09-06-traceid-propagation-e2e-test-plan.md</a> ・
+执行结果 <a href="e2e-run-traceid-propagation-20260906-153354/execution-report.html">execution-report.html</a>（其中记录了对 S1 第 ④ 条期望的执行期修正）</p>
+
+<p class="lede"><strong>业务成果：</strong>工程师／agent 调用一个 SOFARPC facade 后，能用工具返回的
+<code>diagnostics.traceId</code> 在 provider 日志里定位到<strong>这一次</strong>调用。</p>
+
+<div class="note"><strong>核心判据：</strong>provider 端 SOFATracer 的 server span 必须采用<strong>客户端生成的</strong> traceId，
+而不是自己新造一个。判据点在 <code>RpcSofaTracer.serverReceived</code> → <code>saveSpanContextAndTags</code>：
+读 <code>requestProps["rpc_trace_context"]</code> 的 <code>sofaTraceId</code>；读不到则 <code>spanContext == null</code>，
+服务端 <code>buildSpan().start()</code> 造新 id，客户端永远不知道。<strong>因此「两个 id 字符串相等」是修复生效与失效的分界线</strong>，不是近似指标。</div>
+
+<h2>正常链路</h2>
+<pre><code>invoke / replay / call
+   │ J1  NewTraceContext 生成 traceId
+   │ J2  addTraceContext → requestProps["rpc_trace_context"]
+   │ J3  bolt + hessian2 上线
+   │ J4  SofaRpcSerialization 反序列化 + parseRequestHeader 合并（header 侧为空 → 不覆盖）
+   │ J5  RpcSofaTracer.serverReceived 采纳 sofaTraceId → server span
+   │ J6  tracelog/rpc-server-digest.log
+   └ J7  diagnostics.traceId（成功与失败路径同样返回）</code></pre>
+
+<h2>最高风险分支</h2>
+<ul>
+<li><strong>J4 的覆盖风险</strong>：服务端会把 bolt header 里 <code>rpc_trace_context.</code> 前缀项合并进来。已核实客户端 header 不发该前缀，body 已有 map 时走 <code>putAll(empty)</code> 空操作，<strong>不会覆盖</strong>。</li>
+<li><strong>静默降级</strong>：provider 未接 SOFATracer 时 map 被忽略且无任何失败信号（缺口 G1）。</li>
+<li><strong>通道优先级</strong>：<code>new_rpc_trace_context</code> 优先级高于本次使用的老通道；sofarpc-cli 是链路起点不会携带，本地不可达（缺口 G3）。</li>
+</ul>
+
+<h2>场景树</h2>
+<table>
+<thead><tr><th>场景</th><th>预期输入</th><th>预期结果</th><th>详情</th></tr></thead>
+<tbody><tr>
+<th scope="row"><code>S0</code><br><span class="meta">基线 ・ P1</span></th>
+<td>启动一次性 provider，<code>-Dlogging.path</code> 指向临时目录</td>
+<td>输出 <code>PROVIDER_READY</code>；<code>tracelog/</code> 目录生成</td>
+<td><details><summary>目的 / Oracle / 足迹</summary>
+<p><strong>目的：</strong>provider 就绪且 SOFATracer 生效</p>
+<p><strong>Oracle / 期望权威：</strong>derived</p>
+<p><strong>State Footprint：</strong>起进程（<code>delete</code>） ・ <strong>触达边：</strong>—</p>
+</details></td></tr><tr>
+<th scope="row"><code>S1</code><br><span class="meta"><strong>主判据</strong> ・ <strong>P0</strong></span></th>
+<td><code>sofarpc-mcp call -service com.example.demo.EchoFacade -method echo -types java.lang.String -args '["hello"]'</code></td>
+<td>① <code>diagnostics.traceId</code> 与 provider server span traceId 逐字符相等；② id 匹配 <code>^[0-9a-f]{8}\d{13}\d{4}\d+$</code>；③ 业务结果 <code>echo:hello</code>；④ <code>SERVER_TRACE rpcId</code> 为服务端派生的子 span id（非空）</td>
+<td><details><summary>目的 / Oracle / 足迹</summary>
+<p><strong>目的：</strong>真实 provider 采纳客户端 traceId</p>
+<p><strong>Oracle / 期望权威：</strong>specified —— <code>RpcSofaTracer#serverReceived</code>：<code>spanContext != null</code> 时复用上游 traceId，<code>== null</code> 时新建</p>
+<p><strong>State Footprint：</strong>read-only；写 provider stdout 与日志目录（<code>delete</code>） ・ <strong>触达边：</strong>J1–J5, J7</p>
+</details></td></tr><tr>
+<th scope="row"><code>S2</code><br><span class="meta">可检索性 ・ <strong>P0</strong></span></th>
+<td>在 <code>logs/tracelog/</code> 下按 S1 的 traceId 检索</td>
+<td><code>rpc-server-digest.log</code> 命中 ≥ 1 行且属服务端 digest</td>
+<td><details><summary>目的 / Oracle / 足迹</summary>
+<p><strong>目的：</strong>traceId 落进 digest 日志，可按串检索</p>
+<p><strong>Oracle / 期望权威：</strong>derived —— 关系断言（S1 的 id ∈ 日志内容），不依赖日志格式</p>
+<p><strong>State Footprint：</strong>读日志文件 ・ <strong>触达边：</strong>J6</p>
+</details></td></tr><tr>
+<th scope="row"><code>S3</code><br><span class="meta">失败分支 ・ <strong>P0</strong></span></th>
+<td>目标为只接受连接、永不回包的端口，<code>-timeout-ms 200</code></td>
+<td><code>error.code == runtime.timeout</code> 且 traceId 非空、格式合法</td>
+<td><details><summary>目的 / Oracle / 足迹</summary>
+<p><strong>目的：</strong>超时仍回带 traceId</p>
+<p><strong>Oracle / 期望权威：</strong>specified —— 本次改动的产品决定：超时时请求多半已达 provider</p>
+<p><strong>State Footprint：</strong>read-only ・ <strong>触达边：</strong>J1–J3, J7</p>
+</details></td></tr><tr>
+<th scope="row"><code>S4</code><br><span class="meta">唯一性 ・ P1</span></th>
+<td>同一组参数连续执行两次</td>
+<td>两 traceId 不等；provider 两条记录分别匹配</td>
+<td><details><summary>目的 / Oracle / 足迹</summary>
+<p><strong>目的：</strong>连续两次执行产生不同 traceId，各自可追</p>
+<p><strong>Oracle / 期望权威：</strong>specified —— trace 按执行生成、不写进 Plan，重放不复用</p>
+<p><strong>State Footprint：</strong>read-only ・ <strong>触达边：</strong>J1–J6</p>
+</details></td></tr><tr>
+<th scope="row"><code>S5</code><br><span class="meta">共存回归 ・ P1</span></th>
+<td>项目配置带 <code>invocationProperties</code> 后执行真实调用</td>
+<td>baggage 值原样可读；traceId 仍与客户端一致</td>
+<td><details><summary>目的 / Oracle / 足迹</summary>
+<p><strong>目的：</strong>request baggage 与 trace 同时在场互不影响</p>
+<p><strong>Oracle / 期望权威：</strong>derived —— 两键在 <code>requestProps</code> 中并列，互不覆盖</p>
+<p><strong>State Footprint：</strong>read-only ・ <strong>触达边：</strong>J2–J5</p>
+</details></td></tr><tr>
+<th scope="row"><code>S6</code><br><span class="meta">降级说明 ・ P1</span></th>
+<td>目标为无人监听的端口</td>
+<td><code>error.code == target.connect-failed</code>；traceId 非空；provider 日志<strong>不含</strong>该 id</td>
+<td><details><summary>目的 / Oracle / 足迹</summary>
+<p><strong>目的：</strong>connect-failed 时 traceId 返回但服务端确无记录</p>
+<p><strong>Oracle / 期望权威：</strong>specified —— 本次改动在 SKILL.md / prompt 写明的降级说明</p>
+<p><strong>State Footprint：</strong>read-only ・ <strong>触达边：</strong>J1, J7</p>
+</details></td></tr><tr>
+<th scope="row"><code>S7</code><br><span class="meta">调用方标识 ・ P2</span></th>
+<td>读取 digest 的 <code>remote.app</code></td>
+<td>digest 行含 <code>sofarpc-cli</code></td>
+<td><details><summary>目的 / Oracle / 足迹</summary>
+<p><strong>目的：</strong>provider 侧能认出 agent 发起的调用</p>
+<p><strong>Oracle / 期望权威：</strong>specified —— <code>saveSpanContextAndTags</code> 从 <code>sofaCallerApp</code> 取 <code>REMOTE_APP</code></p>
+<p><strong>State Footprint：</strong>read-only ・ <strong>触达边：</strong>J5, J6</p>
+</details></td></tr></tbody></table>
+
+<h2>覆盖分层</h2>
+<table>
+<thead><tr><th>义务</th><th>层</th><th>承载</th><th>状态</th></tr></thead>
+<tbody>
+<tr><td>空 trace 不改变编码字节</td><td>unit</td><td><code>TestBuildGenericRequest_OmitsEmptyTraceContext</code> + golden fixtures</td><td>已有</td></tr>
+<tr><td>键集合 / 字符串类型正确</td><td>unit</td><td><code>TestTraceContextProps_UsesTracerCompatibleKeys</code></td><td>已有</td></tr>
+<tr><td>id 格式与唯一性</td><td>unit</td><td><code>TestNewTraceContext_*</code></td><td>已有</td></tr>
+<tr><td>上线字节与上报 id 一致</td><td>integration</td><td><code>TestExecuteDirectIfPossible_SendsTraceContextItReports</code></td><td>已有</td></tr>
+<tr><td>超时路径回带 traceId</td><td>integration</td><td><code>TestInvoke_TimeoutStillReportsTraceId</code> 等</td><td>已有</td></tr>
+<tr><td>replay 回带 traceId</td><td>integration</td><td><code>TestReplay_PayloadDirectTransportRoundTrip</code></td><td>已有</td></tr>
+<tr><td><strong>服务端采纳同一 traceId</strong></td><td><strong>E2E</strong></td><td><strong>S1</strong></td><td>本计划新增</td></tr>
+<tr><td><strong>traceId 可在 provider 日志检索</strong></td><td><strong>E2E</strong></td><td><strong>S2</strong></td><td>本计划新增</td></tr>
+<tr><td>baggage 共存</td><td>E2E</td><td>S5</td><td>本计划新增</td></tr>
+<tr><td>connect-failed 降级说明属实</td><td>E2E</td><td>S6</td><td>本计划新增</td></tr>
+</tbody></table>
+
+<h2>缺口</h2>
+<table>
+<thead><tr><th>ID</th><th>类型</th><th>内容</th><th>处置</th></tr></thead>
+<tbody>
+<tr><td>G1</td><td>缺口</td><td>provider <strong>未接</strong> SOFATracer 时静默降级，本计划未构造该 provider</td><td>已写进 README / SKILL.md；如需覆盖，另起一个 <code>default.tracer</code> 置空的 provider，非首批</td></tr>
+<tr><td>G2</td><td>假设（<code>ASSUMED</code>，接受人：本会话用户）</td><td>本地 provider 为 sofa-rpc 5.8.0，业务侧版本可能不同；<code>rpc_trace_context</code> 自 5.x 起为稳定老通道</td><td>接受；真业务环境验证留待日志工具落地时一并做</td></tr>
+<tr><td>G3</td><td>缺口</td><td><code>new_rpc_trace_context</code> 在服务端优先级更高，本地不可达</td><td>记录不覆盖；将来出现「经网关转发」场景需重新评估</td></tr>
+</tbody></table>
+
+<h2>第一批切片</h2>
+<p><strong>S0 → S1 → S2</strong>。这三条一旦通过，「调用完拿 traceId 去 provider 日志里定位这次调用」这条业务成果即端到端成立；其余场景是边界与回归。</p>
+
+</body></html>

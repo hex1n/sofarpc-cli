@@ -1,0 +1,64 @@
+{
+  "ok": false,
+  "plan": {
+    "schemaVersion": "sofarpc.invoke.plan/v2",
+    "service": "com.example.demo.EchoFacade",
+    "method": "echo",
+    "paramTypes": [
+      "java.lang.String"
+    ],
+    "args": [
+      "x"
+    ],
+    "target": {
+      "mode": "direct",
+      "directUrl": "bolt://127.0.0.1:21298",
+      "protocol": "bolt",
+      "serialization": "hessian2",
+      "timeoutMs": 3000,
+      "connectTimeoutMs": 1000
+    },
+    "selected": 0,
+    "contractSource": "trusted",
+    "targetLayers": [
+      {
+        "name": "project",
+        "appliedFields": [
+          "directUrl",
+          "protocol",
+          "serialization",
+          "timeoutMs"
+        ]
+      },
+      {
+        "name": "defaults",
+        "appliedFields": [
+          "connectTimeoutMs"
+        ]
+      }
+    ],
+    "argSource": "user"
+  },
+  "diagnostics": {
+    "dialTarget": "127.0.0.1:21298",
+    "maxResponseBytes": 16777216,
+    "requestCodec": 1,
+    "requestId": 1216019353,
+    "target": "bolt://127.0.0.1:21298",
+    "traceId": "c0a812de178868020440710012418",
+    "transport": "direct-bolt"
+  },
+  "error": {
+    "code": "target.connect-failed",
+    "message": "invoke direct target bolt://127.0.0.1:21298: dial 127.0.0.1:21298: dial tcp 127.0.0.1:21298: connect: connection refused",
+    "phase": "call",
+    "hint": {
+      "nextTool": "sofarpc_target",
+      "nextArgs": {
+        "explain": true
+      },
+      "reason": "inspect the resolved direct target and reachability"
+    }
+  }
+}
+invoke direct target bolt://127.0.0.1:21298: dial 127.0.0.1:21298: dial tcp 127.0.0.1:21298: connect: connection refused

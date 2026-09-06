@@ -548,13 +548,22 @@ sequenceDiagram
   `SofaRequest.requestProps["rpc_req_baggage"]`, which downstream Java code can
   read through `RpcInvokeContext.getRequestBaggage(...)` when provider baggage
   is enabled
+- SOFATracer trace-context encoding as
+  `SofaRequest.requestProps["rpc_trace_context"]`, carrying `sofaTraceId`,
+  `sofaRpcId`, `samp`, and the caller identity in SOFATracer's own
+  `TraceIdGenerator` format. A provider running SOFATracer adopts that trace id
+  for its server span (`RpcSofaTracer.serverReceived`), so the id reported back
+  to the agent is the one to search provider logs by. Providers without
+  SOFATracer carry the map and ignore it.
 - `SofaResponse` decoding into JSON-friendly data
 
 Direct-path diagnostics include:
 
 - `transport`
 - `target`
+- `dialTarget`
 - `requestId`
+- `traceId`
 - `requestCodec`
 - `requestClass`
 - `targetServiceUniqueName`
@@ -562,6 +571,12 @@ Direct-path diagnostics include:
 - `responseClass`
 - `responseCodec`
 - `responseContentLength`
+
+`transport`, `target`, `dialTarget`, `requestId`, and `traceId` describe the
+attempt rather than its outcome, so they are also reported when the invoke
+fails on the wire — a timeout is exactly when `traceId` is needed. The trace is
+minted per execution, not stored in the plan, so each replay of a plan is a
+separately traceable call.
 
 This is the core runtime path the project should continue to harden.
 

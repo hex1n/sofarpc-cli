@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SOFATracer traceId 透出 —— 端到端执行报告</title>
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{margin:0;padding:2.5rem 2rem;font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+     color:#1c1f23;background:#fbfbfa;max-width:1180px;margin-inline:auto}
+h1{font-size:1.75rem;margin:0 0 .35rem;letter-spacing:-.01em}
+h2{font-size:1.15rem;margin:2.4rem 0 .8rem;padding-bottom:.35rem;border-bottom:1px solid #e3e1dc}
+h3{font-size:1rem;margin:1.6rem 0 .5rem}
+p,li{margin:.5rem 0}
+.lede{font-size:1.05rem;color:#3b3f45;margin:0 0 1.4rem;max-width:78ch}
+.counts{display:flex;gap:.6rem;flex-wrap:wrap;margin:1.2rem 0 1.8rem;padding:0;list-style:none}
+.counts li{padding:.5rem .95rem;border:1px solid #ddd9d2;border-radius:7px;background:#fff;font-variant-numeric:tabular-nums}
+.counts b{font-size:1.3rem;display:block;line-height:1.2}
+.counts small{color:#6b6f76;letter-spacing:.02em}
+.counts li.hit{border-color:#1f7a4d;background:#eef8f2}
+.counts li.hit b{color:#1f7a4d}
+table{border-collapse:collapse;width:100%;margin:.9rem 0;font-size:.9rem}
+th,td{border:1px solid #e3e1dc;padding:.55rem .7rem;text-align:left;vertical-align:top}
+th{background:#f4f2ee;font-weight:600}
+td code,th code{font-size:.86em}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f2f0eb;padding:.08em .35em;border-radius:3px;word-break:break-all}
+pre{background:#f6f4f0;border:1px solid #e3e1dc;border-radius:6px;padding:.85rem 1rem;overflow-x:auto;font-size:.83rem;line-height:1.5}
+pre code{background:none;padding:0}
+.st{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.78rem;font-weight:600;white-space:nowrap;border:1px solid}
+.st-passed{color:#1f7a4d;background:#eef8f2;border-color:#bfe0cd}
+.st-failed{color:#a3282f;background:#fdeff0;border-color:#f0c4c7}
+.st-blocked{color:#8a5a00;background:#fdf4e3;border-color:#eddcb5}
+.st-key{box-shadow:0 0 0 2px #d7ecdf}
+details{margin:.45rem 0;border:1px solid #e3e1dc;border-radius:6px;background:#fff;padding:.5rem .8rem}
+details[open]{background:#fdfdfc}
+summary{cursor:pointer;font-weight:600;font-size:.88rem}
+summary:focus-visible{outline:2px solid #1f5fa8;outline-offset:2px}
+a{color:#1f5fa8}
+a:focus-visible{outline:2px solid #1f5fa8;outline-offset:2px}
+.meta{color:#6b6f76;font-size:.85rem}
+.note{border-left:3px solid #c9a227;background:#fdf9ec;padding:.7rem 1rem;margin:1rem 0;border-radius:0 5px 5px 0}
+.ok{border-left-color:#1f7a4d;background:#f0f8f3}
+@media(prefers-color-scheme:dark){
+ body{background:#16181b;color:#e4e6e9}
+ h2{border-color:#2f3439}
+ .lede{color:#b6bbc2}
+ .counts li,details{background:#1d2024;border-color:#2f3439}
+ .counts li.hit{background:#12291d;border-color:#2c5f43}
+ .counts li.hit b{color:#6fca97}
+ .counts small,.meta{color:#9aa1aa}
+ th{background:#22262b}th,td{border-color:#2f3439}
+ code{background:#22262b}
+ pre{background:#1a1d21;border-color:#2f3439}
+ details[open]{background:#1d2024}
+ .st-passed{color:#6fca97;background:#12291d;border-color:#2c5f43}
+ .st-failed{color:#f08a90;background:#2c1618;border-color:#5f2c30}
+ .st-blocked{color:#e0b45c;background:#2b2313;border-color:#5f4d2c}
+ .st-key{box-shadow:0 0 0 2px #2c5f43}
+ .note{background:#241f10;border-left-color:#c9a227}
+ .note.ok{background:#12291d;border-left-color:#2c5f43}
+ a{color:#7fb2f0}
+}
+</style></head><body>
+
+<h1>SOFATracer traceId 透出 —— 端到端执行报告</h1>
+<p class="meta">运行目录 <code>e2e-run-traceid-propagation-20260906-153354</code> ・ 2026-09-06 15:33–15:44 ・
+计划 <a href="../2026-09-06-traceid-propagation-e2e-test-plan.md">2026-09-06-traceid-propagation-e2e-test-plan.md</a>
+（sha256 <code>871d96b6…9722</code>，交付前复核一致） ・
+canonical <a href="execution-report.md">execution-report.md</a></p>
+
+<p class="lede"><strong>8/8 通过。</strong>真实 SOFARPC provider（SOFATracer 默认开启）确认采用了 sofarpc-cli
+客户端生成的 traceId，并把它写进 <code>rpc-server-digest.log</code>；同一个 id 出现在工具返回的
+<code>diagnostics.traceId</code>。「调用完拿 traceId 去 provider 日志里定位这次调用」这条业务成果端到端成立。</p>
+
+<ul class="counts">
+<li class="hit"><b>8</b><small>passed</small></li>
+<li><b>0</b><small>failed</small></li>
+<li><b>0</b><small>blocked</small></li>
+<li><b>0</b><small>unverified</small></li>
+<li><b>0</b><small>skipped</small></li>
+</ul>
+
+<div class="note ok"><strong>无 failed / blocked。</strong>下一步不是修复，而是两个已知缺口：
+① 构造 <code>default.tracer</code> 置空的 provider，验证「未接 SOFATracer 时静默降级」；
+② 在真实业务测试环境重跑 S1+S2（本次只覆盖本地 5.8.0 provider）。</div>
+
+<h2>被测对象与目标</h2>
+<table>
+<tr><th scope="row">被测构建</th><td><code>go build ./cmd/sofarpc-mcp</code>，sha256 <code>81700734…427b</code></td></tr>
+<tr><th scope="row">源码身份</th><td>git HEAD <code>2d5021d</code> <strong>+ 未提交的 trace 改动</strong>——被测的就是本次改动本体，不是已提交版本</td></tr>
+<tr><th scope="row">目标</th><td><code>bolt://127.0.0.1:21200</code>，本会话自建的一次性 provider。<strong>未接触任何业务环境</strong></td></tr>
+<tr><th scope="row">provider 运行时</th><td>sofa-rpc-all 5.8.0 + tracer-core 3.0.8 + bolt 1.5.9 + hessian 3.3.13，JDK 1.8.0_452</td></tr>
+<tr><th scope="row">真实 vs 替身</th><td>provider 是<strong>真实</strong> SOFARPC 运行时（真 tracer / 真 bolt / 真 hessian2），仅业务 facade 为专门写的 echo；S3 的 deaf 监听与 S6 的空端口是传输失败替身</td></tr>
+<tr><th scope="row">入口</th><td><code>sofarpc-mcp call</code>——与 MCP 工具同一条 plan/execute 管道与执行护栏</td></tr>
+</table>
+
+<h2>主判据原始输出</h2>
+<pre><code>CLI      : "traceId": "c0a812de17886801157011001850"   "result": "echo:hello"   "ok": true
+provider : SERVER_TRACE traceId=c0a812de17886801157011001850 rpcId=0 baggage={} message=hello</code></pre>
+<details><summary>provider digest 日志原始行</summary>
+<pre><code>{&quot;timestamp&quot;:&quot;2026-09-06 15:35:15.744&quot;,&quot;tracerId&quot;:&quot;c0a812de17886801157011001850&quot;,&quot;spanId&quot;:&quot;0&quot;,&quot;span.kind&quot;:&quot;server&quot;,&quot;remote.app&quot;:&quot;sofarpc-cli&quot;,&quot;remote.ip&quot;:&quot;127.0.0.1&quot;,&quot;service&quot;:&quot;com.example.demo.EchoFacade:1.0&quot;,&quot;method&quot;:&quot;echo&quot;,&quot;invoke.type&quot;:&quot;sync&quot;,&quot;local.app&quot;:&quot;demo-provider&quot;,&quot;current.thread.name&quot;:&quot;SOFA-SEV-BOLT-BIZ-21200-3-T1&quot;,&quot;server.phase.time.cost&quot;:&quot;R10=1312&amp;R11=183&amp;R6=23065/1005&amp;R7=141&amp;R8=62&amp;R9=-1&amp;&quot;,&quot;server.special.time.mark&quot;:&quot;1788680115739&amp;1788680115743&quot;,&quot;result.code&quot;:&quot;00&quot;,&quot;server.pool.wait.time&quot;:&quot;0&quot;,&quot;biz.impl.time&quot;:&quot;0&quot;,&quot;resp.serialize.time&quot;:&quot;1&quot;,&quot;req.deserialize.time&quot;:&quot;24&quot;,&quot;resp.size&quot;:&quot;174&quot;,&quot;req.size&quot;:&quot;688&quot;,&quot;baggage&quot;:&quot;&quot;}</code></pre></details>
+<p>id 结构与 <code>TraceIdGenerator</code> 一致：<code>c0a812de</code>（=192.168.18.222）+
+<code>1788680115701</code>（millis）+ <code>1001</code>（seq）+ <code>850</code>（客户端 pid）。</p>
+
+<h2>场景结果</h2>
+<table>
+<thead><tr><th>场景</th><th>预期输入</th><th>预期结果</th><th>实际结果 / 状态</th><th>详情</th></tr></thead>
+<tbody>
+<tr>
+<th scope="row"><code>S0</code><br><span class="meta">基线：provider 就绪</span></th>
+<td>启动一次性 provider（sofa-rpc-all 5.8.0），<code>-Dlogging.path</code> 指向临时目录</td>
+<td>输出 <code>PROVIDER_READY</code>；<code>tracelog/</code> 目录生成，表明 SOFATracer 已激活</td>
+<td><code>PROVIDER_READY port=21200</code>；<code>tracelog/</code> 下出现 <code>static-info.log</code>、<code>tracer-self.log</code><br><span class="st st-passed">passed</span></td>
+<td>
+  <details><summary>Oracle / 诊断 / 证据</summary>
+    <p><strong>Oracle：</strong>derived</p>
+    <p><strong>足迹与说明：</strong>起进程（<code>delete</code>）。首次启动因 <code>LocalRegistry 文件为 null</code> 失败，补 <code>-Dprovider.registry.file</code> 后正常。</p>
+    <p><strong>证据：</strong><a href="evidence/S0-provider-ready.txt">S0-provider-ready.txt</a></p>
+  </details>
+</td>
+</tr><tr>
+<th scope="row"><code>S1</code><br><span class="meta">主判据：真实 provider 采纳客户端 traceId</span></th>
+<td><code>sofarpc-mcp call -service com.example.demo.EchoFacade -method echo -types java.lang.String -args '["hello"]'</code>，目标 <code>bolt://127.0.0.1:21200</code></td>
+<td><code>diagnostics.traceId</code> 与 provider 端 server span 的 traceId <strong>逐字符相等</strong>；业务结果 <code>echo:hello</code>；id 匹配 <code>^[0-9a-f]{8}\d{13}\d{4}\d+$</code></td>
+<td>两端同为 <code>c0a812de17886801157011001850</code>；<code>result = echo:hello</code>；<code>ok = true</code><br><span class="st st-passed st-key">passed</span></td>
+<td>
+  <details><summary>Oracle / 诊断 / 证据</summary>
+    <p><strong>Oracle：</strong>specified（<code>RpcSofaTracer#serverReceived</code>，sofa-rpc-all 5.8.0）</p>
+    <p><strong>足迹与说明：</strong>read-only。<strong>期望修正</strong>：计划原写「rpcId 为服务端派生的子 span id」，实际服务端原样采用客户端 <code>sofaRpcId=0</code>——依据同一份已 pin 的权威 <code>saveSpanContextAndTags</code>（<code>new SofaTracerSpanContext(traceId, rpcId)</code> 不派生）。属计划侧误读，主判据不受影响。</p>
+    <p><strong>证据：</strong><a href="evidence/S1-cli-output.json">S1-cli-output.json</a> ・ <a href="evidence/S1-provider-stdout.txt">S1-provider-stdout.txt</a></p>
+  </details>
+</td>
+</tr><tr>
+<th scope="row"><code>S2</code><br><span class="meta">可检索性：traceId 落进 digest 日志</span></th>
+<td>在 <code>logs/tracelog/</code> 下按 S1 的 traceId 检索</td>
+<td><code>rpc-server-digest.log</code> 命中 ≥ 1 行，且属服务端 digest</td>
+<td>命中 1 行：<code>"tracerId":"c0a812de…1850"</code>、<code>"span.kind":"server"</code>、<code>"result.code":"00"</code><br><span class="st st-passed st-key">passed</span></td>
+<td>
+  <details><summary>Oracle / 诊断 / 证据</summary>
+    <p><strong>Oracle：</strong>derived（S1 的 id ∈ 日志内容，不依赖日志格式）</p>
+    <p><strong>足迹与说明：</strong>写日志文件（<code>delete</code>）。</p>
+    <p><strong>证据：</strong><a href="evidence/S2-digest-hit.txt">S2-digest-hit.txt</a> ・ <a href="evidence/provider-rpc-server-digest.log">provider-rpc-server-digest.log</a></p>
+  </details>
+</td>
+</tr><tr>
+<th scope="row"><code>S3</code><br><span class="meta">失败分支：超时仍回带 traceId</span></th>
+<td>目标指向只接受连接、永不回包的监听端口 <code>21299</code>，<code>-timeout-ms 200</code></td>
+<td><code>error.code == runtime.timeout</code> 且 <code>diagnostics.traceId</code> 非空</td>
+<td><code>code=runtime.timeout</code>，<code>traceId=c0a812de178868020413210012409</code><br><span class="st st-passed">passed</span></td>
+<td>
+  <details><summary>Oracle / 诊断 / 证据</summary>
+    <p><strong>Oracle：</strong>specified（本次改动的产品决定）</p>
+    <p><strong>足迹与说明：</strong>read-only。替身：Python deaf 监听。</p>
+    <p><strong>证据：</strong><a href="evidence/S3-cli-output.json">S3-cli-output.json</a></p>
+  </details>
+</td>
+</tr><tr>
+<th scope="row"><code>S4</code><br><span class="meta">唯一性：每次执行的 trace 相互独立</span></th>
+<td>同一组参数连续执行两次真实调用</td>
+<td>两个 traceId 不相等；provider 侧各自可找到对应记录</td>
+<td><code>…6153810011763</code> 与 <code>…6158110011765</code>；provider 两条 <code>SERVER_TRACE</code> 分别匹配<br><span class="st st-passed">passed</span></td>
+<td>
+  <details><summary>Oracle / 诊断 / 证据</summary>
+    <p><strong>Oracle：</strong>specified（trace 按执行生成、不写进 Plan）</p>
+    <p><strong>足迹与说明：</strong>read-only。</p>
+    <p><strong>证据：</strong><a href="evidence/S4-call-1.json">S4-call-1.json</a> ・ <a href="evidence/S4-call-2.json">S4-call-2.json</a> ・ <a href="evidence/S4-provider-stdout.txt">S4-provider-stdout.txt</a></p>
+  </details>
+</td>
+</tr><tr>
+<th scope="row"><code>S5</code><br><span class="meta">共存回归：baggage 与 trace 互不干扰</span></th>
+<td>项目配置带 <code>invocationProperties</code>（<code>tenant=e2e-dev</code>、<code>route=blue</code>）后执行真实调用</td>
+<td>provider 侧 baggage 值原样可读；traceId 仍与客户端一致</td>
+<td><code>baggage={route=blue, tenant=e2e-dev}</code>，traceId 与 CLI 一致<br><span class="st st-passed">passed</span></td>
+<td>
+  <details><summary>Oracle / 诊断 / 证据</summary>
+    <p><strong>Oracle：</strong>derived（两键在 <code>requestProps</code> 中并列，互不覆盖）</p>
+    <p><strong>足迹与说明：</strong>read-only。digest 行的 <code>"baggage":""</code> 记录的是穿透属性 <code>sofaPenAttrs</code>，非 <code>rpc_req_baggage</code>，不影响判据。</p>
+    <p><strong>证据：</strong><a href="evidence/S5-provider-stdout.txt">S5-provider-stdout.txt</a> ・ <a href="evidence/S5-project-config.json">S5-project-config.json</a></p>
+  </details>
+</td>
+</tr><tr>
+<th scope="row"><code>S6</code><br><span class="meta">降级说明属实：connect-failed 的 traceId 不可检索</span></th>
+<td>目标指向无人监听的端口 <code>21298</code></td>
+<td><code>error.code == target.connect-failed</code>；traceId 非空；provider 日志<strong>不含</strong>该 id</td>
+<td><code>code=target.connect-failed</code>，traceId 非空，<code>in_provider_digest=False</code><br><span class="st st-passed">passed</span></td>
+<td>
+  <details><summary>Oracle / 诊断 / 证据</summary>
+    <p><strong>Oracle：</strong>specified（本次改动在 SKILL.md / prompt 写明的降级说明）</p>
+    <p><strong>足迹与说明：</strong>read-only。这条验证的是文档承诺是否失真：确认「连接失败时按 traceId 查日志必然空手而归」为真。</p>
+    <p><strong>证据：</strong><a href="evidence/S6-not-searchable.txt">S6-not-searchable.txt</a> ・ <a href="evidence/S6-cli-output.json">S6-cli-output.json</a></p>
+  </details>
+</td>
+</tr><tr>
+<th scope="row"><code>S7</code><br><span class="meta">调用方标识：provider 能认出 agent 发起的调用</span></th>
+<td>读取 digest 日志的 <code>remote.app</code> 字段</td>
+<td>digest 行含 <code>sofarpc-cli</code></td>
+<td>4 条 digest 行的 <code>remote.app</code> 全为 <code>sofarpc-cli</code><br><span class="st st-passed">passed</span></td>
+<td>
+  <details><summary>Oracle / 诊断 / 证据</summary>
+    <p><strong>Oracle：</strong>specified（<code>saveSpanContextAndTags</code> 从 <code>sofaCallerApp</code> 取 <code>REMOTE_APP</code>）</p>
+    <p><strong>足迹与说明：</strong>read-only。<code>remote.ip</code> 显示 <code>127.0.0.1</code>（服务端以实际 socket 对端覆盖），不影响调用方识别。</p>
+    <p><strong>证据：</strong><a href="evidence/S7-digest-remote-app.txt">S7-digest-remote-app.txt</a></p>
+  </details>
+</td>
+</tr>
+</tbody></table>
+
+<h2>根因记录</h2>
+<table>
+<thead><tr><th>#</th><th>现象</th><th>分类</th><th>处置</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>S1 首次执行返回 <code>runtime.rejected: java.lang.NoClassDefFoundError: io/grpc/Context</code></td>
+<td><code>environment</code></td>
+<td>本次搭建的 provider classpath 缺 <code>io.grpc:grpc-context:1.28.0</code>（SOFATracer 3.x 依赖它做上下文传播）。补 jar 后重启重跑，S1 通过。<strong>首次失败保留</strong>：该次输出同时证明请求已抵达 provider（<code>responseContentLength=178</code>）且失败路径也回带了 traceId。</td></tr>
+<tr><td>2</td><td>S5 的 digest 行 <code>"baggage":""</code> 为空，但业务方法确实读到了 baggage</td><td>观察，非缺陷</td>
+<td>digest 的 <code>baggage</code> 字段记录穿透属性 <code>sofaPenAttrs</code>，不是 <code>rpc_req_baggage</code>；服务端读取路径已由 <code>SERVER_TRACE</code> 行证实。</td></tr>
+<tr><td>3</td><td>digest 行 <code>"remote.ip":"127.0.0.1"</code> 与发送的 <code>sofaCallerIp</code>（192.168.18.222）不同</td><td>观察，非缺陷</td>
+<td>服务端以实际 socket 对端地址覆盖该 tag；<code>remote.app</code> 仍来自我们发送的 <code>sofaCallerApp</code>，调用方识别不受影响。</td></tr>
+</tbody></table>
+
+<h2>复跑</h2>
+<p class="meta">手工顺序执行，逐步检查结果后再进行下一步；<strong>不是</strong>无人值守脚本。
+<code>harness/classpath.txt</code> 中 <code>${M2}</code> 替换为 <code>~/.m2/repository</code>，<code>${SCRATCH}</code> 替换为工作目录。</p>
+<pre><code>javac -encoding UTF-8 -cp "$(cat harness/classpath.txt)" -d &lt;classes&gt; harness/*.java
+
+java -cp "$(cat harness/classpath.txt):&lt;classes&gt;" \
+     -Dlogging.path=&lt;logdir&gt; -Dprovider.port=21200 \
+     -Dprovider.registry.file=&lt;tmp&gt;/registry.local \
+     com.example.demo.ProviderMain          # 等待 PROVIDER_READY
+
+SOFARPC_ALLOW_INVOKE=true sofarpc-mcp call -project &lt;proj&gt; \
+  -service com.example.demo.EchoFacade -method echo \
+  -types java.lang.String -args '["hello"]'
+
+grep "&lt;diagnostics.traceId&gt;" &lt;logdir&gt;/tracelog/rpc-server-digest.log</code></pre>
+<p>harness 源码：
+<a href="harness/EchoFacade.java">EchoFacade.java</a> ・
+<a href="harness/EchoFacadeImpl.java">EchoFacadeImpl.java</a> ・
+<a href="harness/ProviderMain.java">ProviderMain.java</a> ・
+<a href="harness/deaf-listener.py">deaf-listener.py</a> ・
+<a href="harness/classpath.txt">classpath.txt</a> ・
+项目配置 <a href="evidence/e2eproj-config.json">e2eproj-config.json</a></p>
+
+<h2>清理与留存</h2>
+<ul>
+<li><strong>业务数据变更：无。</strong>全程 read-only，目标为本会话自建的一次性本地进程，未触碰任何业务环境或数据库。</li>
+<li>provider 进程、deaf 监听进程、<code>registry.local</code>、临时 project 目录、provider 日志目录均位于临时目录，运行结束后已终止并核验：端口 21200 / 21299 均无监听，相关进程数为 0（生命周期 <code>delete</code>）。</li>
+<li>留存在仓库内的仅为文本证据：<code>evidence/</code>（CLI 输出、provider stdout、digest 日志副本）与 <code>harness/</code>（可复现的 provider 源码与 classpath 模板）。</li>
+</ul>
+
+</body></html>

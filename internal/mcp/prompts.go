@@ -142,7 +142,8 @@ Workflow:
 5. For input.args-invalid messages that mention invocationProperties, env, or request baggage, call sofarpc_doctor with the same session/project context and inspect the invocation-properties check. Missing or empty env references must be fixed before any real invoke or replay.
 6. For replay.plan-version-unsupported, rebuild a fresh dry-run plan with sofarpc_invoke dryRun=true.
 7. For runtime.rejected, report the guardrail reason and do not retry blindly or bypass policy.
-8. End with the stable errcode, the next tool result, and whether the failure is target, contract, payload, invocation-properties, policy, or runtime.
+8. If the failed result carries diagnostics.traceId, report it: the provider adopts that id as its SOFATracer trace id, so provider digest and business logs can be searched by that exact string. For runtime.timeout the request most likely did reach the provider, so search by it. For target.connect-failed or target.invalid nothing left the client, so fix the target instead of searching provider logs for that id.
+9. End with the stable errcode, the next tool result, and whether the failure is target, contract, payload, invocation-properties, policy, or runtime.
 `, promptValue(args, "sessionId"), code, promptValue(args, "phase"), promptValue(args, "message"), promptValue(args, "nextTool"), promptValue(args, "nextArgs")))
 	return promptTextResult("Structured SOFARPC MCP failure recovery workflow.", text), nil
 }

@@ -134,6 +134,43 @@ func TestInvoke_UnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 	}
 }
 
+func TestInvoke_TimeoutStillReportsTraceId(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN:  "com.foo.Svc",
+			Kind: javamodel.KindInterface,
+			Methods: []javamodel.Method{
+				{Name: "doThing", ParamTypes: []string{"java.lang.String"}, ReturnType: "java.lang.String"},
+			},
+		},
+	)
+	directURL, stop := fakeDeafDirectServer(t)
+	defer stop()
+
+	out := callInvoke(t, Options{
+		Contract: store,
+		TargetSources: target.Sources{
+			Env: target.Config{DirectURL: directURL},
+			ProjectPolicy: target.PolicyConfig{
+				AllowedServices: []string{"com.foo.Svc"},
+			},
+		},
+	}, map[string]any{
+		"service":   "com.foo.Svc",
+		"method":    "doThing",
+		"args":      []any{"hello"},
+		"timeoutMs": 100,
+	})
+	if out.Error == nil || out.Error.Code != errcode.InvocationTimeout {
+		t.Fatalf("expected InvocationTimeout, got %+v", out.Error)
+	}
+	// A timed-out request most likely did reach the provider, so the id
+	// has to survive to the tool output on the error path too.
+	if traceID, _ := out.Diagnostics["traceId"].(string); traceID == "" {
+		t.Fatalf("expected traceId in diagnostics on the timeout path, got %+v", out.Diagnostics)
+	}
+}
+
 func TestInvoke_RejectsRetiredRegistryField(t *testing.T) {
 	for _, key := range []string{"registryAddress", "registryProtocol"} {
 		t.Run(key, func(t *testing.T) {
@@ -212,6 +249,11 @@ func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 	}
 	if got, _ := out.Diagnostics["targetServiceUniqueName"].(string); got != "com.example.demo.ExampleFacade:2.0" {
 		t.Fatalf("targetServiceUniqueName: got %q", got)
+	}
+	// traceId is what an agent searches provider logs by, so it has to
+	// survive the diagnostics wrapping into the tool output.
+	if traceID, _ := out.Diagnostics["traceId"].(string); traceID == "" {
+		t.Fatalf("expected traceId in invoke diagnostics, got %+v", out.Diagnostics)
 	}
 	result, ok := out.Result.(map[string]any)
 	if !ok {
@@ -875,6 +917,36 @@ func callInvokeRaw(t *testing.T, opts Options, raw json.RawMessage) InvokeOutput
 		t.Fatalf("unmarshal structured: %v", err)
 	}
 	return out
+}
+
+// fakeDeafDirectServer accepts a connection and never answers, so the
+// client hits its own invoke timeout.
+func fakeDeafDirectServer(t *testing.T) (string, func()) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer listener.Close()
+
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		<-stop
+	}()
+
+	return "bolt://" + listener.Addr().String(), func() {
+		close(stop)
+		_ = listener.Close()
+		<-done
+	}
 }
 
 func fakeDirectServer(t *testing.T, content []byte) (string, func()) {

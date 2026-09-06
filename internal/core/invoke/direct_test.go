@@ -1,6 +1,7 @@
 package invoke
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -226,13 +227,95 @@ func TestClassifyDirectInvokeError(t *testing.T) {
 	}
 }
 
+func TestExecuteDirectIfPossible_SendsTraceContextItReports(t *testing.T) {
+	appResponse := sofarpcwire.NormalizeArgs([]any{map[string]any{"@type": "com.example.demo.Result", "success": true}})[0]
+	responseBytes, err := sofarpcwire.BuildSuccessResponse(appResponse)
+	if err != nil {
+		t.Fatalf("BuildSuccessResponse: %v", err)
+	}
+	directURL, requestContent, stop := fakeDirectServerCapturingRequest(t, responseBytes)
+
+	exec, err := ExecuteDirectIfPossible(context.Background(), Plan{
+		Service:    "com.example.demo.ExampleFacade",
+		Method:     "query",
+		ParamTypes: []string{"java.lang.String"},
+		Args:       []any{"hello"},
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: directURL,
+		},
+	}, "invoke")
+	stop()
+	if err != nil {
+		t.Fatalf("ExecuteDirectIfPossible: %v", err)
+	}
+
+	traceID, _ := exec.Diagnostics["traceId"].(string)
+	if traceID == "" {
+		t.Fatal("expected a traceId diagnostic to correlate provider logs with")
+	}
+	// The reported id is worthless unless it is the one the provider
+	// actually received, so assert against the captured wire bytes.
+	sent := requestContent()
+	for _, needle := range [][]byte{
+		[]byte(sofarpcwire.TraceContextKey),
+		[]byte(traceID),
+	} {
+		if !bytes.Contains(sent, needle) {
+			t.Fatalf("request content missing %q", needle)
+		}
+	}
+}
+
+func TestExecuteDirectIfPossible_ReportsTraceIdWhenInvokeTimesOut(t *testing.T) {
+	directURL, stop := fakeDeafDirectServer(t)
+	defer stop()
+
+	exec, err := ExecuteDirectIfPossible(context.Background(), Plan{
+		Service:    "com.example.demo.ExampleFacade",
+		Method:     "query",
+		ParamTypes: []string{"java.lang.String"},
+		Args:       []any{"hello"},
+		Target: target.Config{
+			Mode:      target.ModeDirect,
+			DirectURL: directURL,
+			TimeoutMS: 100,
+		},
+	}, "invoke")
+	if err == nil {
+		t.Fatal("expected a timeout error from a server that never answers")
+	}
+	var ecerr *errcode.Error
+	if !errors.As(err, &ecerr) || ecerr.Code != errcode.InvocationTimeout {
+		t.Fatalf("error: got %v want code %s", err, errcode.InvocationTimeout)
+	}
+	// A timeout is exactly when the caller needs the trace id: the
+	// request may well have reached the provider.
+	if traceID, _ := exec.Diagnostics["traceId"].(string); traceID == "" {
+		t.Fatal("expected traceId in diagnostics on the timeout path")
+	}
+	if got, _ := exec.Diagnostics["requestId"].(uint32); got == 0 {
+		t.Fatal("expected requestId in diagnostics on the timeout path")
+	}
+}
+
 func fakeDirectServer(t *testing.T, content []byte) (string, func()) {
+	t.Helper()
+	directURL, _, stop := fakeDirectServerCapturingRequest(t, content)
+	return directURL, stop
+}
+
+// fakeDirectServerCapturingRequest also hands back what the client put on
+// the wire. The returned accessor is only safe after stop(), which waits
+// for the serving goroutine to finish.
+func fakeDirectServerCapturingRequest(t *testing.T, content []byte) (string, func() []byte, func()) {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
+	var requestContent []byte
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -244,32 +327,63 @@ func fakeDirectServer(t *testing.T, content []byte) (string, func()) {
 		}
 		defer conn.Close()
 
-		requestID, err := readBoltRequestID(conn)
+		requestID, body, err := readBoltRequest(conn)
 		if err != nil {
 			return
 		}
+		requestContent = body
 		_ = writeBoltResponse(conn, requestID, content)
 	}()
 
-	return "bolt://" + listener.Addr().String(), func() {
+	return "bolt://" + listener.Addr().String(), func() []byte { return requestContent }, func() {
 		_ = listener.Close()
 		<-done
 	}
 }
 
-func readBoltRequestID(r io.Reader) (uint32, error) {
+// fakeDeafDirectServer accepts a connection and never answers, so the
+// client hits its own invoke timeout.
+func fakeDeafDirectServer(t *testing.T) (string, func()) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer listener.Close()
+
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		<-stop
+	}()
+
+	return "bolt://" + listener.Addr().String(), func() {
+		close(stop)
+		_ = listener.Close()
+		<-done
+	}
+}
+
+func readBoltRequest(r io.Reader) (uint32, []byte, error) {
 	fixed := make([]byte, 22)
 	if _, err := io.ReadFull(r, fixed); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	classLen := binary.BigEndian.Uint16(fixed[14:16])
 	headerLen := binary.BigEndian.Uint16(fixed[16:18])
 	contentLen := binary.BigEndian.Uint32(fixed[18:22])
 	body := make([]byte, int(classLen)+int(headerLen)+int(contentLen))
 	if _, err := io.ReadFull(r, body); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	return binary.BigEndian.Uint32(fixed[5:9]), nil
+	return binary.BigEndian.Uint32(fixed[5:9]), body, nil
 }
 
 func writeBoltResponse(w io.Writer, requestID uint32, content []byte) error {
