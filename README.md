@@ -543,3 +543,10 @@ tests/
 - The repository is now pure-Go on the runtime path.
 - `sofarpc_describe` works from project source scan; no Java sidecar or local cache is required.
 - `go test ./...` passes on the current tree.
+
+## License
+
+Copyright 2026 He Xin (hex1n) and sofarpc-cli contributors.
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
+Third-party dependencies remain subject to their own licenses.

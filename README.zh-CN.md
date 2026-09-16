@@ -405,3 +405,10 @@ docs/
 - 当前运行时主路径已经是 pure-Go。
 - `sofarpc_describe` 现在直接依赖项目源码扫描，不需要 Java sidecar，也不需要本地缓存。
 - 当前工作树下 `go test ./...` 全部通过。
+
+## 许可证
+
+Copyright 2026 He Xin (hex1n) and sofarpc-cli contributors.
+
+本项目采用 [Apache License, Version 2.0](LICENSE) 许可。
+第三方依赖仍遵循各自的许可证。
