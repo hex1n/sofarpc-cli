@@ -67,7 +67,7 @@ func New(opts Options) *sdkmcp.Server {
 	}, nil)
 	registerPrompts(server)
 	registerResources(server, opts, holder)
-	registerInitProject(server, opts, holder)
+	registerInitProject(server, opts)
 	registerOpen(server, opts, holder)
 	registerDescribe(server, opts, holder)
 	registerTarget(server, opts)
@@ -101,8 +101,9 @@ func loadErrorMessage(err error) string {
 // OpenInput is the input shape for sofarpc_open. All fields are optional;
 // Cwd defaults to the process CWD, Project falls back to Cwd.
 type OpenInput struct {
-	Cwd     string `json:"cwd,omitempty"`
-	Project string `json:"project,omitempty"`
+	RefreshContract bool   `json:"refreshContract,omitempty"`
+	Cwd             string `json:"cwd,omitempty"`
+	Project         string `json:"project,omitempty"`
 	// Profile selects the Active Target Profile for this session; sessionId
 	// calls inherit it. Empty falls back to the project's defaultProfile.
 	Profile string `json:"profile,omitempty"`

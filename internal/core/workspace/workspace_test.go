@@ -127,3 +127,15 @@ func TestSources_PropagatesEnvAndProjectRoot(t *testing.T) {
 		t.Fatalf("projectRoot: got %q", src.ProjectRoot)
 	}
 }
+
+func TestResolveRelativeWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.Mkdir("java-project", 0755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Resolve(Input{Cwd: "java-project"})
+	if err != nil || got.ProjectRoot != filepath.Join(dir, "java-project") {
+		t.Fatalf("Resolve: %+v, %v", got, err)
+	}
+}

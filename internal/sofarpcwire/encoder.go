@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -188,35 +189,60 @@ func (w *hessianWriter) writeTypedList(typeName string, values []interface{}) er
 }
 
 func (w *hessianWriter) writeType(typeName string) {
+	length, encoded := encodeHessianText(typeName)
 	w.buf = append(w.buf, 't')
-	w.writeUint16(uint16(utf8.RuneCountInString(typeName)))
-	w.buf = append(w.buf, []byte(typeName)...)
+	w.writeUint16(uint16(length))
+	w.buf = append(w.buf, encoded...)
 }
 
 func (w *hessianWriter) writeLenString(value string) {
-	w.writeInt(int64(utf8.RuneCountInString(value)))
-	w.buf = append(w.buf, []byte(value)...)
+	length, encoded := encodeHessianText(value)
+	w.writeInt(int64(length))
+	w.buf = append(w.buf, encoded...)
 }
 
 func (w *hessianWriter) writeString(value string) error {
-	if value == "" {
-		w.buf = append(w.buf, byte(0))
-		return nil
+	// A supplementary character occupies two units. Keep both in the same chunk.
+	const maxChunkUnits = 0x8000
+	start, units := 0, 0
+	for offset, character := range value {
+		width := utf16.RuneLen(character)
+		if units+width > maxChunkUnits {
+			_, encoded := encodeHessianText(value[start:offset])
+			w.buf = append(w.buf, 's')
+			w.writeUint16(uint16(units))
+			w.buf = append(w.buf, encoded...)
+			start, units = offset, 0
+		}
+		units += width
 	}
-
-	length := utf8.RuneCountInString(value)
-	if length <= 0x1f {
-		w.buf = append(w.buf, byte(length))
-		w.buf = append(w.buf, []byte(value)...)
-		return nil
+	_, encoded := encodeHessianText(value[start:])
+	if units <= 0x1f {
+		w.buf = append(w.buf, byte(units))
+	} else {
+		w.buf = append(w.buf, 'S')
+		w.writeUint16(uint16(units))
 	}
-	if length > math.MaxUint16 {
-		return fmt.Errorf("string too long: %d chars", length)
-	}
-	w.buf = append(w.buf, 'S')
-	w.writeUint16(uint16(length))
-	w.buf = append(w.buf, []byte(value)...)
+	w.buf = append(w.buf, encoded...)
 	return nil
+}
+
+func encodeHessianText(value string) (int, []byte) {
+	length := 0
+	encoded := make([]byte, 0, len(value))
+	for _, character := range value {
+		if character <= 0xffff {
+			encoded = utf8.AppendRune(encoded, character)
+			length++
+			continue
+		}
+		high, low := utf16.EncodeRune(character)
+		for _, unit := range [...]rune{high, low} {
+			encoded = append(encoded, byte(0xe0|unit>>12), byte(0x80|unit>>6&0x3f), byte(0x80|unit&0x3f))
+		}
+		length += 2
+	}
+	return length, encoded
 }
 
 func (w *hessianWriter) writeLength(length int) {

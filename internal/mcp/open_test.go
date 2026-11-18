@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
@@ -231,5 +233,47 @@ func writeOpenFile(t *testing.T, root, relative, body string) {
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
+}
+
+func TestOpenRefreshesOneProjectContract(t *testing.T) {
+	root := t.TempDir()
+	var loads atomic.Int32
+	server := New(Options{ProjectContractLoader: func(string) (contract.Store, error) {
+		if loads.Add(1) == 1 {
+			return nil, errors.New("index unavailable")
+		}
+		return contract.NewInMemoryStore(javamodel.Class{FQN: "com.foo.Svc", Kind: javamodel.KindInterface}), nil
+	}})
+	ctx := context.Background()
+	client := connect(t, ctx, server)
+	defer client.Close()
+	open := func(refresh bool) OpenOutput {
+		t.Helper()
+		result, err := client.CallTool(ctx, &sdkmcp.CallToolParams{
+			Name:      "sofarpc_open",
+			Arguments: map[string]any{"project": root, "refreshContract": refresh},
+		})
+		if err != nil || result.IsError {
+			t.Fatalf("open: %+v, %v", result, err)
+		}
+		body, err := json.Marshal(result.StructuredContent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out OpenOutput
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if out := open(false); out.Contract.LoadError == "" || out.Contract.Attached {
+		t.Fatalf("missing initial failure: %+v", out.Contract)
+	}
+	if out := open(true); out.Contract.LoadError != "" || !out.Contract.Attached {
+		t.Fatalf("refresh did not replace failed snapshot: %+v", out.Contract)
+	}
+	if out := open(false); !out.Contract.Attached || loads.Load() != 2 {
+		t.Fatalf("refreshed snapshot did not remain cached: %+v, %d loads", out.Contract, loads.Load())
 	}
 }

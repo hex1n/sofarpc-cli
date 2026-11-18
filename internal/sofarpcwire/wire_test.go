@@ -695,3 +695,27 @@ func TestFormatValue_UnsafeLongRoundTripsBackIntoAnArgument(t *testing.T) {
 		t.Fatalf("re-encoded %q, want %q", w.Bytes(), want)
 	}
 }
+
+func TestHessianJavaSupplementaryString(t *testing.T) {
+	// Hessian output from the repository's Java codec for U+1F600.
+	want := "\U0001f600"
+	java := []byte{0x02, 0xed, 0xa0, 0xbd, 0xed, 0xb8, 0x80}
+	var writer hessianWriter
+	if err := writer.writeString(want); err != nil || !bytes.Equal(writer.buf, java) {
+		t.Fatalf("encoded = % x, err=%v; want % x", writer.buf, err, java)
+	}
+	for _, text := range []string{want, strings.Repeat("a", 32767) + want + "\u4e2d"} {
+		writer := hessianWriter{}
+		if err := writer.writeString(text); err != nil {
+			t.Fatal(err)
+		}
+		decoder := &hessianDecoder{data: append(writer.buf, 'T')}
+		got, err := decoder.readStringValue()
+		if err != nil || got != text {
+			t.Fatalf("length %d: decoded length=%d err=%v", len(text), len(got), err)
+		}
+		if tail, err := decoder.readValue(); err != nil || tail != true {
+			t.Fatalf("following field: %v, %v", tail, err)
+		}
+	}
+}

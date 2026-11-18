@@ -31,13 +31,11 @@ jobs:
           go-version-file: go.mod
 
       - name: Build MCPB bundles
+        env:
+          VERSION: ${{ inputs.version }}
+          MCPB_VERSION: ${{ inputs.mcpb_version }}
         run: |
-          version="${{ inputs.version }}"
-          if [ -z "$version" ]; then
-            version="${GITHUB_REF_NAME}"
-          fi
-          export VERSION="$version"
-          export MCPB_VERSION="${{ inputs.mcpb_version }}"
+          export VERSION="${VERSION:-$GITHUB_REF_NAME}"
           bash scripts/build-mcpb.sh
 
       - name: Upload MCPB bundles

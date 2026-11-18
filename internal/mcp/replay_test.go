@@ -79,11 +79,7 @@ func TestReplay_NonDryRunRequiresAllowInvokeEnv(t *testing.T) {
 	t.Setenv(envAllowInvoke, "false")
 
 	out := callReplay(t, Options{
-		TargetSources: target.Sources{
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.Svc"},
-			},
-		},
+		TargetSources: target.Sources{},
 	}, map[string]any{
 		"payload": samplePlan(),
 	})
@@ -101,43 +97,12 @@ func TestReplay_NonDryRunRequiresAllowInvokeEnv(t *testing.T) {
 	}
 }
 
-func TestReplay_NonDryRunRespectsAllowedServices(t *testing.T) {
-	t.Setenv(envAllowInvoke, "true")
-
-	out := callReplay(t, Options{
-		TargetSources: target.Sources{
-			ProjectLocalPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.OtherFacade"},
-			},
-		},
-	}, map[string]any{
-		"payload": samplePlan(),
-	})
-	if out.Error == nil || out.Error.Code != errcode.InvocationRejected {
-		t.Fatalf("expected InvocationRejected, got %+v", out.Error)
-	}
-	if out.Error.Phase != "replay" {
-		t.Fatalf("phase = %q, want replay", out.Error.Phase)
-	}
-	if !strings.Contains(out.Error.Message, "project allowedServices") {
-		t.Fatalf("error message should mention project allowedServices: %q", out.Error.Message)
-	}
-	if out.Plan == nil || out.Source != "payload" {
-		t.Fatalf("rejected replay should keep plan/source: plan=%+v source=%q", out.Plan, out.Source)
-	}
-}
-
 func TestReplay_NonDryRunRejectsTargetOverrideByDefault(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowTargetOverride, "false")
 
 	out := callReplay(t, Options{
-		TargetSources: target.Sources{
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.Svc"},
-			},
-		},
+		TargetSources: target.Sources{},
 	}, map[string]any{
 		"payload": samplePlan(),
 	})
@@ -157,7 +122,6 @@ func TestReplay_NonDryRunRejectsTargetOverrideByDefault(t *testing.T) {
 
 func TestReplay_ConfigErrorDiagnosticsUseSessionProject(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowTargetOverride, "false")
 	projectRoot := t.TempDir()
 	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.local.json", `{"mode":"direct","directUrl":"bolt://project-host:12200"}`)
@@ -186,14 +150,9 @@ func TestReplay_ConfigErrorDiagnosticsUseSessionProject(t *testing.T) {
 
 func TestReplay_PayloadNonDryRunWithUnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 
 	out := callReplay(t, Options{
-		TargetSources: target.Sources{
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.Svc"},
-			},
-		},
+		TargetSources: target.Sources{},
 	}, map[string]any{
 		"payload": sampleUnsupportedPlan(),
 	})
@@ -207,7 +166,6 @@ func TestReplay_PayloadNonDryRunWithUnsupportedTargetSurfacesInvocationRejected(
 
 func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 
 	plan := samplePlan()
 	appResponse := sofarpcwire.NormalizeArgs([]any{
@@ -228,9 +186,6 @@ func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
 	out := callReplay(t, Options{
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: directURL},
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.Svc"},
-			},
 		},
 	}, map[string]any{
 		"payload": plan,
@@ -260,7 +215,6 @@ func TestReplay_PayloadDirectTransportRoundTrip(t *testing.T) {
 
 func TestReplay_PayloadUsesSessionForSafetyContext(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowTargetOverride, "false")
 
 	plan := samplePlan()
@@ -279,7 +233,7 @@ func TestReplay_PayloadUsesSessionForSafetyContext(t *testing.T) {
 	plan.Target.DirectURL = directURL
 
 	projectRoot := t.TempDir()
-	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.local.json", `{"directUrl": "`+directURL+`", "allowedServices": ["com.foo.Svc"]}`)
+	writeMCPProjectFile(t, projectRoot, ".sofarpc/config.local.json", `{"directUrl": "`+directURL+`", "allowedServices": []}`)
 	sessions := NewSessionStore()
 	session := sessions.Create(Session{ProjectRoot: projectRoot})
 
@@ -439,7 +393,10 @@ func TestReplay_SessionUnsupportedSchemaVersionIsRejected(t *testing.T) {
 	sessions := NewSessionStore()
 	plan := samplePlan()
 	plan.SchemaVersion = "sofarpc.invoke.plan/v999"
-	session := sessions.Create(Session{ProjectRoot: "/tmp", LastPlan: &plan})
+	session := sessions.Create(Session{ProjectRoot: "/tmp"})
+	if capture := sessions.CapturePlan(session.ID, plan); !capture.Captured {
+		t.Fatalf("capture archive: %+v", capture)
+	}
 
 	out := callReplay(t, Options{Sessions: sessions}, map[string]any{
 		"sessionId": session.ID,

@@ -34,6 +34,7 @@ const (
 	SerializeFailed    Code = "runtime.serialize-failed"
 	DeserializeFailed  Code = "runtime.deserialize-failed"
 	InvocationTimeout  Code = "runtime.timeout"
+	InvocationCanceled Code = "runtime.canceled"
 	ProtocolFailed     Code = "runtime.protocol-failed"
 	InvocationRejected Code = "runtime.rejected"
 	InvocationBusy     Code = "runtime.busy"

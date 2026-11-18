@@ -33,7 +33,6 @@ func TestDoctor_UnresolvedTargetFails(t *testing.T) {
 
 func TestDoctor_ReachableTargetPasses(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowedTargetHosts, "")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -55,9 +54,6 @@ func TestDoctor_ReachableTargetPasses(t *testing.T) {
 			Env: target.Config{
 				DirectURL:        "bolt://" + listener.Addr().String(),
 				ConnectTimeoutMS: 500,
-			},
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"*"},
 			},
 		},
 	}

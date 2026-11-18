@@ -95,47 +95,16 @@ func TestNormalizeArgs_PreservesLiteralDollarTopLevelClass(t *testing.T) {
 	}
 }
 
-// Rewriting a parameter type expression must be single-pass: one full
-// expression rebuild per resolvable name turns a large replay-supplied
-// expression quadratic (and it runs before the invoke limiter).
-func TestWireParamTypes_RewritesManyKnownTypesSinglePass(t *testing.T) {
-	const n = 2000
-	classes := make([]javamodel.Class, 0, n)
-	var exprB, wantB strings.Builder
-	exprB.WriteString("java.util.List<")
-	wantB.WriteString("java.util.List<")
-	for i := 0; i < n; i++ {
-		if i > 0 {
-			exprB.WriteByte(',')
-			wantB.WriteByte(',')
-		}
-		fqn := fmt.Sprintf("com.foo.C%d.In", i)
-		bin := fmt.Sprintf("com.foo.C%d$In", i)
-		classes = append(classes, javamodel.Class{FQN: fqn, BinaryName: bin, Kind: javamodel.KindClass})
-		exprB.WriteString(fqn)
-		wantB.WriteString(bin)
-	}
-	exprB.WriteByte('>')
-	wantB.WriteByte('>')
-	store := NewInMemoryStore(classes...)
-	expr := exprB.String()
-
-	out := WireParamTypes([]string{expr}, store)
-	if out[0] != wantB.String() {
-		t.Fatalf("rewrite wrong: got %.120s...", out[0])
-	}
-
-	allocs := testing.AllocsPerRun(5, func() {
-		WireParamTypes([]string{expr}, store)
+func TestWireParamTypes_ErasesGenericArraysAndPreservesNestedBinaryNames(t *testing.T) {
+	store := NewInMemoryStore(javamodel.Class{
+		FQN: "com.foo.Outer.Inner", BinaryName: "com.foo.Outer$Inner", Kind: javamodel.KindClass,
 	})
-	if allocs > 64 {
-		t.Fatalf("%d resolvable names cost %v allocs per call; expression rewrite must be single-pass", n, allocs)
+	got := WireParamTypes([]string{"java.util.List<com.foo.Outer.Inner>[]", "com.foo.Outer.Inner[]", "java.util.List<"}, store)
+	if got[0] != "java.util.List[]" || got[1] != "com.foo.Outer$Inner[]" || got[2] != "java.util.List<" {
+		t.Fatalf("wire signatures: %q", got)
 	}
 }
 
-// Per-name bounds are not enough: a rewrite over caller-supplied input
-// must carry one shared fallback budget, or a thousand tokens each just
-// inside the per-name limit multiply back into quadratic-scale work.
 func TestWireParamTypes_BudgetsUnresolvableDollarTokens(t *testing.T) {
 	store := NewInMemoryStore()
 	token := strings.Repeat("a$", 64) + "z"

@@ -505,7 +505,6 @@ func TestRunSetup_ProjectLocalWritesConfigAndGitignore(t *testing.T) {
 		"--protocol", "bolt",
 		"--serialization", "hessian2",
 		"--timeout-ms", "3000",
-		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err != nil {
 		t.Fatalf("runSetup: %v", err)
@@ -528,7 +527,7 @@ func TestRunSetup_ProjectLocalWritesConfigAndGitignore(t *testing.T) {
 	if _, ok := cfg["mode"]; ok {
 		t.Fatalf("project setup wrote mode: %#v", cfg)
 	}
-	if got := cfg["allowedServices"].([]any); len(got) != 1 || got[0] != "com.foo.UserFacade" {
+	if _, exists := cfg["allowedServices"]; exists {
 		t.Fatalf("allowedServices: %#v", cfg)
 	}
 	ignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
@@ -548,7 +547,6 @@ func TestRunSetup_ProjectSharedWritesSharedConfigOnly(t *testing.T) {
 		"--shared",
 		"--direct-url", "bolt://host:12200",
 		"--connect-timeout-ms", "1000",
-		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err != nil {
 		t.Fatalf("runSetup: %v", err)
@@ -574,7 +572,6 @@ func TestRunSetup_RegistryFlagRemoved(t *testing.T) {
 		"--project-root", root,
 		"--shared",
 		"--registry-address", "zookeeper://host:2181",
-		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err == nil {
 		t.Fatal("--registry-address should be rejected as an unknown flag")
@@ -584,28 +581,13 @@ func TestRunSetup_RegistryFlagRemoved(t *testing.T) {
 	}
 }
 
-func TestRunSetup_ProjectRejectsTargetWithoutAllowedServices(t *testing.T) {
-	root := t.TempDir()
-	err := runSetup([]string{
-		"--scope=project",
-		"--project-root", root,
-		"--local",
-		"--direct-url", "bolt://host:12200",
-	})
-	if err == nil {
-		t.Fatal("expected project setup to require allowedServices")
-	}
-	if !strings.Contains(err.Error(), "--allowed-services") {
-		t.Fatalf("error should mention --allowed-services, got %v", err)
-	}
-}
-
-func TestRunSetup_ProjectWritesAllowedServices(t *testing.T) {
+func TestRunSetup_ProjectIgnoresLegacyAllowedServices(t *testing.T) {
 	root := t.TempDir()
 	err := runSetup([]string{
 		"--scope=project",
 		"--project-root", root,
 		"--shared",
+		"--direct-url", "bolt://host:12200",
 		"--allowed-services", "com.foo.UserFacade, com.foo.OrderFacade",
 	})
 	if err != nil {
@@ -615,16 +597,8 @@ func TestRunSetup_ProjectWritesAllowedServices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	var cfg struct {
-		AllowedServices []string `json:"allowedServices"`
-	}
-	if err := json.Unmarshal(body, &cfg); err != nil {
-		t.Fatalf("unmarshal config: %v", err)
-	}
-	if len(cfg.AllowedServices) != 2 ||
-		cfg.AllowedServices[0] != "com.foo.UserFacade" ||
-		cfg.AllowedServices[1] != "com.foo.OrderFacade" {
-		t.Fatalf("allowedServices: got %#v", cfg.AllowedServices)
+	if strings.Contains(string(body), `"allowedServices"`) {
+		t.Fatalf("config contains retired allowedServices: %s", body)
 	}
 }
 
@@ -642,7 +616,6 @@ func TestRunSetup_ProjectDoesNotOverwriteWithoutForce(t *testing.T) {
 		"--project-root", root,
 		"--local",
 		"--direct-url", "bolt://new:2",
-		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err == nil {
 		t.Fatal("expected overwrite without force to fail")
@@ -653,7 +626,6 @@ func TestRunSetup_ProjectDoesNotOverwriteWithoutForce(t *testing.T) {
 		"--local",
 		"--force",
 		"--direct-url", "bolt://new:2",
-		"--allowed-services", "com.foo.UserFacade",
 	}); err != nil {
 		t.Fatalf("force runSetup: %v", err)
 	}
@@ -676,7 +648,6 @@ func TestRunSetup_ProjectLocalDoesNotWriteConfigWhenGitignoreFails(t *testing.T)
 		"--project-root", root,
 		"--local",
 		"--direct-url", "bolt://host:12200",
-		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err == nil {
 		t.Fatal("expected gitignore failure")
@@ -694,7 +665,6 @@ func TestRunSetup_ProjectDryRunLeavesFilesUntouched(t *testing.T) {
 		"--local",
 		"--dry-run",
 		"--direct-url", "bolt://host:12200",
-		"--allowed-services", "com.foo.UserFacade",
 	})
 	if err != nil {
 		t.Fatalf("runSetup dry-run: %v", err)

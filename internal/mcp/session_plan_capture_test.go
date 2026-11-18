@@ -96,3 +96,32 @@ func TestSessionPlanMaxBytesEnvZeroDisablesBound(t *testing.T) {
 		t.Fatalf("MaxPlanBytes = %d, want 0", got)
 	}
 }
+
+func TestSessionPlanBudgetEvictsOldestAcrossSessions(t *testing.T) {
+	store := NewSessionStoreWithLimits(0, 2).WithIDFunc(seqIDs())
+	first := store.Create(Session{ProjectRoot: "/a"})
+	second := store.Create(Session{ProjectRoot: "/b"})
+	plan := samplePlan()
+	size, err := planSizeBytes(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.maxTotalPlanBytes = size
+	old := store.CapturePlan(first.ID, plan)
+	recent := store.CapturePlan(second.ID, plan)
+	if !old.Captured || !recent.Captured {
+		t.Fatalf("capture results: %+v, %+v", old, recent)
+	}
+	if _, ok := store.PlanByID(first.ID, old.PlanID); ok {
+		t.Fatal("old plan survived budget eviction")
+	}
+	if session, ok := store.Get(first.ID); !ok || session.LastPlan != nil {
+		t.Fatalf("expected the first session without its old plan, got %+v", session)
+	}
+	if _, ok := store.PlanByID(second.ID, recent.PlanID); !ok {
+		t.Fatal("new plan was evicted")
+	}
+	if used, limit := store.PlanBudget(); used != size || limit != size {
+		t.Fatalf("plan budget=%d/%d, want %d/%d", used, limit, size, size)
+	}
+}

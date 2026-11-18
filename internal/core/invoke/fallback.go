@@ -21,6 +21,6 @@ func IsContractUnresolvable(err error) bool {
 func TrustedTupleComplete(service, method string, paramTypes []string, args any) bool {
 	return strings.TrimSpace(service) != "" &&
 		strings.TrimSpace(method) != "" &&
-		len(paramTypes) > 0 &&
+		paramTypes != nil &&
 		args != nil
 }

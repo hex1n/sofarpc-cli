@@ -63,11 +63,11 @@ func registerOpen(server *sdkmcp.Server, opts Options, holder *contractHolder) {
 	addTypedTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_open",
 		Title:       "Open SOFARPC Workspace",
-		Description: "Open a sofarpc workspace. Returns the resolved target, a capability banner, and a session id the agent can reuse in subsequent calls.",
+		Description: "Open a sofarpc workspace. Returns the resolved target, a capability banner, and a session id the agent can reuse in subsequent calls. Set refreshContract to reload the Java source contract.",
 		Annotations: localReadOnlyAnnotations("Open SOFARPC Workspace"),
 	}, "open", func(ecerr *errcode.Error) OpenOutput { return OpenOutput{Error: ecerr} }, func(ctx context.Context, req *sdkmcp.CallToolRequest, in OpenInput) (*sdkmcp.CallToolResult, OpenOutput, error) {
 		notifyToolProgress(ctx, req, 0, 3, "resolving workspace")
-		toolCtx, err := resolveOpenContext(opts.TargetSources, holder, in.Cwd, in.Project)
+		toolCtx, err := resolveOpenContext(opts.TargetSources, holder, in.Cwd, in.Project, in.RefreshContract)
 		if err != nil {
 			out := OpenOutput{}
 			return toolResult(out, err.Error(), true), out, nil

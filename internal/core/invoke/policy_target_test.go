@@ -85,69 +85,18 @@ func TestValidateExecutablePlanLayersSchemaBeforeTransport(t *testing.T) {
 	}
 }
 
-// The enablement rule looks at no service, so it rejects the same way whether
-// or not a caller has one in hand.
-func TestValidateRealInvokeEnabledIgnoresService(t *testing.T) {
-	disabled := ExecutionPolicy{}
-	if !strings.Contains(policyErr(t, disabled.ValidateRealInvokeEnabled("invoke")).Message, "real invoke is disabled") {
-		t.Fatal("a policy with AllowInvoke=false rejects on enablement")
-	}
-	noAllowlist := ExecutionPolicy{AllowInvoke: true}
-	ecerr := policyErr(t, noAllowlist.ValidateRealInvokeEnabled("invoke"))
-	if !strings.Contains(ecerr.Message, "project allowedServices is required") {
-		t.Fatalf("an unconfigured allowlist rejects on enablement, got %q", ecerr.Message)
-	}
-	configured := ExecutionPolicy{AllowInvoke: true, AllowedServicesConfigured: true}
-	if err := configured.ValidateRealInvokeEnabled("invoke"); err != nil {
-		t.Fatalf("a configured allowlist passes enablement regardless of its contents: %v", err)
-	}
-}
-
-func TestValidateServiceAllowedNamesItsSource(t *testing.T) {
-	policy := ExecutionPolicy{
-		AllowInvoke:           true,
-		AllowedServices:       []string{"com.foo.AllowedFacade"},
-		AllowedServicesSource: "project allowedServices",
-	}
-	if err := policy.ValidateServiceAllowed("com.foo.AllowedFacade", "invoke"); err != nil {
-		t.Fatalf("an allowlisted service passes: %v", err)
-	}
-	ecerr := policyErr(t, policy.ValidateServiceAllowed("com.foo.BlockedFacade", "invoke"))
-	if !strings.Contains(ecerr.Message, "project allowedServices") {
-		t.Fatalf("the rejection should name the allowlist source, got %q", ecerr.Message)
-	}
-	if ecerr.Hint == nil || ecerr.Hint.NextTool != "sofarpc_doctor" {
-		t.Fatalf("the service hint should point at the tool that renders the allowlist, got %+v", ecerr.Hint)
-	}
-	if ecerr.Hint.NextArgs["service"] != "com.foo.BlockedFacade" {
-		t.Fatalf("the service hint should carry the rejected service, got %+v", ecerr.Hint.NextArgs)
-	}
-}
-
 // Every rejection must hand the agent a tool that moves it forward.
-//
-// The service rule is the one exception that may name doctor. This is a
-// design choice, not a fixed requirement: doctor is currently the only tool
-// that renders the configured allowedServices a service was checked against,
-// so an agent needs it before deciding whether the name was wrong or the
-// list is short. sofarpc_init_project cannot answer that, because its dryRun
-// builds a config from discovery rather than reading the current allowlist.
-// If a tool ever renders that list directly, point this hint there and drop
-// the exception.
 func TestPolicyHintsAreActionable(t *testing.T) {
 	sources := target.Sources{ProjectRoot: "/tmp/project"}
 	policy := ExecutionPolicy{
-		AllowInvoke:           true,
-		AllowedServices:       []string{"com.foo.AllowedFacade"},
-		AllowedServicesSource: "project allowedServices",
-		AllowedTargetHosts:    []string{"other.example.internal"},
-		AllowTargetOverride:   true,
-		Sources:               sources,
+		AllowInvoke:         true,
+		AllowedTargetHosts:  []string{"other.example.internal"},
+		AllowTargetOverride: true,
+		Sources:             sources,
 	}
 	direct := target.Config{DirectURL: "bolt://127.0.0.1:12200"}
 	rejections := map[string]error{
 		"disabled":  ExecutionPolicy{Sources: sources}.ValidateRealInvokeEnabled("invoke"),
-		"allowlist": ExecutionPolicy{AllowInvoke: true, Sources: sources}.ValidateRealInvokeEnabled("invoke"),
 		"host":      policy.ValidateTarget(Plan{Target: direct}, "invoke"),
 		"transport": ValidateTargetTransport(target.Config{DirectURL: "bolt://127.0.0.1:12200", Protocol: "tr"}, "invoke"),
 		"resolved":  ValidateTargetResolved(target.Config{}, "invoke"),
@@ -167,9 +116,6 @@ func TestHintArgsCarryProjectRootOnlyWhenKnown(t *testing.T) {
 	scoped := target.Sources{ProjectRoot: "/tmp/project"}
 	if got := TargetHintArgs(scoped); got["explain"] != true || got["project"] != "/tmp/project" {
 		t.Fatalf("TargetHintArgs should explain within the project, got %+v", got)
-	}
-	if got := InitProjectHintArgs(scoped); got["dryRun"] != true || got["project"] != "/tmp/project" {
-		t.Fatalf("InitProjectHintArgs should dry-run within the project, got %+v", got)
 	}
 	if got := TargetHintArgs(target.Sources{ProjectRoot: "  "}); got["project"] != nil {
 		t.Fatalf("a blank project root should be omitted, got %+v", got)

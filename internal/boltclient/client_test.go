@@ -2,9 +2,14 @@ package boltclient
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
+	"io"
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEncodeDecodeSimpleMap(t *testing.T) {
@@ -249,4 +254,53 @@ func validResponseHeader() []byte {
 	binary.BigEndian.PutUint32(raw[5:9], 42)
 	raw[9] = CodecHessian2
 	return raw
+}
+
+func TestInvokeCancelsDuringResponseRead(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	requestStarted := make(chan error, 1)
+	releasePeer := make(chan struct{})
+	defer close(releasePeer)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			requestStarted <- err
+			return
+		}
+		defer conn.Close()
+		var firstByte [1]byte
+		_, err = io.ReadFull(conn, firstByte[:])
+		requestStarted <- err
+		<-releasePeer
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := Invoke(ctx, listener.Addr().String(), Request{
+			RequestID: 1, RequestClass: "com.example.Request", Timeout: 6 * time.Second,
+		})
+		result <- err
+	}()
+	select {
+	case err := <-requestStarted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("loopback did not receive request")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("want cancellation, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancellation did not interrupt the response read")
+	}
 }

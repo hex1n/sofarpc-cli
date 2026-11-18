@@ -55,23 +55,20 @@ func replayOutputSchema() map[string]any {
 
 func initProjectInputSchema() map[string]any {
 	return objectSchema(map[string]any{
-		"cwd":                 stringSchema("Optional current working directory used to resolve the project root. When omitted with project/sessionId, init_project attempts safe Java project auto-discovery."),
-		"project":             stringSchema("Optional project root to initialize. Preferred for write operations when the caller already knows the workspace root."),
-		"sessionId":           stringSchema("Optional session id whose project root should be initialized."),
-		"config":              stringSchema("Project config file to write: local (default) or shared."),
-		"force":               booleanSchema("When true, overwrite an existing .sofarpc config file."),
-		"dryRun":              booleanSchema("When true, preview the config and gitignore changes without writing files."),
-		"services":            stringArraySchema("Explicit service allowlist. When omitted, facade services are discovered from source contracts."),
-		"allowAllServices":    booleanSchema("When true, intentionally write allowedServices=[\"*\"] instead of discovering or passing a narrower allowlist."),
-		"serviceNameSuffixes": stringArraySchema("Simple-name suffixes used for service discovery. Defaults to Facade. Use * to include all method-bearing interfaces."),
-		"profile":             stringSchema("When set, write the target/wire fields into profiles[name], merged into the existing file (replacing only that profile key) rather than the base settings. allowedServices is never written in profile mode; force is needed only to overwrite an existing same-named profile."),
-		"setDefault":          booleanSchema("When true with profile set, also record defaultProfile=profile in this file so calls that select no profile use it."),
-		"directUrl":           stringSchema("Optional direct BOLT URL to persist, for example bolt://host:12200."),
-		"protocol":            stringSchema("Optional wire protocol to persist."),
-		"serialization":       stringSchema("Optional wire serialization to persist."),
-		"uniqueId":            stringSchema("Optional SOFA service uniqueId to persist."),
-		"timeoutMs":           integerSchema("Optional request timeout in milliseconds."),
-		"connectTimeoutMs":    integerSchema("Optional connect timeout in milliseconds."),
+		"cwd":              stringSchema("Optional current working directory used to resolve the project root. When omitted with project/sessionId, init_project attempts safe Java project auto-discovery."),
+		"project":          stringSchema("Optional project root to initialize. Preferred for write operations when the caller already knows the workspace root."),
+		"sessionId":        stringSchema("Optional session id whose project root should be initialized."),
+		"config":           stringSchema("Project config file to write: local (default) or shared."),
+		"force":            booleanSchema("When true, overwrite an existing .sofarpc config file."),
+		"dryRun":           booleanSchema("When true, preview the config and gitignore changes without writing files."),
+		"profile":          stringSchema("When set, write the target/wire fields into profiles[name], merged into the existing file (replacing only that profile key) rather than the base settings. Force is needed only to overwrite an existing same-named profile."),
+		"setDefault":       booleanSchema("When true with profile set, also record defaultProfile=profile in this file so calls that select no profile use it."),
+		"directUrl":        stringSchema("Optional direct BOLT URL to persist, for example bolt://host:12200."),
+		"protocol":         stringSchema("Optional wire protocol to persist."),
+		"serialization":    stringSchema("Optional wire serialization to persist."),
+		"uniqueId":         stringSchema("Optional SOFA service uniqueId to persist."),
+		"timeoutMs":        integerSchema("Optional request timeout in milliseconds."),
+		"connectTimeoutMs": integerSchema("Optional connect timeout in milliseconds."),
 	})
 }
 

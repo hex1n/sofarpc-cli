@@ -9,35 +9,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/projectconfig"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
-	"github.com/hex1n/sofarpc-cli/internal/sourcecontract"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestInitProject_AutoDiscoversFacadeAndWritesLocalConfig(t *testing.T) {
+func TestInitProject_TargetWritesLocalConfig(t *testing.T) {
 	root := t.TempDir()
-	writeInitProjectJava(t, root, "src/main/java/com/foo/UserFacade.java", `
-package com.foo;
-public interface UserFacade {
-    String query(String id);
-}
-`)
-	writeInitProjectJava(t, root, "src/main/java/com/foo/InternalService.java", `
-package com.foo;
-public interface InternalService {
-    String run(String id);
-}
-`)
-	writeInitProjectJava(t, root, "src/main/java/com/foo/UserDTO.java", `
-package com.foo;
-public class UserDTO {
-    private String id;
-}
-`)
-
-	out, result := callInitProject(t, Options{ProjectContractLoader: sourceContractLoader(t)}, map[string]any{
+	out, result := callInitProject(t, Options{}, map[string]any{
 		"project":   root,
 		"directUrl": "bolt://dev-rpc.example.com:12200",
 	})
@@ -53,18 +32,12 @@ public class UserDTO {
 	if out.ProjectConfig.DirectURL != "bolt://dev-rpc.example.com:12200" {
 		t.Fatalf("directUrl: %+v", out.ProjectConfig)
 	}
-	if len(out.ProjectConfig.AllowedServices) != 1 || out.ProjectConfig.AllowedServices[0] != "com.foo.UserFacade" {
-		t.Fatalf("allowedServices: %+v", out.ProjectConfig.AllowedServices)
-	}
-	if len(out.Discovery.CandidateServices) != 1 || out.Discovery.CandidateServices[0] != "com.foo.UserFacade" {
-		t.Fatalf("candidateServices: %+v", out.Discovery.CandidateServices)
-	}
 	body, err := os.ReadFile(filepath.Join(root, ".sofarpc", "config.local.json"))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(body), `"allowedServices": [`) || !strings.Contains(string(body), `"com.foo.UserFacade"`) {
-		t.Fatalf("config did not contain discovered service:\n%s", body)
+	if strings.Contains(string(body), `"allowedServices"`) {
+		t.Fatalf("config contains retired allowedServices: %s", body)
 	}
 	ignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
 	if err != nil {
@@ -92,7 +65,7 @@ public interface UserFacade {
 	restoreCwd := chdirForInitProject(t, root)
 	defer restoreCwd()
 
-	out, result := callInitProject(t, Options{ProjectContractLoader: sourceContractLoader(t)}, map[string]any{
+	out, result := callInitProject(t, Options{}, map[string]any{
 		"directUrl": "bolt://dev-rpc.example.com:12200",
 	})
 	if !result.IsError || out.Error == nil {
@@ -112,9 +85,9 @@ public interface UserFacade {
 func TestInitProject_DryRunLeavesFilesUntouched(t *testing.T) {
 	root := t.TempDir()
 	out, result := callInitProject(t, Options{}, map[string]any{
-		"project":  root,
-		"dryRun":   true,
-		"services": []string{"com.foo.UserFacade"},
+		"project":   root,
+		"dryRun":    true,
+		"directUrl": "bolt://dev-rpc.example.com:12200",
 	})
 	if result.IsError || out.Error != nil {
 		t.Fatalf("dry-run failed: result=%+v out=%+v", result, out)
@@ -133,45 +106,24 @@ func TestInitProject_DryRunLeavesFilesUntouched(t *testing.T) {
 	}
 }
 
-func TestInitProject_TargetWithoutAllowedServicesIsRejected(t *testing.T) {
+func TestInitProject_IgnoresLegacyServiceOptions(t *testing.T) {
 	root := t.TempDir()
 	out, result := callInitProject(t, Options{}, map[string]any{
-		"project":   root,
-		"directUrl": "bolt://dev-rpc.example.com:12200",
-	})
-	if !result.IsError || out.Error == nil {
-		t.Fatalf("expected missing allowedServices rejection: result=%+v out=%+v", result, out)
-	}
-	if !strings.Contains(out.Error.Message, "allowedServices is required") {
-		t.Fatalf("error should explain allowedServices requirement: %+v", out.Error)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".sofarpc")); !os.IsNotExist(err) {
-		t.Fatalf("rejected init should not create .sofarpc: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
-		t.Fatalf("rejected init should not create .gitignore: %v", err)
-	}
-}
-
-func TestInitProject_AllowAllServicesWritesExplicitWildcard(t *testing.T) {
-	root := t.TempDir()
-	out, result := callInitProject(t, Options{}, map[string]any{
-		"project":          root,
-		"directUrl":        "bolt://dev-rpc.example.com:12200",
-		"allowAllServices": true,
+		"project":             root,
+		"directUrl":           "bolt://dev-rpc.example.com:12200",
+		"allowAllServices":    true,
+		"services":            []string{"com.foo.UserFacade"},
+		"serviceNameSuffixes": []string{"Facade"},
 	})
 	if result.IsError || out.Error != nil {
 		t.Fatalf("init project failed: result=%+v out=%+v", result, out)
-	}
-	if len(out.ProjectConfig.AllowedServices) != 1 || out.ProjectConfig.AllowedServices[0] != "*" {
-		t.Fatalf("allowedServices: %+v", out.ProjectConfig.AllowedServices)
 	}
 	body, err := os.ReadFile(filepath.Join(root, ".sofarpc", "config.local.json"))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(body), `"*"`) {
-		t.Fatalf("config should contain explicit wildcard allowlist:\n%s", body)
+	if strings.Contains(string(body), `"allowedServices"`) {
+		t.Fatalf("config contains retired allowedServices:\n%s", body)
 	}
 }
 
@@ -184,7 +136,7 @@ func TestInitProject_NoScopeLowConfidenceRejectsWrite(t *testing.T) {
 	defer restoreCwd()
 
 	out, result := callInitProject(t, Options{}, map[string]any{
-		"services": []string{"com.foo.UserFacade"},
+		"directUrl": "bolt://dev-rpc.example.com:12200",
 	})
 	if !result.IsError || out.Error == nil {
 		t.Fatalf("expected auto-discovery rejection: result=%+v out=%+v", result, out)
@@ -229,28 +181,6 @@ func TestInitProject_NoScopeLowConfidenceDryRunReturnsCandidates(t *testing.T) {
 	}
 }
 
-func TestInitProject_CustomSuffixDiscoversServiceInterface(t *testing.T) {
-	root := t.TempDir()
-	writeInitProjectJava(t, root, "src/main/java/com/foo/InternalService.java", `
-package com.foo;
-public interface InternalService {
-    String run(String id);
-}
-`)
-
-	out, result := callInitProject(t, Options{ProjectContractLoader: sourceContractLoader(t)}, map[string]any{
-		"project":             root,
-		"dryRun":              true,
-		"serviceNameSuffixes": []string{"Service"},
-	})
-	if result.IsError || out.Error != nil {
-		t.Fatalf("init project failed: result=%+v out=%+v", result, out)
-	}
-	if len(out.ProjectConfig.AllowedServices) != 1 || out.ProjectConfig.AllowedServices[0] != "com.foo.InternalService" {
-		t.Fatalf("allowedServices: %+v", out.ProjectConfig.AllowedServices)
-	}
-}
-
 func TestInitProject_ExistingConfigRequiresForce(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".sofarpc", "config.local.json")
@@ -262,8 +192,8 @@ func TestInitProject_ExistingConfigRequiresForce(t *testing.T) {
 	}
 
 	out, result := callInitProject(t, Options{}, map[string]any{
-		"project":  root,
-		"services": []string{"com.foo.NewFacade"},
+		"project":   root,
+		"directUrl": "bolt://dev-rpc.example.com:12200",
 	})
 	if !result.IsError || out.Error == nil {
 		t.Fatalf("expected overwrite rejection: result=%+v out=%+v", result, out)
@@ -288,8 +218,7 @@ func TestInitProject_ValidationErrorReportsExistingConfig(t *testing.T) {
 	}
 
 	out, result := callInitProject(t, Options{}, map[string]any{
-		"project":   root,
-		"directUrl": "bolt://dev-rpc.example.com:12200",
+		"project": root,
 	})
 	if !result.IsError || out.Error == nil {
 		t.Fatalf("expected validation rejection: result=%+v out=%+v", result, out)
@@ -297,17 +226,17 @@ func TestInitProject_ValidationErrorReportsExistingConfig(t *testing.T) {
 	if !out.Existing {
 		t.Fatalf("expected existing config to be reported: %+v", out)
 	}
-	if !strings.Contains(out.Error.Message, "allowedServices is required") {
-		t.Fatalf("error should explain allowedServices requirement: %+v", out.Error)
+	if !strings.Contains(out.Error.Message, "no project config fields resolved") {
+		t.Fatalf("error should explain missing config fields: %+v", out.Error)
 	}
 }
 
 func TestInitProject_SharedConfigDoesNotTouchGitignore(t *testing.T) {
 	root := t.TempDir()
 	out, result := callInitProject(t, Options{}, map[string]any{
-		"project":  root,
-		"config":   "shared",
-		"services": []string{"com.foo.UserFacade"},
+		"project":   root,
+		"config":    "shared",
+		"directUrl": "bolt://dev-rpc.example.com:12200",
 	})
 	if result.IsError || out.Error != nil {
 		t.Fatalf("init shared failed: result=%+v out=%+v", result, out)
@@ -323,21 +252,14 @@ func TestInitProject_SharedConfigDoesNotTouchGitignore(t *testing.T) {
 	}
 }
 
-func sourceContractLoader(t *testing.T) func(string) (contract.Store, error) {
-	t.Helper()
-	return func(projectRoot string) (contract.Store, error) {
-		return sourcecontract.Load(projectRoot)
-	}
-}
-
 func TestInitProject_RejectsRetiredRegistryField(t *testing.T) {
 	for _, key := range []string{"registryAddress", "registryProtocol"} {
 		t.Run(key, func(t *testing.T) {
 			root := t.TempDir()
 			out, result := callInitProject(t, Options{}, map[string]any{
-				"project":  root,
-				"services": []string{"com.foo.UserFacade"},
-				key:        "zookeeper://host:2181",
+				"project":   root,
+				"directUrl": "bolt://dev-rpc.example.com:12200",
+				key:         "zookeeper://host:2181",
 			})
 			if !result.IsError || out.Error == nil || out.Error.Code != errcode.ArgsInvalid {
 				t.Fatalf("a retired registry field must be rejected: result=%+v out=%+v", result, out)

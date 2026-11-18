@@ -11,6 +11,7 @@ type DirectInvokeOptions struct {
 	Addr             string
 	Codec            byte
 	Timeout          time.Duration
+	ConnectTimeout   time.Duration
 	RequestID        uint32
 	MaxResponseBytes int64
 }
@@ -35,6 +36,7 @@ func InvokeDirect(ctx context.Context, spec RequestSpec, opts DirectInvokeOption
 		Content:          encoded.Content,
 		Codec:            opts.Codec,
 		Timeout:          opts.Timeout,
+		ConnectTimeout:   opts.ConnectTimeout,
 		MaxResponseBytes: opts.MaxResponseBytes,
 	})
 	if err != nil {

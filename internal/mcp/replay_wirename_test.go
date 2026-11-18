@@ -69,7 +69,6 @@ func captureDirectServer(t *testing.T, content []byte) (string, func() []byte, f
 // signatures alongside the @type values.
 func TestReplay_RewritesDotNestedParamSigsBeforeExecution(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 
 	store := contract.NewInMemoryStore(
 		javamodel.Class{
@@ -104,9 +103,6 @@ func TestReplay_RewritesDotNestedParamSigsBeforeExecution(t *testing.T) {
 		Contract: store,
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: directURL},
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.Svc"},
-			},
 		},
 	}, map[string]any{
 		"payload": plan,
@@ -134,7 +130,6 @@ func TestReplay_RewritesDotNestedParamSigsBeforeExecution(t *testing.T) {
 // keeps the captured spelling untouched.
 func TestReplay_RewritesDotNestedTypeNamesBeforeExecution(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 
 	store := contract.NewInMemoryStore(
 		javamodel.Class{
@@ -182,9 +177,6 @@ func TestReplay_RewritesDotNestedTypeNamesBeforeExecution(t *testing.T) {
 		Contract: store,
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: directURL},
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.Svc"},
-			},
 		},
 	}, map[string]any{
 		"payload": plan,

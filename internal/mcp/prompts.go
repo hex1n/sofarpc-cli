@@ -74,10 +74,9 @@ Known inputs:
 Workflow:
 1. If project is empty, call sofarpc_init_project with dryRun=true and inspect projectResolution. Do not write files until project or cwd is explicit.
 2. If project is known, call sofarpc_init_project with project, config, and only the target supplied by the user. Do not invent a directUrl.
-3. Let sofarpc_init_project discover allowedServices from source contracts when services were not supplied. Use allowAllServices only when the user intentionally wants a wildcard allowlist.
-4. After setup, call sofarpc_open with the resolved project and keep the returned sessionId.
-5. Call sofarpc_target with sessionId and explain=true to show the effective target layers before any invoke workflow.
-6. Keep real invoke disabled unless the user explicitly opted in through user-scope guardrails.
+3. After setup, call sofarpc_open with the resolved project and keep the returned sessionId.
+4. Call sofarpc_target with sessionId and explain=true to show the effective target layers before any invoke workflow.
+5. Keep real invoke disabled unless the user explicitly opted in through user-scope guardrails.
 `, promptValue(args, "project"), config, promptValue(args, "directUrl")))
 	return promptTextResult("Safe project bootstrap workflow for SOFARPC MCP.", text), nil
 }
@@ -112,7 +111,7 @@ Workflow:
 5. Ask the user for missing args or invocation properties only when the Java call cannot be planned without them.
 6. Call sofarpc_invoke with sessionId, service, method, types, args, invocationProperties, and dryRun=true.
 7. Inspect plan.target, plan.paramTypes, plan.args, plan.invocationProperties, contractSource, diagnostics, and any resource links. Do not send a real invoke yet.
-8. If a real invoke is requested later, first confirm the dry-run plan matches intent, required env references resolve, target services support invoke.baggage.enable when request baggage is needed, and project allowlists plus user-scope real-invoke guardrails allow it.
+8. If a real invoke is requested later, first confirm the dry-run plan matches intent, required env references resolve, target services support invoke.baggage.enable when request baggage is needed, and the real-invoke and target guardrails allow it.
 `, service, method, scope, promptValue(args, "args"), promptValue(args, "argsFile"), promptValue(args, "invocationProperties")))
 	return promptTextResult("Dry-run facade invocation workflow for SOFARPC MCP.", text), nil
 }

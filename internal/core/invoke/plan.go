@@ -113,10 +113,14 @@ func ValidateReplayPlan(plan Plan, phase string) error {
 }
 
 // ValidateExecutablePlan applies replay-safe plan invariants plus the current
-// pure-Go transport rule. Execute calls this before touching the wire layer.
+// pure-Go transport and argument rules before touching the wire layer.
 func ValidateExecutablePlan(plan Plan, phase string) error {
 	if err := ValidateReplayPlan(plan, phase); err != nil {
 		return err
+	}
+	if plan.ArgSource == "skeleton" && len(plan.Args) > 0 {
+		return errcode.New(errcode.ArgsInvalid, phase, "the plan contains generated argument placeholders; provide explicit args before execution").
+			WithHint("sofarpc_invoke", map[string]any{"service": plan.Service, "method": plan.Method, "dryRun": true}, "build a new plan with explicit args")
 	}
 	return ValidateTargetTransport(plan.Target, phase)
 }
@@ -171,7 +175,7 @@ func BuildPlan(in Input, facade contract.Store, sources target.Sources) (Plan, e
 		SchemaVersion:        PlanSchemaVersion,
 		Service:              in.Service,
 		Method:               in.Method,
-		ParamTypes:           contract.WireParamTypes(resolved.Method.ParamTypes, facade),
+		ParamTypes:           contract.WireParamTypes(resolved.Method.DeclaredParamTypes, facade),
 		ReturnType:           resolved.Method.ReturnType,
 		Args:                 args,
 		Version:              strings.TrimSpace(in.Version),
@@ -206,7 +210,7 @@ func buildTrustedPlan(in Input, report target.Report, plannedInvocationPropertie
 				map[string]any{"service": in.Service},
 				"describe the service to see its methods")
 	}
-	if len(in.ParamTypes) == 0 {
+	if in.ParamTypes == nil {
 		return Plan{}, errcode.New(errcode.FacadeNotConfigured, "invoke",
 			"contract information is not attached; pass paramTypes on the invoke call to proceed in trusted mode").
 			WithHint("sofarpc_doctor", nil,
@@ -248,7 +252,7 @@ func buildTrustedPlan(in Input, report target.Report, plannedInvocationPropertie
 		SchemaVersion:        PlanSchemaVersion,
 		Service:              in.Service,
 		Method:               in.Method,
-		ParamTypes:           in.ParamTypes,
+		ParamTypes:           contract.WireParamTypes(in.ParamTypes, nil),
 		Args:                 args,
 		Version:              strings.TrimSpace(in.Version),
 		TargetAppName:        strings.TrimSpace(in.TargetAppName),

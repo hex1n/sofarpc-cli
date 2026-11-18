@@ -170,23 +170,52 @@ func RewriteWireTypeNames(args []any, store Store) []any {
 	return out
 }
 
-// WireParamTypes rewrites the class names inside method parameter type
-// expressions to their wire (JVM binary) form. SofaRequest.methodArgSigs
-// carries these strings verbatim and the server loads them with
-// Class.forName, exactly like @type values. Expressions whose classes the
-// store does not know — or whose wire form is identical — stay
-// byte-for-byte unchanged, so non-nested signatures never move. All
-// expressions of one call share one resolver.
+// WireParamTypes produces erased JVM class names for SofaRequest.methodArgSigs.
+// The caller supplies the declaring method types, before generic inheritance
+// substitutes its type arguments.
 func WireParamTypes(paramTypes []string, store Store) []string {
-	if store == nil || len(paramTypes) == 0 {
+	if len(paramTypes) == 0 {
 		return paramTypes
 	}
 	resolver := newTypeNameResolver(store)
 	out := make([]string, len(paramTypes))
 	for i, pt := range paramTypes {
-		out[i] = wireTypeExpr(pt, resolver)
+		pt = eraseTypeArguments(pt)
+		if store != nil {
+			pt = wireTypeExpr(pt, resolver)
+		}
+		out[i] = pt
 	}
 	return out
+}
+
+func eraseTypeArguments(typeName string) string {
+	first := strings.IndexByte(typeName, '<')
+	if first < 0 {
+		return typeName
+	}
+	var erased strings.Builder
+	erased.WriteString(typeName[:first])
+	depth := 0
+	for _, char := range typeName[first:] {
+		switch char {
+		case '<':
+			depth++
+		case '>':
+			if depth == 0 {
+				return typeName
+			}
+			depth--
+		default:
+			if depth == 0 {
+				erased.WriteRune(char)
+			}
+		}
+	}
+	if depth != 0 {
+		return typeName
+	}
+	return erased.String()
 }
 
 // wireTypeExpr rewrites an expression in a single pass: each maximal run

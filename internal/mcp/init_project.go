@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/core/projectbootstrap"
 	"github.com/hex1n/sofarpc-cli/internal/core/projectconfig"
 	"github.com/hex1n/sofarpc-cli/internal/core/target"
@@ -17,15 +15,12 @@ import (
 )
 
 type InitProjectInput struct {
-	Cwd                 string   `json:"cwd,omitempty"`
-	Project             string   `json:"project,omitempty"`
-	SessionID           string   `json:"sessionId,omitempty"`
-	ConfigFile          string   `json:"config,omitempty"`
-	Force               bool     `json:"force,omitempty"`
-	DryRun              bool     `json:"dryRun,omitempty"`
-	Services            []string `json:"services,omitempty"`
-	AllowAllServices    bool     `json:"allowAllServices,omitempty"`
-	ServiceNameSuffixes []string `json:"serviceNameSuffixes,omitempty"`
+	Cwd        string `json:"cwd,omitempty"`
+	Project    string `json:"project,omitempty"`
+	SessionID  string `json:"sessionId,omitempty"`
+	ConfigFile string `json:"config,omitempty"`
+	Force      bool   `json:"force,omitempty"`
+	DryRun     bool   `json:"dryRun,omitempty"`
 	// Profile, when set, switches init_project into profile mode: the target
 	// fields below are written into profiles[name] (merged into the existing
 	// file) instead of the base settings. SetDefault also records it as the
@@ -51,18 +46,9 @@ type InitProjectOutput struct {
 	Overwrote         bool                            `json:"overwrote,omitempty"`
 	ProjectConfig     projectconfig.Config            `json:"projectConfig,omitempty"`
 	ProjectResolution *workspace.JavaProjectDiscovery `json:"projectResolution,omitempty"`
-	Discovery         InitProjectDiscovery            `json:"discovery,omitempty"`
 	Gitignore         *InitProjectGitignore           `json:"gitignore,omitempty"`
 	NextSteps         []string                        `json:"nextSteps,omitempty"`
 	Error             *errcode.Error                  `json:"error,omitempty"`
-}
-
-type InitProjectDiscovery struct {
-	Source            string         `json:"source,omitempty"`
-	SelectedServices  []string       `json:"selectedServices,omitempty"`
-	CandidateServices []string       `json:"candidateServices,omitempty"`
-	Suffixes          []string       `json:"suffixes,omitempty"`
-	Contract          ContractBanner `json:"contract,omitempty"`
 }
 
 type InitProjectGitignore struct {
@@ -72,13 +58,13 @@ type InitProjectGitignore struct {
 	WouldChange bool   `json:"wouldChange,omitempty"`
 }
 
-func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHolder) {
+func registerInitProject(server *sdkmcp.Server, opts Options) {
 	sources := opts.TargetSources
 	sessions := opts.Sessions
 	addTypedTool(server, &sdkmcp.Tool{
 		Name:        "sofarpc_init_project",
 		Title:       "Initialize SOFARPC Project",
-		Description: "Initialize a Java project's .sofarpc config. It can discover facade services from source contracts, write allowedServices, and optionally persist an explicit direct target.",
+		Description: "Initialize a Java project's .sofarpc target config or a named target profile.",
 		Annotations: localWriteAnnotations("Initialize SOFARPC Project"),
 		InputSchema: initProjectInputSchema(),
 	}, "init-project", func(ecerr *errcode.Error) InitProjectOutput { return InitProjectOutput{Error: ecerr} }, func(ctx context.Context, req *sdkmcp.CallToolRequest, in InitProjectInput) (*sdkmcp.CallToolResult, InitProjectOutput, error) {
@@ -118,8 +104,7 @@ func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHo
 			return initProjectResult(out), out, nil
 		}
 		notifyToolProgress(ctx, req, 1, 4, "building project config")
-		toolCtx := attachContractContext(scope, holder)
-		cfg, discovery, err := buildInitProjectConfig(in, toolCtx.Contract)
+		cfg, err := buildInitProjectConfig(in)
 		if err != nil {
 			out := InitProjectOutput{ProjectRoot: scope.ProjectRoot, ProjectResolution: projectResolution, ConfigFile: string(kind), Error: errcode.New(errcode.ArgsInvalid, "init-project", err.Error())}
 			return initProjectResult(out), out, nil
@@ -131,19 +116,17 @@ func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHo
 			DryRun:            in.DryRun,
 			ProjectConfig:     cfg,
 			ProjectResolution: projectResolution,
-			Discovery:         discovery,
 			NextSteps:         initProjectNextSteps(cfg, kind),
 		}
 		notifyToolProgress(ctx, req, 2, 4, "validating project bootstrap")
 		notifyToolProgress(ctx, req, 3, 4, "applying project bootstrap")
 		bootstrapResult, err := projectbootstrap.Run(projectbootstrap.Input{
-			ProjectRoot:            scope.ProjectRoot,
-			Kind:                   kind,
-			Config:                 cfg,
-			Force:                  in.Force,
-			DryRun:                 in.DryRun,
-			RequireConfigFields:    true,
-			RequireAllowedServices: true,
+			ProjectRoot:         scope.ProjectRoot,
+			Kind:                kind,
+			Config:              cfg,
+			Force:               in.Force,
+			DryRun:              in.DryRun,
+			RequireConfigFields: true,
 		})
 		applyInitProjectBootstrapResult(&out, bootstrapResult)
 		if err != nil {
@@ -157,9 +140,7 @@ func registerInitProject(server *sdkmcp.Server, opts Options, holder *contractHo
 }
 
 // runInitProjectProfile handles profile mode: it writes the target/wire fields
-// into profiles[name], merged into the existing file. Service-allowlist inputs
-// are rejected because a profile never carries allowedServices (it stays a
-// base, project-wide guardrail — see ADR 0003).
+// into profiles[name], merged into the existing file.
 func runInitProjectProfile(ctx context.Context, req *sdkmcp.CallToolRequest, scope toolScope, projectResolution *workspace.JavaProjectDiscovery, kind projectconfig.Kind, in InitProjectInput) InitProjectOutput {
 	name := strings.TrimSpace(in.Profile)
 	out := InitProjectOutput{
@@ -197,9 +178,6 @@ func runInitProjectProfile(ctx context.Context, req *sdkmcp.CallToolRequest, sco
 }
 
 func buildInitProjectProfile(in InitProjectInput) (projectconfig.ProfileConfig, error) {
-	if len(in.Services) > 0 || in.AllowAllServices || len(in.ServiceNameSuffixes) > 0 {
-		return projectconfig.ProfileConfig{}, fmt.Errorf("profile mode writes target settings only; allowedServices stays a base, project-wide setting — omit services, allowAllServices, and serviceNameSuffixes")
-	}
 	if in.TimeoutMS < 0 {
 		return projectconfig.ProfileConfig{}, fmt.Errorf("timeoutMs must be non-negative")
 	}
@@ -346,36 +324,12 @@ func initProjectDiscoveryHint(discovery *workspace.JavaProjectDiscovery) map[str
 	return args
 }
 
-func buildInitProjectConfig(in InitProjectInput, snapshot contractSnapshot) (projectconfig.Config, InitProjectDiscovery, error) {
+func buildInitProjectConfig(in InitProjectInput) (projectconfig.Config, error) {
 	if in.TimeoutMS < 0 {
-		return projectconfig.Config{}, InitProjectDiscovery{}, fmt.Errorf("timeoutMs must be non-negative")
+		return projectconfig.Config{}, fmt.Errorf("timeoutMs must be non-negative")
 	}
 	if in.ConnectTimeoutMS < 0 {
-		return projectconfig.Config{}, InitProjectDiscovery{}, fmt.Errorf("connectTimeoutMs must be non-negative")
-	}
-
-	services := normalizeUniqueStrings(in.Services)
-	discovery := InitProjectDiscovery{
-		SelectedServices: services,
-		Contract:         buildContractBanner(snapshot.store, snapshot.loadError, snapshot.root),
-	}
-	switch {
-	case in.AllowAllServices:
-		if len(services) > 0 && !(len(services) == 1 && services[0] == "*") {
-			return projectconfig.Config{}, discovery, fmt.Errorf("allowAllServices=true conflicts with explicit services")
-		}
-		services = []string{"*"}
-		discovery.SelectedServices = services
-		discovery.Source = "input"
-	case len(services) > 0:
-		discovery.Source = "input"
-	default:
-		discovery = initProjectDiscoveryFromServices(snapshot, contract.DiscoverServiceInterfaces(snapshot.store, contract.ServiceDiscoveryOptions{
-			Suffixes:      in.ServiceNameSuffixes,
-			IndexedSource: "sourcecontract",
-			StoreSource:   "contract-store",
-		}))
-		services = discovery.SelectedServices
+		return projectconfig.Config{}, fmt.Errorf("connectTimeoutMs must be non-negative")
 	}
 
 	cfg := projectconfig.Config{
@@ -385,35 +339,21 @@ func buildInitProjectConfig(in InitProjectInput, snapshot contractSnapshot) (pro
 		UniqueID:         strings.TrimSpace(in.UniqueID),
 		TimeoutMS:        in.TimeoutMS,
 		ConnectTimeoutMS: in.ConnectTimeoutMS,
-		AllowedServices:  services,
 	}
 	if err := projectconfig.Validate(cfg); err != nil {
-		return projectconfig.Config{}, discovery, err
+		return projectconfig.Config{}, err
 	}
-	return cfg, discovery, nil
-}
-
-func initProjectDiscoveryFromServices(snapshot contractSnapshot, services contract.ServiceDiscovery) InitProjectDiscovery {
-	return InitProjectDiscovery{
-		Source:            services.Source,
-		SelectedServices:  services.SelectedServices,
-		CandidateServices: services.CandidateServices,
-		Suffixes:          services.Suffixes,
-		Contract:          buildContractBanner(snapshot.store, snapshot.loadError, snapshot.root),
-	}
+	return cfg, nil
 }
 
 func initProjectNextSteps(cfg projectconfig.Config, kind projectconfig.Kind) []string {
 	var out []string
 	if strings.TrimSpace(cfg.DirectURL) == "" {
-		out = append(out, "Add directUrl before real invoke; allowedServices-only config is still useful for safety policy.")
-	}
-	if len(cfg.AllowedServices) == 0 {
-		out = append(out, "Review candidateServices and pass services or serviceNameSuffixes to set allowedServices.")
+		out = append(out, "Set directUrl to configure a target for real calls.")
 	}
 	out = append(out, "Call sofarpc_open with this project root and reuse the returned sessionId.")
 	if kind == projectconfig.KindShared {
-		out = append(out, "Commit .sofarpc/config.json only if its target and allowedServices are valid for the team.")
+		out = append(out, "Commit .sofarpc/config.json only if its target settings are valid for the team.")
 	}
 	return out
 }
@@ -439,14 +379,9 @@ func initProjectBootstrapError(err error, projectRoot string) *errcode.Error {
 	switch {
 	case errors.Is(err, projectbootstrap.ErrNoConfigFields):
 		return errcode.New(errcode.ArgsInvalid, "init-project",
-			"no project config fields resolved; pass a target, explicit services, or use serviceNameSuffixes that match facade interfaces").
+			"no project config fields resolved; pass at least one target config field").
 			WithHint("sofarpc_init_project", map[string]any{"project": projectRoot, "dryRun": true},
-				"preview project initialization after providing target or service discovery inputs")
-	case errors.Is(err, projectbootstrap.ErrAllowedServicesMissing):
-		return errcode.New(errcode.ArgsInvalid, "init-project",
-			"allowedServices is required for project initialization; pass services, adjust serviceNameSuffixes, or set allowAllServices=true intentionally").
-			WithHint("sofarpc_init_project", map[string]any{"project": projectRoot, "dryRun": true, "serviceNameSuffixes": []string{"Facade"}},
-				"preview service allowlist discovery before writing project config")
+				"preview project initialization after providing target settings")
 	default:
 		var existing projectbootstrap.ExistingConfigError
 		if errors.As(err, &existing) {
@@ -476,23 +411,5 @@ func summarizeInitProject(out InitProjectOutput) string {
 	} else if out.Wrote {
 		action = "wrote"
 	}
-	return fmt.Sprintf("%s %s project=%s services=%d", action, out.ConfigPath, out.ProjectRoot, len(out.ProjectConfig.AllowedServices))
-}
-
-func normalizeUniqueStrings(values []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
+	return fmt.Sprintf("%s %s project=%s", action, out.ConfigPath, out.ProjectRoot)
 }

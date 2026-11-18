@@ -2,6 +2,19 @@ name: wire-fixtures
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - internal/boltclient/**
+      - internal/sofarpcwire/**
+      - internal/core/contract/**
+      - internal/core/invoke/**
+      - internal/sourcecontract/**
+      - internal/javamodel/**
+      - internal/javatype/**
+      - scripts/verify-wire-fixtures.sh
+      - .github/workflows/wire-fixtures.yml
+      - go.mod
+      - go.sum
 
 permissions:
   contents: read
@@ -30,6 +43,7 @@ jobs:
         run: bash scripts/verify-wire-fixtures.sh
 
   compatibility-matrix:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:

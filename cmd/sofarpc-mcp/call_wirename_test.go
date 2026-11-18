@@ -130,7 +130,7 @@ public interface UserFacade {
 	directURL, captured, stop := captureBoltServer(t, responseBytes)
 	defer stop()
 	seedProjectConfig(t, root, projectconfig.KindLocal,
-		`{"directUrl":"`+directURL+`","allowedServices":["com.foo.UserFacade"]}`)
+		`{"directUrl":"`+directURL+`"}`)
 
 	// A pre-fix archive: nested @type frozen in source-canonical dot form.
 	plan := invoke.Plan{

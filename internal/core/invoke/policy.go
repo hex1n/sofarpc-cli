@@ -13,7 +13,6 @@ import (
 
 const (
 	EnvAllowInvoke                   = "SOFARPC_ALLOW_INVOKE"
-	EnvAllowedServices               = "SOFARPC_ALLOWED_SERVICES"
 	EnvAllowTargetOverride           = "SOFARPC_ALLOW_TARGET_OVERRIDE"
 	EnvAllowedTargetHosts            = "SOFARPC_ALLOWED_TARGET_HOSTS"
 	EnvMaxConcurrentInvokes          = "SOFARPC_MAX_CONCURRENT_INVOKES"
@@ -51,35 +50,28 @@ func EnvList(name string) []string {
 }
 
 // ExecutionPolicy is the core invoke guardrail. It keeps real-invoke
-// enablement, service allowlisting, and target override checks behind one
-// interface so invoke and replay enforce the same rules.
+// enablement and target checks behind one interface
+// so invoke and replay enforce the same rules.
 type ExecutionPolicy struct {
-	AllowInvoke               bool
-	AllowedServices           []string
-	AllowedServicesConfigured bool
-	AllowedServicesSource     string
-	AllowTargetOverride       bool
-	AllowedTargetHosts        []string
-	Sources                   target.Sources
+	AllowInvoke         bool
+	AllowTargetOverride bool
+	AllowedTargetHosts  []string
+	Sources             target.Sources
+	// RequestedProfile comes from the live call context. Replay leaves it empty.
+	RequestedProfile string
 }
 
 type ExecutionPolicyDiagnostics struct {
-	AllowInvoke               bool     `json:"allowInvoke"`
-	AllowedServices           []string `json:"allowedServices,omitempty"`
-	AllowedServicesConfigured bool     `json:"allowedServicesConfigured"`
-	AllowedServicesSource     string   `json:"allowedServicesSource,omitempty"`
-	AllowTargetOverride       bool     `json:"allowTargetOverride"`
-	AllowedTargetHosts        []string `json:"allowedTargetHosts,omitempty"`
+	AllowInvoke         bool     `json:"allowInvoke"`
+	AllowTargetOverride bool     `json:"allowTargetOverride"`
+	AllowedTargetHosts  []string `json:"allowedTargetHosts,omitempty"`
 }
 
 func (p ExecutionPolicy) Diagnostics() ExecutionPolicyDiagnostics {
 	return ExecutionPolicyDiagnostics{
-		AllowInvoke:               p.AllowInvoke,
-		AllowedServices:           append([]string(nil), p.AllowedServices...),
-		AllowedServicesConfigured: p.serviceAllowlistConfigured(),
-		AllowedServicesSource:     strings.TrimSpace(p.AllowedServicesSource),
-		AllowTargetOverride:       p.AllowTargetOverride,
-		AllowedTargetHosts:        append([]string(nil), p.AllowedTargetHosts...),
+		AllowInvoke:         p.AllowInvoke,
+		AllowTargetOverride: p.AllowTargetOverride,
+		AllowedTargetHosts:  append([]string(nil), p.AllowedTargetHosts...),
 	}
 }
 
@@ -87,23 +79,13 @@ func (p ExecutionPolicy) Validate(plan Plan, phase string) error {
 	if err := p.ValidateProjectConfig(phase); err != nil {
 		return err
 	}
-	if err := p.ValidateRealInvoke(plan.Service, phase); err != nil {
+	if err := p.ValidateRealInvokeEnabled(phase); err != nil {
 		return err
 	}
 	return p.ValidateTarget(plan, phase)
 }
 
-// ValidateRealInvoke is the real-invoke gate in the order invoke applies it:
-// the policy must be enabled, then the service must be allowed.
-func (p ExecutionPolicy) ValidateRealInvoke(service string, phase string) error {
-	if err := p.ValidateRealInvokeEnabled(phase); err != nil {
-		return err
-	}
-	return p.ValidateServiceAllowed(service, phase)
-}
-
-// ValidateRealInvokeEnabled rejects when real invoke is disabled or no
-// project allowlist is configured; it looks at no service.
+// ValidateRealInvokeEnabled rejects when real invocation has not been enabled.
 func (p ExecutionPolicy) ValidateRealInvokeEnabled(phase string) error {
 	phase = normalizePolicyPhase(phase)
 	if !p.AllowInvoke {
@@ -111,45 +93,7 @@ func (p ExecutionPolicy) ValidateRealInvokeEnabled(phase string) error {
 			"real invoke is disabled; set "+EnvAllowInvoke+"=true to enable non-dry-run calls").
 			WithHint("sofarpc_invoke", map[string]any{"dryRun": true}, "inspect the plan safely first")
 	}
-	if !p.serviceAllowlistConfigured() {
-		return errcode.New(errcode.InvocationRejected, phase,
-			"project allowedServices is required for real invoke; configure .sofarpc/config.local.json or .sofarpc/config.json").
-			WithHint("sofarpc_init_project", InitProjectHintArgs(p.Sources),
-				"initialize project allowedServices before enabling real invoke")
-	}
 	return nil
-}
-
-// ValidateServiceAllowed rejects a service outside the configured allowlist.
-func (p ExecutionPolicy) ValidateServiceAllowed(service string, phase string) error {
-	phase = normalizePolicyPhase(phase)
-	if !p.ServiceAllowed(service) {
-		source := strings.TrimSpace(p.AllowedServicesSource)
-		if source == "" {
-			source = "configured service allowlist"
-		}
-		return errcode.New(errcode.InvocationRejected, phase,
-			fmt.Sprintf("service %q is not allowed by %s", service, source)).
-			WithHint("sofarpc_doctor", map[string]any{"service": service},
-				"doctor reports the configured allowedServices this service was checked against")
-	}
-	return nil
-}
-
-func (p ExecutionPolicy) ServiceAllowed(service string) bool {
-	if !p.serviceAllowlistConfigured() {
-		return false
-	}
-	for _, allowed := range p.AllowedServices {
-		if allowed == "*" || allowed == service {
-			return true
-		}
-	}
-	return false
-}
-
-func (p ExecutionPolicy) serviceAllowlistConfigured() bool {
-	return p.AllowedServicesConfigured || len(p.AllowedServices) > 0
 }
 
 func (p ExecutionPolicy) ValidateTarget(plan Plan, phase string) error {
@@ -163,7 +107,7 @@ func (p ExecutionPolicy) ValidateTarget(plan Plan, phase string) error {
 		return nil
 	}
 
-	ambientCfg := target.Normalize(target.Resolve(target.Input{}, p.Sources).Target)
+	ambientCfg := target.Normalize(target.Resolve(target.Input{Profile: p.RequestedProfile}, p.Sources).Target)
 	if !p.AllowTargetOverride {
 		switch {
 		case ambientCfg.DirectURL == "":
@@ -284,12 +228,6 @@ func normalizePolicyPhase(phase string) string {
 // the resolved layer breakdown, scoped to the project when one is known.
 func TargetHintArgs(sources target.Sources) map[string]any {
 	return projectScopedHintArgs(sources, map[string]any{"explain": true})
-}
-
-// InitProjectHintArgs builds the sofarpc_init_project arguments that let an
-// agent inspect project policy without writing to it.
-func InitProjectHintArgs(sources target.Sources) map[string]any {
-	return projectScopedHintArgs(sources, map[string]any{"dryRun": true})
 }
 
 func projectScopedHintArgs(sources target.Sources, args map[string]any) map[string]any {

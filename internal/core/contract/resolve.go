@@ -110,6 +110,7 @@ func collectMethods(store Store, cls javamodel.Class, match func(name string) bo
 		}
 		seen[seenKey] = true
 		for _, m := range current.Methods {
+			m.DeclaredParamTypes = m.ParamTypes
 			m = substituteMethodTypeParams(m, bindings)
 			if match(m.Name) {
 				signature := methodSignature(m)
@@ -146,7 +147,7 @@ func pickOverload(store Store, service, method string, overloads []javamodel.Met
 	if len(overloads) == 1 {
 		return 0, nil
 	}
-	if len(paramTypes) == 0 {
+	if paramTypes == nil {
 		return 0, ambiguousErr(service, method, overloads, "supply paramTypes to disambiguate")
 	}
 	matches := make([]int, 0, len(overloads))

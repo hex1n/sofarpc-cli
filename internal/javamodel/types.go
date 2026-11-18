@@ -47,8 +47,10 @@ type Field struct {
 // disambiguates by ParamTypes length + exact match when the agent supplies
 // types, and errors with MethodAmbiguous otherwise.
 type Method struct {
-	Name               string   `json:"name"`
-	ParamTypes         []string `json:"paramTypes,omitempty"`
+	Name       string   `json:"name"`
+	ParamTypes []string `json:"paramTypes,omitempty"`
+	// DeclaredParamTypes keeps the declaring method types before inheritance substitutes type arguments.
+	DeclaredParamTypes []string `json:"-"`
 	ParamTypeTemplates []string `json:"paramTypeTemplates,omitempty"`
 	ReturnType         string   `json:"returnType,omitempty"`
 	ReturnTypeTemplate string   `json:"returnTypeTemplate,omitempty"`

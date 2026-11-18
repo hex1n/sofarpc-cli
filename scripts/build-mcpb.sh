@@ -111,7 +111,7 @@ write_manifest() {
   "tools": [
     {
       "name": "sofarpc_init_project",
-      "description": "Initialize .sofarpc project config and allowedServices for a Java project."
+      "description": "Initialize project target settings or a named target profile."
     },
     {
       "name": "sofarpc_open",
@@ -204,7 +204,24 @@ VERSION=${VERSION:-$(git_value describe --tags --always --dirty)}
 if [ -z "$VERSION" ]; then
 	VERSION=dev
 fi
+case "$VERSION" in
+    *[!A-Za-z0-9._+/-]*)
+        echo "VERSION may contain only letters, digits, dots, underscores, plus signs, slashes, and hyphens" >&2
+        exit 1
+        ;;
+esac
+
 MCPB_VERSION=${MCPB_VERSION:-$(derive_mcpb_version "$VERSION")}
+case "$MCPB_VERSION" in
+    *[!A-Za-z0-9.+-]*)
+        echo "MCPB_VERSION must be a semantic version" >&2
+        exit 1
+        ;;
+esac
+if ! printf '%s\n' "$MCPB_VERSION" | LC_ALL=C grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+    echo "MCPB_VERSION must be a semantic version" >&2
+    exit 1
+fi
 COMMIT=${COMMIT:-$(git_value rev-parse --short HEAD)}
 if [ -z "$COMMIT" ]; then
 	COMMIT=unknown
@@ -241,10 +258,11 @@ for target in $TARGETS; do
 
 	write_manifest "$stage/manifest.json" "$platform" "$binary_name"
 	write_bundle_readme "$target" "$stage/README.md"
+	cp "$ROOT_DIR/LICENSE" "$stage/LICENSE"
 	rm -f "$artifact"
 	(
 		cd "$stage"
-		zip -qr "$artifact" manifest.json README.md server
+		zip -qr "$artifact" manifest.json README.md LICENSE server
 	)
 	echo "Wrote $artifact"
 done

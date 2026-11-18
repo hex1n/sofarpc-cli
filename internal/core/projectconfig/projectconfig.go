@@ -26,12 +26,13 @@ const (
 const LocalGitignoreEntry = ".sofarpc/config.local.json"
 
 type Config struct {
-	DirectURL            string                       `json:"directUrl,omitempty"`
-	Protocol             string                       `json:"protocol,omitempty"`
-	Serialization        string                       `json:"serialization,omitempty"`
-	UniqueID             string                       `json:"uniqueId,omitempty"`
-	TimeoutMS            int                          `json:"timeoutMs,omitempty"`
-	ConnectTimeoutMS     int                          `json:"connectTimeoutMs,omitempty"`
+	DirectURL        string `json:"directUrl,omitempty"`
+	Protocol         string `json:"protocol,omitempty"`
+	Serialization    string `json:"serialization,omitempty"`
+	UniqueID         string `json:"uniqueId,omitempty"`
+	TimeoutMS        int    `json:"timeoutMs,omitempty"`
+	ConnectTimeoutMS int    `json:"connectTimeoutMs,omitempty"`
+	// AllowedServices is legacy config retained for compatibility with older clients.
 	AllowedServices      []string                     `json:"allowedServices,omitempty"`
 	InvocationProperties invocationprops.Declarations `json:"invocationProperties,omitempty"`
 	// DefaultProfile names the Target Profile to use when a call selects
@@ -43,11 +44,8 @@ type Config struct {
 }
 
 // ProfileConfig is one named Target Profile inside a project config file. It
-// mirrors the target/wire/invocation-context fields of Config but never
-// carries allowedServices: the service allowlist stays a project-wide
-// guardrail independent of the active profile (see ADR 0003). Because the
-// parser uses DisallowUnknownFields, an allowedServices key inside a profile
-// is rejected automatically.
+// holds target, wire, and invocation-context fields. The strict parser
+// accepts legacy allowedServices only at the top level.
 type ProfileConfig struct {
 	DirectURL            string                       `json:"directUrl,omitempty"`
 	Protocol             string                       `json:"protocol,omitempty"`
@@ -146,9 +144,8 @@ func Marshal(cfg Config) ([]byte, error) {
 }
 
 // MarshalMerged is Marshal but, when allowedServicesSet is true, preserves an
-// explicitly-empty allowedServices ([] meaning block-all) instead of letting
-// omitempty drop it. Read-modify-write merges pass the AllowedServicesSet flag
-// from the prior Read so a profile edit never silently widens the allowlist.
+// explicitly-empty legacy allowedServices value during a read-modify-write.
+// Older clients distinguish an empty list from an absent field.
 func MarshalMerged(cfg Config, allowedServicesSet bool) ([]byte, error) {
 	prepared, err := prepareForMarshal(cfg)
 	if err != nil {
@@ -206,7 +203,7 @@ func configToFile(cfg Config, allowedServicesSet bool) fileConfig {
 		Profiles:             cfg.Profiles,
 	}
 	if allowedServicesSet || len(cfg.AllowedServices) > 0 {
-		// Non-nil empty slice so an explicit block-all allowlist marshals as
+		// Non-nil empty slice so an explicit empty legacy value marshals as
 		// `[]` rather than `null`.
 		services := append([]string{}, cfg.AllowedServices...)
 		fc.AllowedServices = &services

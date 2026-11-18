@@ -2,6 +2,7 @@ package sofarpcwire
 
 import (
 	"fmt"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -197,27 +198,53 @@ func (d *hessianDecoder) readUTF8Chars(charLen int) (string, error) {
 }
 
 func (d *hessianDecoder) readUTF8Bytes(charLen int) ([]byte, error) {
-	if charLen < 0 {
-		return nil, d.errorf("utf8 string length %d is invalid", charLen)
+	if charLen < 0 || charLen > len(d.data)-d.offset {
+		return nil, d.errorf("invalid Hessian string unit count %d", charLen)
 	}
-	start := d.offset
-	count := 0
-	for count < charLen {
-		if d.offset >= len(d.data) {
-			return nil, d.errorf("short utf8 string")
-		}
-		_, size := utf8.DecodeRune(d.data[d.offset:])
-		if size == 0 {
-			return nil, d.errorf("invalid utf8")
-		}
-		d.offset += size
-		count++
-	}
-	raw := append([]byte(nil), d.data[start:d.offset]...)
-	if err := d.checkScalarByteLength("string", len(raw)); err != nil {
+	if err := d.checkScalarByteLength("string", charLen); err != nil {
 		return nil, err
 	}
-	return raw, nil
+	out := make([]byte, 0, charLen)
+	for i := 0; i < charLen; i++ {
+		unit, err := d.readHessianTextUnit()
+		if err != nil {
+			return nil, err
+		}
+		if utf16.IsSurrogate(unit) {
+			if unit >= 0xdc00 || i+1 == charLen {
+				return nil, d.errorf("unpaired Hessian string surrogate")
+			}
+			low, err := d.readHessianTextUnit()
+			if err != nil {
+				return nil, err
+			}
+			if low < 0xdc00 || low > 0xdfff {
+				return nil, d.errorf("invalid Hessian string surrogate pair")
+			}
+			unit = utf16.DecodeRune(unit, low)
+			i++
+		}
+		out = utf8.AppendRune(out, unit)
+		if err := d.checkScalarByteLength("string", len(out)); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (d *hessianDecoder) readHessianTextUnit() (rune, error) {
+	input := d.data[d.offset:]
+	// Java writes each UTF-16 surrogate as a separate three-byte unit.
+	if len(input) >= 3 && input[0] == 0xed && input[1] >= 0xa0 && input[1] <= 0xbf && input[2]&0xc0 == 0x80 {
+		d.offset += 3
+		return 0xd000 | rune(input[1]&0x3f)<<6 | rune(input[2]&0x3f), nil
+	}
+	unit, size := utf8.DecodeRune(input)
+	if size == 0 || unit == utf8.RuneError && size == 1 || size > 3 {
+		return 0, d.errorf("invalid Hessian string encoding")
+	}
+	d.offset += size
+	return unit, nil
 }
 
 func (d *hessianDecoder) readInt32() (int, error) {

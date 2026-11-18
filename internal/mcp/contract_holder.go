@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
@@ -134,6 +135,20 @@ func (h *contractHolder) SetProjectLoader(loader func(string) (contract.Store, e
 	h.projectLoader = loader
 	h.projects = map[string]*projectContractEntry{}
 	h.projectOrder = nil
+}
+
+// InvalidateProject makes the next lookup load a new source snapshot.
+func (h *contractHolder) InvalidateProject(root string) {
+	if h == nil {
+		return
+	}
+	root = canonicalProjectRoot(root)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.projects, root)
+	h.projectOrder = slices.DeleteFunc(h.projectOrder, func(cachedRoot string) bool {
+		return cachedRoot == root
+	})
 }
 
 func (h *contractHolder) ProjectCacheDiagnostics() map[string]any {

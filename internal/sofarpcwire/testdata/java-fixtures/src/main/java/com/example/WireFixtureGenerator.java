@@ -47,7 +47,7 @@ public final class WireFixtureGenerator {
 
         FixtureResult result = new FixtureResult(
                 true,
-                "ok",
+                "ok-\u4e2d\ud83d\ude00",
                 primary,
                 items,
                 itemByCode,
@@ -69,7 +69,7 @@ public final class WireFixtureGenerator {
                                 "type", "com.example.FixtureResult",
                                 "fields", object(
                                         "success", true,
-                                        "message", "ok",
+                                        "message", "ok-\u4e2d\ud83d\ude00",
                                         "primary", fixtureItemJson(),
                                         "items", Arrays.asList(fixtureItemJson()),
                                         "itemByCode", object(

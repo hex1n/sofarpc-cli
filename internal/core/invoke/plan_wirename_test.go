@@ -1,6 +1,9 @@
 package invoke
 
 import (
+	"github.com/hex1n/sofarpc-cli/internal/core/contract"
+	"github.com/hex1n/sofarpc-cli/internal/errcode"
+	"github.com/hex1n/sofarpc-cli/internal/javamodel"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,9 +23,7 @@ func writeJavaSource(t *testing.T, root, relative, body string) {
 	}
 }
 
-// Plan.ParamTypes feed SofaRequest.methodArgSigs verbatim, and the server
-// loads each signature with Class.forName — so nested classes must appear
-// in JVM binary form there too, including inside generic arguments.
+// The wire signature uses binary nested names and erases generic arguments.
 func TestBuildPlan_ParamTypeSignaturesUseBinaryNestedTypeNames(t *testing.T) {
 	root := t.TempDir()
 	writeJavaSource(t, root, "src/main/java/com/example/SeasonBgFacade.java", `
@@ -58,7 +59,7 @@ public class UpsertSeasonTimeWindowRequest {
 		t.Fatalf("BuildPlan: %v", err)
 	}
 	binary := "com.example.UpsertSeasonTimeWindowRequest$CustomTimeWindow"
-	want := []string{binary, "java.util.List<" + binary + ">"}
+	want := []string{binary, "java.util.List"}
 	if len(plan.ParamTypes) != len(want) {
 		t.Fatalf("paramTypes arity: got %v", plan.ParamTypes)
 	}
@@ -131,4 +132,52 @@ public class UpsertSeasonTimeWindowRequest {
 	if got := window["@type"]; got != want {
 		t.Fatalf("nested skeleton @type: got %v want %s", got, want)
 	}
+}
+
+func TestBuildPlanUsesDeclaringErasureForInheritedGenericMethod(t *testing.T) {
+	store := contract.NewInMemoryStore(
+		javamodel.Class{
+			FQN: "com.example.BaseFacade", Kind: javamodel.KindInterface,
+			TypeParams: []javamodel.TypeParam{{Name: "T", Bound: "java.lang.Object"}},
+			Methods: []javamodel.Method{{
+				Name: "save", ParamTypes: []string{"java.lang.Object"}, ParamTypeTemplates: []string{"T"},
+			}},
+		},
+		javamodel.Class{
+			FQN: "com.example.DemoFacade", Kind: javamodel.KindInterface,
+			Interfaces: []string{"com.example.BaseFacade<com.example.Dto>"},
+		},
+		javamodel.Class{FQN: "com.example.Dto", Kind: javamodel.KindClass},
+	)
+	plan, err := BuildPlan(Input{
+		Service: "com.example.DemoFacade", Method: "save", Args: []any{map[string]any{}},
+		Target: target.Input{DirectURL: "bolt://127.0.0.1:12200"},
+	}, store, target.Sources{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ParamTypes) != 1 || plan.ParamTypes[0] != "java.lang.Object" {
+		t.Fatalf("wire signature: %q", plan.ParamTypes)
+	}
+	if arg, ok := plan.Args[0].(map[string]any); !ok || arg["@type"] != "com.example.Dto" {
+		t.Fatalf("normalized args: %#v", plan.Args)
+	}
+}
+
+func TestTrustedZeroArgumentPlanAndSkeletonExecution(t *testing.T) {
+	input := Input{
+		Service: "com.example.DemoFacade", Method: "ping", ParamTypes: []string{}, Args: []any{},
+		Target: target.Input{DirectURL: "bolt://127.0.0.1:12200"},
+	}
+	plan, err := BuildPlan(input, nil, target.Sources{})
+	if err != nil || len(plan.Args) != 0 || len(plan.ParamTypes) != 0 {
+		t.Fatalf("trusted zero-argument plan: %+v, %v", plan, err)
+	}
+	plan.ParamTypes = []string{"java.lang.String"}
+	plan.Args = []any{""}
+	plan.ArgSource = "skeleton"
+	if err := ValidateReplayPlan(plan, "replay"); err != nil {
+		t.Fatalf("preview rejected: %v", err)
+	}
+	assertErrcode(t, ValidateExecutablePlan(plan, "replay"), errcode.ArgsInvalid)
 }

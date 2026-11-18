@@ -2,6 +2,7 @@ package projectbootstrap
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -183,5 +184,34 @@ func TestUseProfile_UndefinedProfileErrors(t *testing.T) {
 	}
 	if _, statErr := os.Stat(projectconfig.ConfigPath(root, projectconfig.KindLocal)); !os.IsNotExist(statErr) {
 		t.Fatalf("undefined profile use must not write a local config: %v", statErr)
+	}
+}
+
+func TestWriteProfileConcurrentMergesKeepEverySuccessfulUpdate(t *testing.T) {
+	root := t.TempDir()
+	const writers = 12
+	start := make(chan struct{})
+	results := make(chan error, writers)
+	for i := 0; i < writers; i++ {
+		go func() {
+			<-start
+			_, err := WriteProfile(ProfileInput{
+				ProjectRoot: root,
+				Kind:        projectconfig.KindShared,
+				Name:        fmt.Sprintf("profile-%02d", i),
+				Profile:     projectconfig.ProfileConfig{DirectURL: fmt.Sprintf("bolt://127.0.0.1:%d", 12200+i)},
+			})
+			results <- err
+		}()
+	}
+	close(start)
+	for i := 0; i < writers; i++ {
+		if err := <-results; err != nil {
+			t.Errorf("profile write failed: %v", err)
+		}
+	}
+	file, err := projectconfig.Read(root, projectconfig.KindShared)
+	if err != nil || len(file.Config.Profiles) != writers {
+		t.Fatalf("read back %d/%d profiles, err=%v", len(file.Config.Profiles), writers, err)
 	}
 }

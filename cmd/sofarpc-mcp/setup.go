@@ -49,7 +49,7 @@ func runSetup(args []string) error {
 	flags.StringVar(&opts.timeoutMS, "timeout-ms", "", "project scope: request timeout in milliseconds")
 	flags.StringVar(&opts.connectTimeoutMS, "connect-timeout-ms", "", "project scope: connect timeout in milliseconds")
 	flags.BoolVar(&opts.allowInvoke, "allow-invoke", false, "user scope: set SOFARPC_ALLOW_INVOKE")
-	flags.StringVar(&opts.allowedServices, "allowed-services", "", "project scope: comma-separated allowedServices")
+	flags.String("allowed-services", "", "deprecated project flag (ignored)")
 	flags.StringVar(&opts.allowedTargetHosts, "allowed-target-hosts", "", "user scope: comma-separated SOFARPC_ALLOWED_TARGET_HOSTS")
 	flags.BoolVar(&opts.allowTargetOverride, "allow-target-override", false, "user scope: set SOFARPC_ALLOW_TARGET_OVERRIDE")
 	flags.StringVar(&opts.argsFileRoot, "args-file-root", "", "user scope: SOFARPC_ARGS_FILE_ROOT")
@@ -96,7 +96,6 @@ type setupOptions struct {
 	timeoutMS           string
 	connectTimeoutMS    string
 	allowInvoke         bool
-	allowedServices     string
 	allowedTargetHosts  string
 	allowTargetOverride bool
 	argsFileRoot        string

@@ -56,16 +56,8 @@ func resolveRoot(in Input) (string, error) {
 			return "", fmt.Errorf("getwd: %w", err)
 		}
 		candidate = wd
-	} else if !filepath.IsAbs(candidate) {
-		base := in.Cwd
-		if base == "" {
-			wd, err := os.Getwd()
-			if err != nil {
-				return "", fmt.Errorf("getwd: %w", err)
-			}
-			base = wd
-		}
-		candidate = filepath.Join(base, candidate)
+	} else if in.Project != "" && in.Cwd != "" && !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(in.Cwd, candidate)
 	}
 	info, err := os.Stat(candidate)
 	if err != nil {

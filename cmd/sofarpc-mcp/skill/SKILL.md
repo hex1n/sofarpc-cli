@@ -5,7 +5,7 @@ description: Guides agents through using the sofarpc-mcp MCP tools and prompts t
 
 # sofarpc-invoke
 
-Use the MCP tools for execution and the MCP prompts as workflow shortcuts. Prompts can scaffold bootstrap, dry-run, or diagnosis steps, but they do not execute calls by themselves.
+Use the MCP tools for execution and the MCP prompts as workflow shortcuts. If Java sources changed, reopen the project with `refreshContract: true`. Prompts can scaffold bootstrap, dry-run, or diagnosis steps, but they do not execute calls by themselves.
 
 ## Quick Start
 
@@ -29,11 +29,11 @@ Most tools accept `sessionId`, `project`, or `cwd`. Prefer `sessionId` after `so
 Before a real invoke:
 - Identify the exact service, method, and overload `types`.
 - Use contract-derived argument names, Java types, and overloads.
-- Send `args` as an inline JSON array, even for one-parameter methods.
+- Send explicit `args` as an inline JSON array before executing a parameterized method. Use `types: []` and `args: []` for a zero-argument trusted call.
 - Confirm side effects with the user unless the request already explicitly asks for the call.
 - Treat retries and replay as live calls when `dryRun` is false.
 
-Do not send speculative payloads to production-like targets. Real calls require `SOFARPC_ALLOW_INVOKE=true` and project `allowedServices`; per-call target overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`.
+Do not send speculative payloads to production-like targets. Real calls require `SOFARPC_ALLOW_INVOKE=true`; per-call target overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`.
 
 ## Invoke Payloads
 

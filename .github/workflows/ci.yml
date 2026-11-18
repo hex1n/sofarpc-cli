@@ -33,3 +33,47 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Install and start the native binary
+        shell: pwsh
+        run: |
+          $env:GOBIN = Join-Path $env:RUNNER_TEMP 'sofarpc-bin'
+          go install ./cmd/sofarpc-mcp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binary = Join-Path $env:GOBIN 'sofarpc-mcp.exe'
+          # A stdio MCP initialize request must start the binary and receive a response.
+          $initialize = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
+          $startInfo = [System.Diagnostics.ProcessStartInfo]::new($binary)
+          $startInfo.UseShellExecute = $false
+          $startInfo.CreateNoWindow = $true
+          $startInfo.RedirectStandardInput = $true
+          $startInfo.RedirectStandardOutput = $true
+          $process = [System.Diagnostics.Process]::Start($startInfo)
+          try {
+            $process.StandardInput.WriteLine($initialize)
+            $process.StandardInput.Flush()
+            $reply = $process.StandardOutput.ReadLineAsync()
+            if (!$reply.Wait(10000)) { throw "MCP initialize timed out" }
+            if (($reply.Result | ConvertFrom-Json).result.serverInfo.name -ne 'sofarpc-mcp') {
+              throw "MCP initialize did not return the expected server identity"
+            }
+          } finally {
+            $process.StandardInput.Close()
+            if (!$process.WaitForExit(5000)) { $process.Kill() }
+            $process.Dispose()
+          }

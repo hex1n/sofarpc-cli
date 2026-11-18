@@ -38,13 +38,12 @@ func runProjectSetup(opts setupOptions) error {
 		return err
 	}
 	result, err := projectbootstrap.Run(projectbootstrap.Input{
-		ProjectRoot:            projectRoot,
-		Kind:                   kind,
-		Config:                 cfg,
-		Force:                  opts.force,
-		DryRun:                 opts.dryRun,
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
+		ProjectRoot:         projectRoot,
+		Kind:                kind,
+		Config:              cfg,
+		Force:               opts.force,
+		DryRun:              opts.dryRun,
+		RequireConfigFields: true,
 	})
 	if err != nil {
 		return projectSetupBootstrapError(err)
@@ -126,9 +125,6 @@ func projectProfileSetupError(err error) error {
 }
 
 func buildProjectProfileConfig(opts setupOptions) (projectconfig.ProfileConfig, error) {
-	if opts.set["allowed-services"] {
-		return projectconfig.ProfileConfig{}, fmt.Errorf("--allowed-services is not valid with --profile; the service allowlist stays a base, project-wide setting")
-	}
 	cfg, err := buildProjectTargetConfig(opts)
 	if err != nil {
 		return projectconfig.ProfileConfig{}, err
@@ -147,8 +143,6 @@ func projectSetupBootstrapError(err error) error {
 	switch {
 	case errors.Is(err, projectbootstrap.ErrNoConfigFields):
 		return fmt.Errorf("project setup needs at least one target config flag")
-	case errors.Is(err, projectbootstrap.ErrAllowedServicesMissing):
-		return fmt.Errorf("project setup requires --allowed-services; use --allowed-services=* intentionally to allow every service")
 	default:
 		var existing projectbootstrap.ExistingConfigError
 		if errors.As(err, &existing) {
@@ -233,9 +227,6 @@ func buildProjectTargetConfig(opts setupOptions) (projectconfig.Config, error) {
 		}
 		cfg.ConnectTimeoutMS = v
 	}
-	if opts.set["allowed-services"] {
-		cfg.AllowedServices = csvProjectFlag(opts.allowedServices)
-	}
 	return cfg, nil
 }
 
@@ -244,17 +235,6 @@ func projectStringFlag(opts setupOptions, name, value string) string {
 		return ""
 	}
 	return strings.TrimSpace(value)
-}
-
-func csvProjectFlag(value string) []string {
-	var out []string
-	for _, item := range strings.Split(value, ",") {
-		item = strings.TrimSpace(item)
-		if item != "" {
-			out = append(out, item)
-		}
-	}
-	return out
 }
 
 func positiveProjectInt(name, raw string) (int, error) {

@@ -57,22 +57,6 @@ func TestInitProject_ProfileModeMergesIntoExistingFile(t *testing.T) {
 	}
 }
 
-func TestInitProject_ProfileModeRejectsServiceFlags(t *testing.T) {
-	root := t.TempDir()
-	out, result := callInitProject(t, Options{}, map[string]any{
-		"project":   root,
-		"profile":   "test",
-		"directUrl": "bolt://test-host:12200",
-		"services":  []any{"com.foo.Svc"},
-	})
-	if !result.IsError || out.Error == nil {
-		t.Fatalf("profile mode should reject service flags: %+v", out)
-	}
-	if !strings.Contains(out.Error.Message, "allowedServices") {
-		t.Fatalf("error should explain allowlist stays a base setting: %+v", out.Error)
-	}
-}
-
 func TestInitProject_ProfileModeExistingProfileNeedsForce(t *testing.T) {
 	root := t.TempDir()
 	args := map[string]any{

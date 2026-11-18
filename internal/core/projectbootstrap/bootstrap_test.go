@@ -14,11 +14,10 @@ func TestRun_LocalWritesConfigAndGitignore(t *testing.T) {
 	root := t.TempDir()
 
 	result, err := Run(Input{
-		ProjectRoot:            root,
-		Kind:                   projectconfig.KindLocal,
-		Config:                 projectConfig("bolt://host:12200", "com.foo.UserFacade"),
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
+		ProjectRoot:         root,
+		Kind:                projectconfig.KindLocal,
+		Config:              projectconfig.Config{DirectURL: "bolt://host:12200"},
+		RequireConfigFields: true,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -33,8 +32,7 @@ func TestRun_LocalWritesConfigAndGitignore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(body), `"directUrl": "bolt://host:12200"`) ||
-		!strings.Contains(string(body), `"com.foo.UserFacade"`) {
+	if !strings.Contains(string(body), `"directUrl": "bolt://host:12200"`) {
 		t.Fatalf("config body:\n%s", body)
 	}
 	ignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
@@ -50,12 +48,11 @@ func TestRun_LocalDryRunLeavesFilesUntouched(t *testing.T) {
 	root := t.TempDir()
 
 	result, err := Run(Input{
-		ProjectRoot:            root,
-		Kind:                   projectconfig.KindLocal,
-		Config:                 projectConfig("", "com.foo.UserFacade"),
-		DryRun:                 true,
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
+		ProjectRoot:         root,
+		Kind:                projectconfig.KindLocal,
+		Config:              projectconfig.Config{DirectURL: "bolt://host:12200"},
+		DryRun:              true,
+		RequireConfigFields: true,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -76,39 +73,14 @@ func TestRun_LocalDryRunLeavesFilesUntouched(t *testing.T) {
 
 func TestRun_RejectsMissingRequiredFields(t *testing.T) {
 	_, err := Run(Input{
-		ProjectRoot:            t.TempDir(),
-		Kind:                   projectconfig.KindLocal,
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
+		ProjectRoot:         t.TempDir(),
+		Kind:                projectconfig.KindLocal,
+		RequireConfigFields: true,
 	})
 	if !errors.Is(err, ErrNoConfigFields) {
 		t.Fatalf("err = %v, want ErrNoConfigFields", err)
 	}
 
-	_, err = Run(Input{
-		ProjectRoot:            t.TempDir(),
-		Kind:                   projectconfig.KindLocal,
-		Config:                 projectConfig("bolt://host:12200", ""),
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
-	})
-	if !errors.Is(err, ErrAllowedServicesMissing) {
-		t.Fatalf("err = %v, want ErrAllowedServicesMissing", err)
-	}
-
-	result, err := Run(Input{
-		ProjectRoot:            t.TempDir(),
-		Kind:                   projectconfig.KindLocal,
-		Config:                 projectconfig.Config{DirectURL: " bolt://host:12200 ", AllowedServices: []string{" "}},
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
-	})
-	if !errors.Is(err, ErrAllowedServicesMissing) {
-		t.Fatalf("err = %v, want ErrAllowedServicesMissing", err)
-	}
-	if result.Config.DirectURL != "bolt://host:12200" || len(result.Config.AllowedServices) != 0 {
-		t.Fatalf("config should be normalized before validation: %+v", result.Config)
-	}
 }
 
 func TestRun_ValidationErrorsStillReportExistingConfig(t *testing.T) {
@@ -122,14 +94,12 @@ func TestRun_ValidationErrorsStillReportExistingConfig(t *testing.T) {
 	}
 
 	result, err := Run(Input{
-		ProjectRoot:            root,
-		Kind:                   projectconfig.KindLocal,
-		Config:                 projectConfig("bolt://host:12200", ""),
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
+		ProjectRoot:         root,
+		Kind:                projectconfig.KindLocal,
+		RequireConfigFields: true,
 	})
-	if !errors.Is(err, ErrAllowedServicesMissing) {
-		t.Fatalf("err = %v, want ErrAllowedServicesMissing", err)
+	if !errors.Is(err, ErrNoConfigFields) {
+		t.Fatalf("err = %v, want ErrNoConfigFields", err)
 	}
 	if !result.Existing {
 		t.Fatalf("expected existing config to be reported: %+v", result)
@@ -147,11 +117,10 @@ func TestRun_ExistingConfigRequiresForce(t *testing.T) {
 	}
 
 	result, err := Run(Input{
-		ProjectRoot:            root,
-		Kind:                   projectconfig.KindLocal,
-		Config:                 projectConfig("bolt://new:12200", "com.foo.UserFacade"),
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
+		ProjectRoot:         root,
+		Kind:                projectconfig.KindLocal,
+		Config:              projectconfig.Config{DirectURL: "bolt://new:12200"},
+		RequireConfigFields: true,
 	})
 	var existsErr ExistingConfigError
 	if !errors.As(err, &existsErr) {
@@ -180,12 +149,11 @@ func TestRun_ForceOverwritesExistingConfig(t *testing.T) {
 	}
 
 	result, err := Run(Input{
-		ProjectRoot:            root,
-		Kind:                   projectconfig.KindLocal,
-		Config:                 projectConfig("bolt://new:12200", "com.foo.UserFacade"),
-		Force:                  true,
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
+		ProjectRoot:         root,
+		Kind:                projectconfig.KindLocal,
+		Config:              projectconfig.Config{DirectURL: "bolt://new:12200"},
+		Force:               true,
+		RequireConfigFields: true,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -209,11 +177,10 @@ func TestRun_LocalDoesNotWriteConfigWhenGitignoreFails(t *testing.T) {
 		t.Fatalf("mkdir gitignore dir: %v", err)
 	}
 	_, err := Run(Input{
-		ProjectRoot:            root,
-		Kind:                   projectconfig.KindLocal,
-		Config:                 projectConfig("bolt://host:12200", "com.foo.UserFacade"),
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
+		ProjectRoot:         root,
+		Kind:                projectconfig.KindLocal,
+		Config:              projectconfig.Config{DirectURL: "bolt://host:12200"},
+		RequireConfigFields: true,
 	})
 	if err == nil {
 		t.Fatal("expected gitignore failure")
@@ -227,11 +194,10 @@ func TestRun_SharedDoesNotTouchGitignore(t *testing.T) {
 	root := t.TempDir()
 
 	result, err := Run(Input{
-		ProjectRoot:            root,
-		Kind:                   projectconfig.KindShared,
-		Config:                 projectConfig("", "com.foo.UserFacade"),
-		RequireConfigFields:    true,
-		RequireAllowedServices: true,
+		ProjectRoot:         root,
+		Kind:                projectconfig.KindShared,
+		Config:              projectconfig.Config{DirectURL: "bolt://host:12200"},
+		RequireConfigFields: true,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -245,12 +211,4 @@ func TestRun_SharedDoesNotTouchGitignore(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
 		t.Fatalf("shared setup should not create gitignore: %v", err)
 	}
-}
-
-func projectConfig(directURL, service string) projectconfig.Config {
-	cfg := projectconfig.Config{DirectURL: directURL}
-	if service != "" {
-		cfg.AllowedServices = []string{service}
-	}
-	return cfg
 }

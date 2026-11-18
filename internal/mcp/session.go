@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,8 +31,9 @@ const (
 	// session may retain for sessionId replay. It does not truncate or
 	// redact the plan returned to the caller; it only bounds in-memory
 	// session retention.
-	defaultSessionPlanMaxBytes = int64(1 << 20)
-	envSessionPlanMaxBytes     = "SOFARPC_SESSION_PLAN_MAX_BYTES"
+	defaultSessionPlanMaxBytes       = int64(1 << 20)
+	defaultSessionPlansTotalMaxBytes = int64(64 << 20)
+	envSessionPlanMaxBytes           = "SOFARPC_SESSION_PLAN_MAX_BYTES"
 
 	// defaultSessionPlanHistory bounds how many captured plans a session
 	// keeps for planId replay. The newest plan is also exposed as LastPlan;
@@ -58,6 +60,8 @@ type PlanEntry struct {
 	ID         string      `json:"id"`
 	CapturedAt time.Time   `json:"capturedAt"`
 	Plan       invoke.Plan `json:"plan"`
+	sizeBytes  int64
+	sequence   uint64
 }
 
 // Session is a per-workspace snapshot the agent can refer back to by ID
@@ -99,24 +103,27 @@ type Session struct {
 //     room. A zero ttl or cap disables that dimension (unbounded growth
 //     in tests only).
 //   - Captured plan bytes: sessionId replay keeps only plans whose JSON
-//     representation is at or below maxPlanBytes. A zero max disables
-//     the captured-plan byte bound.
+//     representation fits the per-plan limit. A zero per-plan limit still
+//     leaves the aggregate storage limit in effect.
 //
 // Safe for concurrent use.
 type SessionStore struct {
-	ttl          time.Duration
-	cap          int
-	maxPlanBytes int64
-	clock        func() time.Time
-	newID        func() string
+	ttl               time.Duration
+	cap               int
+	maxPlanBytes      int64
+	maxTotalPlanBytes int64
+	storedPlanBytes   int64
+	nextPlanSequence  uint64
+	clock             func() time.Time
+	newID             func() string
 
 	mu       sync.Mutex
 	sessions map[string]Session
 }
 
 // NewSessionStore returns a store with default TTL (24h), capacity (256),
-// and captured-plan byte limit. SOFARPC_SESSION_PLAN_MAX_BYTES overrides the
-// captured-plan byte limit; set it to 0 to disable that bound.
+// and both plan byte limits. SOFARPC_SESSION_PLAN_MAX_BYTES overrides only the
+// per-plan limit. Set it to 0 to use only the aggregate limit.
 func NewSessionStore() *SessionStore {
 	return NewSessionStoreWithLimits(defaultSessionTTL, defaultSessionCap)
 }
@@ -127,12 +134,13 @@ func NewSessionStore() *SessionStore {
 // callers that need to tune the bounds.
 func NewSessionStoreWithLimits(ttl time.Duration, capacity int) *SessionStore {
 	return &SessionStore{
-		ttl:          ttl,
-		cap:          capacity,
-		maxPlanBytes: sessionPlanMaxBytesFromEnv(),
-		clock:        time.Now,
-		newID:        randomSessionID,
-		sessions:     map[string]Session{},
+		ttl:               ttl,
+		cap:               capacity,
+		maxPlanBytes:      sessionPlanMaxBytesFromEnv(),
+		maxTotalPlanBytes: defaultSessionPlansTotalMaxBytes,
+		clock:             time.Now,
+		newID:             randomSessionID,
+		sessions:          map[string]Session{},
 	}
 }
 
@@ -153,8 +161,8 @@ func (s *SessionStore) WithClock(fn func() time.Time) *SessionStore {
 	return s
 }
 
-// WithMaxPlanBytes swaps the captured-plan byte limit. A zero value disables
-// the byte bound. Production callers should prefer SOFARPC_SESSION_PLAN_MAX_BYTES.
+// WithMaxPlanBytes swaps the per-plan byte limit. Zero uses only the aggregate
+// limit. Production callers should prefer SOFARPC_SESSION_PLAN_MAX_BYTES.
 func (s *SessionStore) WithMaxPlanBytes(maxBytes int64) *SessionStore {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -178,6 +186,11 @@ func (s *SessionStore) Create(session Session) Session {
 	session.ID = s.newID()
 	session.CreatedAt = now
 	session.lastUsed = now
+	if previous, ok := s.sessions[session.ID]; ok {
+		s.removeSessionLocked(session.ID, previous)
+	}
+	session.LastPlan = nil
+	session.Plans = nil
 	s.sessions[session.ID] = session
 	return session
 }
@@ -205,6 +218,7 @@ func (s *SessionStore) CapturePlan(id string, plan invoke.Plan) PlanCaptureResul
 	if id == "" {
 		return PlanCaptureResult{Captured: false, Reason: "empty-session-id"}
 	}
+	planBytes, err := planSizeBytes(plan)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -213,13 +227,16 @@ func (s *SessionStore) CapturePlan(id string, plan invoke.Plan) PlanCaptureResul
 		return PlanCaptureResult{Captured: false, Reason: "session-not-found"}
 	}
 
-	planBytes, err := planSizeBytes(plan)
 	if err != nil {
 		session.lastUsed = s.clock().UTC()
 		s.sessions[id] = session
 		return PlanCaptureResult{Captured: false, Reason: "plan-size-unavailable"}
 	}
-	if s.maxPlanBytes > 0 && planBytes > s.maxPlanBytes {
+	limit := s.maxPlanBytes
+	if limit == 0 || s.maxTotalPlanBytes < limit {
+		limit = s.maxTotalPlanBytes
+	}
+	if planBytes > limit {
 		session.LastPlan = nil
 		session.lastUsed = s.clock().UTC()
 		s.sessions[id] = session
@@ -227,21 +244,26 @@ func (s *SessionStore) CapturePlan(id string, plan invoke.Plan) PlanCaptureResul
 			Captured:  false,
 			Reason:    "plan-too-large",
 			PlanBytes: planBytes,
-			MaxBytes:  s.maxPlanBytes,
+			MaxBytes:  limit,
 		}
 	}
 
 	now := s.clock().UTC()
 	clone := plan
-	entry := PlanEntry{ID: randomPlanID(), CapturedAt: now, Plan: plan}
+	s.nextPlanSequence++
+	entry := PlanEntry{ID: randomPlanID(), CapturedAt: now, Plan: plan, sizeBytes: planBytes, sequence: s.nextPlanSequence}
 	session.LastPlan = &clone
 	session.Plans = append([]PlanEntry{entry}, session.Plans...)
+	s.storedPlanBytes += planBytes
 	if len(session.Plans) > defaultSessionPlanHistory {
+		s.storedPlanBytes -= session.Plans[defaultSessionPlanHistory].sizeBytes
+		session.Plans[defaultSessionPlanHistory] = PlanEntry{}
 		session.Plans = session.Plans[:defaultSessionPlanHistory]
 	}
 	session.lastUsed = now
 	s.sessions[id] = session
-	return PlanCaptureResult{Captured: true, Reason: "captured", PlanID: entry.ID, PlanBytes: planBytes, MaxBytes: s.maxPlanBytes}
+	s.enforcePlanBudgetLocked()
+	return PlanCaptureResult{Captured: true, Reason: "captured", PlanID: entry.ID, PlanBytes: planBytes, MaxBytes: limit}
 }
 
 // PlanByID returns the captured plan entry with the given ID from a
@@ -289,12 +311,54 @@ func (s *SessionStore) Cap() int {
 	return s.cap
 }
 
-// MaxPlanBytes returns the configured captured-plan byte limit. Zero means
-// unbounded.
+// MaxPlanBytes returns the configured per-plan byte limit. Zero means that only
+// the aggregate limit applies.
 func (s *SessionStore) MaxPlanBytes() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.maxPlanBytes
+}
+
+// PlanBudget reports the retained serialized size and the store-wide limit.
+func (s *SessionStore) PlanBudget() (used, limit int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.storedPlanBytes, s.maxTotalPlanBytes
+}
+
+func (s *SessionStore) removeSessionLocked(id string, session Session) {
+	for _, plan := range session.Plans {
+		s.storedPlanBytes -= plan.sizeBytes
+	}
+	delete(s.sessions, id)
+}
+
+func (s *SessionStore) enforcePlanBudgetLocked() {
+	for s.storedPlanBytes > s.maxTotalPlanBytes {
+		var oldestID string
+		var oldest PlanEntry
+		for id, session := range s.sessions {
+			if len(session.Plans) == 0 {
+				continue
+			}
+			candidate := session.Plans[len(session.Plans)-1]
+			if oldestID == "" || candidate.sequence < oldest.sequence {
+				oldestID, oldest = id, candidate
+			}
+		}
+		if oldestID == "" {
+			return
+		}
+		session := s.sessions[oldestID]
+		if len(session.Plans) == 1 {
+			session.Plans = nil
+			session.LastPlan = nil
+		} else {
+			session.Plans = slices.Clone(session.Plans[:len(session.Plans)-1])
+		}
+		s.sessions[oldestID] = session
+		s.storedPlanBytes -= oldest.sizeBytes
+	}
 }
 
 // sweepExpiredLocked drops every session whose lastUsed is older than
@@ -306,7 +370,7 @@ func (s *SessionStore) sweepExpiredLocked(now time.Time) {
 	cutoff := now.Add(-s.ttl)
 	for id, session := range s.sessions {
 		if session.lastUsed.Before(cutoff) {
-			delete(s.sessions, id)
+			s.removeSessionLocked(id, session)
 		}
 	}
 }
@@ -330,7 +394,7 @@ func (s *SessionStore) enforceCapLocked() {
 		if lruID == "" {
 			return
 		}
-		delete(s.sessions, lruID)
+		s.removeSessionLocked(lruID, s.sessions[lruID])
 	}
 }
 

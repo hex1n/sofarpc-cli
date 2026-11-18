@@ -12,10 +12,9 @@ import (
 )
 
 var (
-	ErrNoConfigFields         = errors.New("no project config fields resolved")
-	ErrAllowedServicesMissing = errors.New("allowedServices is required")
-	ErrProfileNameRequired    = errors.New("profile name is required")
-	ErrProfileNoFields        = errors.New("profile has no target or invocation fields")
+	ErrNoConfigFields      = errors.New("no project config fields resolved")
+	ErrProfileNameRequired = errors.New("profile name is required")
+	ErrProfileNoFields     = errors.New("profile has no target or invocation fields")
 )
 
 type ExistingConfigError struct {
@@ -53,13 +52,12 @@ func (e ProfileNotDefinedError) Error() string {
 }
 
 type Input struct {
-	ProjectRoot            string
-	Kind                   projectconfig.Kind
-	Config                 projectconfig.Config
-	Force                  bool
-	DryRun                 bool
-	RequireConfigFields    bool
-	RequireAllowedServices bool
+	ProjectRoot         string
+	Kind                projectconfig.Kind
+	Config              projectconfig.Config
+	Force               bool
+	DryRun              bool
+	RequireConfigFields bool
 }
 
 type Result struct {
@@ -92,6 +90,14 @@ func Run(in Input) (Result, error) {
 	}
 	result.ConfigPath = projectconfig.ConfigPath(result.ProjectRoot, in.Kind)
 
+	if !in.DryRun {
+		lock, err := projectconfig.LockProject(result.ProjectRoot)
+		if err != nil {
+			return result, err
+		}
+		defer lock.Close()
+	}
+
 	exists, err := projectconfig.Existing(result.ConfigPath)
 	if err != nil {
 		return result, err
@@ -100,9 +106,6 @@ func Run(in Input) (Result, error) {
 
 	if in.RequireConfigFields && !HasConfigFields(cfg) {
 		return result, ErrNoConfigFields
-	}
-	if in.RequireAllowedServices && len(cfg.AllowedServices) == 0 {
-		return result, ErrAllowedServicesMissing
 	}
 
 	body, err := projectconfig.Marshal(cfg)
@@ -145,7 +148,6 @@ func HasConfigFields(cfg projectconfig.Config) bool {
 		strings.TrimSpace(cfg.UniqueID) != "" ||
 		cfg.TimeoutMS > 0 ||
 		cfg.ConnectTimeoutMS > 0 ||
-		len(cfg.AllowedServices) > 0 ||
 		len(cfg.InvocationProperties) > 0
 }
 
@@ -197,6 +199,14 @@ func WriteProfile(in ProfileInput) (ProfileResult, error) {
 	}
 	if !projectconfig.ProfileHasFields(in.Profile) {
 		return result, ErrProfileNoFields
+	}
+
+	if !in.DryRun {
+		lock, err := projectconfig.LockProject(result.ProjectRoot)
+		if err != nil {
+			return result, err
+		}
+		defer lock.Close()
 	}
 
 	existing, err := projectconfig.Read(result.ProjectRoot, in.Kind)
@@ -276,6 +286,14 @@ func UseProfile(in UseProfileInput) (UseProfileResult, error) {
 	result.ConfigPath = projectconfig.ConfigPath(result.ProjectRoot, projectconfig.KindLocal)
 	if name == "" {
 		return result, ErrProfileNameRequired
+	}
+
+	if !in.DryRun {
+		lock, err := projectconfig.LockProject(result.ProjectRoot)
+		if err != nil {
+			return result, err
+		}
+		defer lock.Close()
 	}
 
 	available, defined, err := availableProfiles(result.ProjectRoot)

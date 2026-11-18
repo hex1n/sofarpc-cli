@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/hex1n/sofarpc-cli/internal/core/contract"
 	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
 )
 
@@ -81,7 +82,8 @@ func requestContentFixture() (goldenWireFixture, error) {
       },
       "status": "ACTIVE"
     }
-  }
+  },
+  {"type": "java.util.ArrayList", "items": ["\u4e2d\ud83d\ude00"]}
 ]`
 
 	const realizedArgsJSON = `[
@@ -108,15 +110,16 @@ func requestContentFixture() (goldenWireFixture, error) {
       },
       "status": "ACTIVE"
     }
-  }
+  },
+  {"type": "java.util.ArrayList", "items": ["\u4e2d\ud83d\ude00"]}
 ]`
 
 	req, err := sofarpcwire.BuildGenericRequest(sofarpcwire.RequestSpec{
 		Service: "com.example.FixtureFacade",
 		Method:  "query",
-		ParamTypes: []string{
-			"com.example.FixtureRequest",
-		},
+		ParamTypes: contract.WireParamTypes([]string{
+			"com.example.FixtureRequest", "java.util.List<java.lang.String>",
+		}, nil),
 		Args: []any{
 			map[string]any{
 				"@type": "com.example.FixtureRequest",
@@ -137,6 +140,7 @@ func requestContentFixture() (goldenWireFixture, error) {
 					},
 				},
 			},
+			[]any{"\u4e2d\U0001f600"},
 		},
 		RequestBaggage: map[string]string{
 			"tenant": "dev",
@@ -154,7 +158,7 @@ func requestContentFixture() (goldenWireFixture, error) {
 		Want: goldenFixtureWant{
 			Service:                 "com.example.FixtureFacade",
 			Method:                  "query",
-			ParamTypes:              []string{"com.example.FixtureRequest"},
+			ParamTypes:              []string{"com.example.FixtureRequest", "java.util.List"},
 			TargetServiceUniqueName: "com.example.FixtureFacade:1.0",
 			RequestBaggage:          map[string]string{"route": "blue", "tenant": "dev"},
 			ArgsJSON:                json.RawMessage(argsJSON),

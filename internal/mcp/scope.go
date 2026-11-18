@@ -24,10 +24,13 @@ type toolContext struct {
 	ContractBanner ContractBanner
 }
 
-func resolveOpenContext(base target.Sources, holder *contractHolder, cwd, project string) (toolContext, error) {
+func resolveOpenContext(base target.Sources, holder *contractHolder, cwd, project string, refreshContract bool) (toolContext, error) {
 	scope, err := resolveWorkspaceScope(base, cwd, project)
 	if err != nil {
 		return toolContext{}, err
+	}
+	if refreshContract {
+		holder.InvalidateProject(scope.ProjectRoot)
 	}
 	return attachContractContext(scope, holder), nil
 }

@@ -54,8 +54,6 @@ type Sources struct {
 	Env                              Config
 	Project                          Config
 	ProjectLocal                     Config
-	ProjectPolicy                    PolicyConfig
-	ProjectLocalPolicy               PolicyConfig
 	ProjectInvocationProperties      invocationprops.Declarations
 	ProjectLocalInvocationProperties invocationprops.Declarations
 	ProjectRoot                      string
@@ -71,20 +69,6 @@ type Sources struct {
 	// profile name, from the shared and local config files.
 	ProjectProfileInvocationProperties      map[string]invocationprops.Declarations
 	ProjectLocalProfileInvocationProperties map[string]invocationprops.Declarations
-}
-
-// PolicyConfig contains project-scoped execution policy. It is parsed from
-// the same .sofarpc/config*.json files as target config, but kept separate
-// from Config so resolved invoke targets do not leak policy-only fields.
-type PolicyConfig struct {
-	AllowedServices    []string `json:"allowedServices,omitempty"`
-	AllowedServicesSet bool     `json:"allowedServicesSet,omitempty"`
-}
-
-type ServiceAllowlist struct {
-	Configured bool
-	Services   []string
-	Source     string
 }
 
 // ConfigError records a project config file that existed but could not be
@@ -367,7 +351,6 @@ func applyProjectConfig(src *Sources, kind projectconfig.Kind) {
 	switch kind {
 	case projectconfig.KindShared:
 		src.Project = configFromProjectConfig(loaded.Config)
-		src.ProjectPolicy = policyFromProjectConfig(loaded)
 		src.ProjectInvocationProperties = loaded.Config.InvocationProperties
 		src.ProjectProfiles = profilesFromProjectConfig(loaded.Config.Profiles)
 		src.ProjectProfileInvocationProperties = profileInvocationProperties(loaded.Config.Profiles)
@@ -376,7 +359,6 @@ func applyProjectConfig(src *Sources, kind projectconfig.Kind) {
 		}
 	case projectconfig.KindLocal:
 		src.ProjectLocal = configFromProjectConfig(loaded.Config)
-		src.ProjectLocalPolicy = policyFromProjectConfig(loaded)
 		src.ProjectLocalInvocationProperties = loaded.Config.InvocationProperties
 		src.ProjectLocalProfiles = profilesFromProjectConfig(loaded.Config.Profiles)
 		src.ProjectLocalProfileInvocationProperties = profileInvocationProperties(loaded.Config.Profiles)
@@ -419,42 +401,6 @@ func profilesFromProjectConfig(profiles map[string]projectconfig.ProfileConfig) 
 		})
 	}
 	return out
-}
-
-// AllowedServices returns the effective project-scoped service allowlist.
-// Local config wins over shared config. A nil return means the project did
-// not set a service allowlist.
-func AllowedServices(sources Sources) []string {
-	allowlist := ServiceAllowlistForSources(sources)
-	if !allowlist.Configured {
-		return nil
-	}
-	return append([]string(nil), allowlist.Services...)
-}
-
-// ServiceAllowlistForSources returns the effective service allowlist plus
-// whether it was explicitly configured. An explicitly empty local allowlist
-// still wins over a shared allowlist and blocks every service.
-func ServiceAllowlistForSources(sources Sources) ServiceAllowlist {
-	if policyHasAllowedServices(sources.ProjectLocalPolicy) {
-		return ServiceAllowlist{
-			Configured: true,
-			Services:   append([]string(nil), sources.ProjectLocalPolicy.AllowedServices...),
-			Source:     "project allowedServices",
-		}
-	}
-	if policyHasAllowedServices(sources.ProjectPolicy) {
-		return ServiceAllowlist{
-			Configured: true,
-			Services:   append([]string(nil), sources.ProjectPolicy.AllowedServices...),
-			Source:     "project allowedServices",
-		}
-	}
-	return ServiceAllowlist{}
-}
-
-func policyHasAllowedServices(policy PolicyConfig) bool {
-	return policy.AllowedServicesSet || len(policy.AllowedServices) > 0
 }
 
 func resolveEndpoint(layers []layerConfig) (Config, []FieldTrace, map[string][]string) {
@@ -524,16 +470,6 @@ func configFromProjectConfig(cfg projectconfig.Config) Config {
 		TimeoutMS:        cfg.TimeoutMS,
 		ConnectTimeoutMS: cfg.ConnectTimeoutMS,
 	})
-}
-
-func policyFromProjectConfig(loaded projectconfig.ReadResult) PolicyConfig {
-	if !loaded.AllowedServicesSet {
-		return PolicyConfig{}
-	}
-	return PolicyConfig{
-		AllowedServices:    append([]string(nil), loaded.Config.AllowedServices...),
-		AllowedServicesSet: true,
-	}
 }
 
 func configFromInput(in Input) Config {

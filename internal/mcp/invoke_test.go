@@ -117,9 +117,6 @@ func TestInvoke_UnsupportedTargetSurfacesInvocationRejected(t *testing.T) {
 		Contract: store,
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: "bolt://host:12200", Protocol: "tr3"},
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.Svc"},
-			},
 		},
 	}, map[string]any{
 		"service": "com.foo.Svc",
@@ -151,9 +148,6 @@ func TestInvoke_TimeoutStillReportsTraceId(t *testing.T) {
 		Contract: store,
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: directURL},
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.foo.Svc"},
-			},
 		},
 	}, map[string]any{
 		"service":   "com.foo.Svc",
@@ -224,9 +218,6 @@ func TestInvoke_DirectTransportRoundTripSetsOkAndResult(t *testing.T) {
 		Contract: store,
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: directURL},
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.example.demo.ExampleFacade"},
-			},
 		},
 	}, map[string]any{
 		"service":       "com.example.demo.ExampleFacade",
@@ -312,9 +303,6 @@ func TestInvoke_DirectTransportRendersMapWithTypedObjectValues(t *testing.T) {
 		Contract: store,
 		TargetSources: target.Sources{
 			Env: target.Config{DirectURL: directURL},
-			ProjectPolicy: target.PolicyConfig{
-				AllowedServices: []string{"com.example.demo.RankingListFacade"},
-			},
 		},
 	}, map[string]any{
 		"service": "com.example.demo.RankingListFacade",

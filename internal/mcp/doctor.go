@@ -388,6 +388,7 @@ func checkInvokeConcurrency(limiter *InvokeLimiter) DoctorCheck {
 
 func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 	policy := executionPolicyFromEnv(sources)
+	policy.RequestedProfile = in.Profile
 	policyDiagnostics := policy.Diagnostics()
 	report := target.Resolve(target.Input{Service: in.Service, Profile: in.Profile}, sources)
 	if c := profileNotDefinedCheck("invoke-policy", report); c != nil {
@@ -406,7 +407,7 @@ func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 
 	// The execution policy owns every rule; doctor sequences them in the
 	// order invoke applies them and translates the first rejection.
-	if err := invokePolicyRejection(policy, in.Service, report.Target, "doctor"); err != nil {
+	if err := invokePolicyRejection(policy, report.Target, "doctor"); err != nil {
 		check := DoctorCheck{Name: "invoke-policy", Ok: false, Detail: err.Error(), Data: data}
 		var ecerr *errcode.Error
 		if errors.As(err, &ecerr) {
@@ -415,39 +416,27 @@ func checkInvokePolicy(in DoctorInput, sources target.Sources) DoctorCheck {
 		}
 		return check
 	}
-	detail := "real invoke policy allows the resolved direct target"
-	if policyDiagnostics.AllowedServicesConfigured && strings.TrimSpace(in.Service) == "" {
-		detail += "; pass service to doctor to verify service allowlisting"
-	}
 	return DoctorCheck{
 		Name:   "invoke-policy",
 		Ok:     true,
-		Detail: detail,
+		Detail: "real invoke policy allows the resolved direct target",
 		Data:   data,
 	}
 }
 
 // invokePolicyRejection walks the execution policy rules and returns the
 // first rejection. Within the policy the order matches what a real invoke
-// applies: config, enablement, service, target override and host, then the
+// applies: config, enablement, target override and host, then the
 // transport rule the wire path reaches last.
 //
-// Two rules are deliberately placed differently from a real invoke. The
-// service rule runs only when doctor was given a service to check, and the
-// "no target resolved" rule runs after the enablement and service rules
-// rather than ahead of everything, because doctor's own target check already
-// reports a missing target and the actionable answer here is the policy gap.
-func invokePolicyRejection(policy invoke.ExecutionPolicy, service string, cfg target.Config, phase string) error {
+// Check for a missing target after enablement because the separate target
+// check already reports a missing target.
+func invokePolicyRejection(policy invoke.ExecutionPolicy, cfg target.Config, phase string) error {
 	if err := policy.ValidateProjectConfig(phase); err != nil {
 		return err
 	}
 	if err := policy.ValidateRealInvokeEnabled(phase); err != nil {
 		return err
-	}
-	if strings.TrimSpace(service) != "" {
-		if err := policy.ValidateServiceAllowed(service, phase); err != nil {
-			return err
-		}
 	}
 	if err := invoke.ValidateTargetResolved(cfg, phase); err != nil {
 		return err
@@ -458,12 +447,8 @@ func invokePolicyRejection(policy invoke.ExecutionPolicy, service string, cfg ta
 	return invoke.ValidateTargetTransport(cfg, phase)
 }
 
-// doctorActionFromHint carries an execution policy hint through as doctor's
-// next step, with one translation. A hint that sends an agent to doctor is
-// asking it to read the policy doctor has already rendered in this check's
-// data, so the useful next step is the tool that writes that policy instead.
-// Project-aware tools are scoped to the project root when the hint left it
-// unset.
+// doctorActionFromHint carries the policy hint through and scopes target
+// diagnostics to the project root when the hint leaves it unset.
 func doctorActionFromHint(hint *errcode.Hint, sources target.Sources) *DoctorAction {
 	if hint == nil {
 		return nil
@@ -476,11 +461,7 @@ func doctorActionFromHint(hint *errcode.Hint, sources target.Sources) *DoctorAct
 	for key, value := range hint.NextArgs {
 		args[key] = value
 	}
-	if tool == "sofarpc_doctor" {
-		tool = "sofarpc_init_project"
-		args = map[string]any{"dryRun": true}
-	}
-	if tool == "sofarpc_target" || tool == "sofarpc_init_project" {
+	if tool == "sofarpc_target" {
 		if root := strings.TrimSpace(sources.ProjectRoot); root != "" {
 			if _, ok := args["project"]; !ok {
 				args["project"] = root
@@ -627,15 +608,19 @@ func checkSessions(store *SessionStore) DoctorCheck {
 	size := store.Size()
 	capacity := store.Cap()
 	maxPlanBytes := store.MaxPlanBytes()
+	storedPlanBytes, maxTotalPlanBytes := store.PlanBudget()
 	data := map[string]any{
-		"size":         size,
-		"capacity":     capacity,
-		"maxPlanBytes": maxPlanBytes,
+		"size":              size,
+		"capacity":          capacity,
+		"maxPlanBytes":      maxPlanBytes,
+		"storedPlanBytes":   storedPlanBytes,
+		"maxTotalPlanBytes": maxTotalPlanBytes,
 	}
 	planLimit := fmt.Sprintf("session plan max=%d bytes", maxPlanBytes)
 	if maxPlanBytes <= 0 {
-		planLimit = "session plan capture unbounded"
+		planLimit = "individual plan capture unbounded"
 	}
+	planLimit += fmt.Sprintf(", plan storage=%d/%d bytes", storedPlanBytes, maxTotalPlanBytes)
 	if capacity <= 0 {
 		return DoctorCheck{
 			Name:   "sessions",

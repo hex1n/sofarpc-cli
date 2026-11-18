@@ -533,7 +533,7 @@ func TestToolLoggingNotificationsWhenLevelProvided(t *testing.T) {
 	}
 }
 
-func TestNew_InitProjectSchemaAdvertisesServicesArray(t *testing.T) {
+func TestNew_InitProjectSchemaOmitsLegacyServiceOptions(t *testing.T) {
 	server := New(Options{})
 	ctx := context.Background()
 	client := connect(t, ctx, server)
@@ -545,9 +545,10 @@ func TestNew_InitProjectSchemaAdvertisesServicesArray(t *testing.T) {
 	assertNoSchemaKeyword(t, schema, "oneOf")
 
 	properties := schemaProperties(t, schema)
-	services := schemaObjectProperty(t, properties, "services")
-	if got := services["type"]; got != "array" {
-		t.Fatalf("services type: got %#v want array", got)
+	for _, name := range []string{"services", "allowAllServices", "serviceNameSuffixes"} {
+		if _, exists := properties[name]; exists {
+			t.Errorf("advertised retired input %q", name)
+		}
 	}
 }
 

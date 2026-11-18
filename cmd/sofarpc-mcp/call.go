@@ -31,6 +31,7 @@ type callFlags struct {
 	service        string
 	method         string
 	types          string
+	typesSet       bool
 	args           string
 	argsFile       string
 	planFile       string
@@ -44,8 +45,8 @@ type callFlags struct {
 
 // runCall implements `sofarpc-mcp call`: a one-shot plan/execute path over
 // the same core pipeline and execution guardrails as the MCP tools. Real
-// invokes still require SOFARPC_ALLOW_INVOKE=true plus the project service
-// allowlist; -dry-run prints the plan without touching the wire.
+// invokes require SOFARPC_ALLOW_INVOKE=true and follow the target restrictions.
+// -dry-run prints the plan without touching the wire.
 func runCall(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("call", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -66,6 +67,12 @@ func runCall(w io.Writer, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "types" {
+			in.typesSet = true
+		}
+	})
 
 	projectRoot := strings.TrimSpace(in.project)
 	if projectRoot == "" {
@@ -90,17 +97,18 @@ func runCall(w io.Writer, args []string) error {
 	// source-canonical @type / paramTypes that Hessian2 cannot resolve.
 	// Rescue a copy before execution, mirroring sofarpc_replay: the reported
 	// plan keeps the captured spelling, the caller's archive file is never
-	// rewritten, and an unresolvable store leaves the plan exactly as
-	// captured so a replay that worked before cannot start failing.
+	// rewritten. Erase source generic arguments even without a store.
 	execPlan := plan
-	if strings.TrimSpace(in.planFile) != "" {
-		if store := callContractStore(projectRoot); store != nil {
-			execPlan.Args = contract.RewriteWireTypeNames(execPlan.Args, store)
-			execPlan.ParamTypes = contract.WireParamTypes(execPlan.ParamTypes, store)
-		}
-	}
-
 	policy := callExecutionPolicy(sources)
+	if strings.TrimSpace(in.planFile) != "" {
+		store := callContractStore(projectRoot)
+		if store != nil {
+			execPlan.Args = contract.RewriteWireTypeNames(execPlan.Args, store)
+		}
+		execPlan.ParamTypes = contract.WireParamTypes(execPlan.ParamTypes, store)
+	} else {
+		policy.RequestedProfile = in.profile
+	}
 	if err := policy.Validate(execPlan, "call"); err != nil {
 		return writeCallOutput(w, callOutput{Plan: &plan, Error: asCallError(err)}, err)
 	}
@@ -124,7 +132,7 @@ func runCall(w io.Writer, args []string) error {
 func callPlan(in callFlags, projectRoot string, sources target.Sources) (invoke.Plan, error) {
 	if strings.TrimSpace(in.planFile) != "" {
 		if strings.TrimSpace(in.service) != "" || strings.TrimSpace(in.method) != "" ||
-			strings.TrimSpace(in.types) != "" || strings.TrimSpace(in.args) != "" ||
+			in.typesSet || strings.TrimSpace(in.args) != "" ||
 			strings.TrimSpace(in.argsFile) != "" {
 			return invoke.Plan{}, errcode.New(errcode.ArgsInvalid, "call",
 				"-plan replays a captured plan and cannot be combined with -service/-method/-types/-args")
@@ -140,6 +148,9 @@ func callPlan(in callFlags, projectRoot string, sources target.Sources) (invoke.
 		return invoke.Plan{}, err
 	}
 	paramTypes := splitCallTypes(in.types)
+	if in.typesSet && paramTypes == nil {
+		paramTypes = []string{}
+	}
 	input := invoke.Input{
 		Service:       in.service,
 		Method:        in.method,
@@ -260,24 +271,15 @@ func splitCallTypes(raw string) []string {
 	return out
 }
 
-// callExecutionPolicy adapts the same environment guardrails and project
-// allowlist the MCP server enforces, so `call` cannot reach targets the
-// MCP tools would reject. Env parsing goes through the shared
-// invoke.EnvFlag/EnvList helpers to keep both entrypoints identical.
+// callExecutionPolicy adapts the environment guardrails the MCP server
+// enforces. Both entry points use the shared invoke.EnvFlag/EnvList helpers.
 func callExecutionPolicy(sources target.Sources) invoke.ExecutionPolicy {
-	allowlist := target.ServiceAllowlistForSources(sources)
-	policy := invoke.ExecutionPolicy{
+	return invoke.ExecutionPolicy{
 		AllowInvoke:         invoke.EnvFlag(invoke.EnvAllowInvoke),
 		AllowTargetOverride: invoke.EnvFlag(invoke.EnvAllowTargetOverride),
 		AllowedTargetHosts:  invoke.EnvList(invoke.EnvAllowedTargetHosts),
 		Sources:             sources,
 	}
-	if allowlist.Configured {
-		policy.AllowedServices = allowlist.Services
-		policy.AllowedServicesConfigured = true
-		policy.AllowedServicesSource = allowlist.Source
-	}
-	return policy
 }
 
 func asCallError(err error) *errcode.Error {

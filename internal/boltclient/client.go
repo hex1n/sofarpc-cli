@@ -35,12 +35,13 @@ const (
 )
 
 type Request struct {
-	RequestID    uint32
-	RequestClass string
-	Header       map[string]string
-	Content      []byte
-	Codec        byte
-	Timeout      time.Duration
+	RequestID      uint32
+	RequestClass   string
+	Header         map[string]string
+	Content        []byte
+	Codec          byte
+	Timeout        time.Duration
+	ConnectTimeout time.Duration
 
 	// MaxResponseBytes caps the variable-length response body. A value <= 0
 	// uses DefaultMaxResponseBytes.
@@ -62,12 +63,17 @@ type Response struct {
 }
 
 func Invoke(ctx context.Context, addr string, req Request) (Response, error) {
+	if req.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
+		defer cancel()
+	}
 	frame, err := EncodeRequest(req)
 	if err != nil {
 		return Response{}, err
 	}
 
-	var dialer net.Dialer
+	dialer := net.Dialer{Timeout: req.ConnectTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return Response{}, fmt.Errorf("dial %s: %w", addr, err)
@@ -78,18 +84,25 @@ func Invoke(ctx context.Context, addr string, req Request) (Response, error) {
 		if err := conn.SetDeadline(deadline); err != nil {
 			return Response{}, fmt.Errorf("set deadline: %w", err)
 		}
-	} else if req.Timeout > 0 {
-		if err := conn.SetDeadline(time.Now().Add(req.Timeout)); err != nil {
-			return Response{}, fmt.Errorf("set deadline: %w", err)
-		}
 	}
 
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
+	defer stop()
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 	if _, err := conn.Write(frame); err != nil {
+		if ctx.Err() != nil {
+			return Response{}, ctx.Err()
+		}
 		return Response{}, fmt.Errorf("write request frame: %w", err)
 	}
 
 	resp, err := ReadResponseWithLimit(conn, req.MaxResponseBytes)
 	if err != nil {
+		if ctx.Err() != nil {
+			return Response{}, ctx.Err()
+		}
 		return Response{}, err
 	}
 	if resp.RequestID != req.RequestID {

@@ -8,15 +8,9 @@ import (
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
 )
 
-const policyDoctorConfig = `{ "allowedServices": ["com.foo.AllowedFacade"] }`
-
-// policyDoctorSources is a direct bolt target with a project allowlist held in
-// memory; it is only valid without a project root, because a root makes the
-// tool scope reload sources from disk.
 func policyDoctorSources() target.Sources {
 	return target.Sources{
-		Env:                target.Config{DirectURL: "bolt://127.0.0.1:1"},
-		ProjectLocalPolicy: target.PolicyConfig{AllowedServices: []string{"com.foo.AllowedFacade"}},
+		Env: target.Config{DirectURL: "bolt://127.0.0.1:1"},
 	}
 }
 
@@ -53,48 +47,9 @@ func requireProjectHint(t *testing.T, check DoctorCheck, tool string) {
 	}
 }
 
-// Conserved: a configured allowlist without a service keeps the check green.
-func TestDoctor_InvokePolicyOkWithoutService(t *testing.T) {
-	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
-	t.Setenv(envAllowedTargetHosts, "")
-	check := invokePolicyCheck(t, policyDoctorSources(), nil)
-	if !check.Ok {
-		t.Fatalf("invoke-policy should pass without a service when the allowlist is configured, got %+v", check)
-	}
-	if !strings.Contains(check.Detail, "pass service to doctor") {
-		t.Fatalf("detail should invite passing a service, got %q", check.Detail)
-	}
-}
-
-// Conserved: the init_project next step is a dry run for the project root.
-func TestDoctor_InvokePolicyInitProjectHintCarriesProject(t *testing.T) {
-	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
-	root := t.TempDir()
-	check := invokePolicyCheck(t, target.Sources{
-		Env:         target.Config{DirectURL: "bolt://127.0.0.1:1"},
-		ProjectRoot: root,
-	}, nil)
-	if check.Ok {
-		t.Fatalf("invoke-policy should fail without project allowedServices, got %+v", check)
-	}
-	if !strings.Contains(check.Detail, "project allowedServices") {
-		t.Fatalf("detail should mention project allowedServices, got %q", check.Detail)
-	}
-	if check.NextStep == nil || check.NextStep.Tool != "sofarpc_init_project" {
-		t.Fatalf("check should point at init_project, got %+v", check.NextStep)
-	}
-	if check.NextStep.Args["dryRun"] != true {
-		t.Fatalf("init_project hint should be a dry run, got %+v", check.NextStep.Args)
-	}
-	requireProjectHint(t, check, "sofarpc_init_project")
-}
-
 // Conserved: project config errors fail the check and point at sofarpc_target for the project.
 func TestDoctor_InvokePolicyReportsProjectConfigErrors(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 	check := projectDoctorCheck(t, `{ not json`, target.Config{DirectURL: "bolt://127.0.0.1:1"}, nil)
 	if check.Ok {
 		t.Fatalf("invoke-policy should fail on project config errors, got %+v", check)
@@ -108,7 +63,6 @@ func TestDoctor_InvokePolicyReportsProjectConfigErrors(t *testing.T) {
 // Conserved: a target the pure-Go path cannot serve fails and points at sofarpc_target, never at doctor itself.
 func TestDoctor_InvokePolicyUnsupportedTargetPointsAtTarget(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowedTargetHosts, "")
 	sources := policyDoctorSources()
 	sources.Env.Protocol = "tr"
@@ -127,7 +81,6 @@ func TestDoctor_InvokePolicyUnsupportedTargetPointsAtTarget(t *testing.T) {
 // Conserved: a direct target host outside the allowlist fails the check.
 func TestDoctor_InvokePolicyRejectsDisallowedTargetHost(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowedTargetHosts, "other.example.internal")
 	check := invokePolicyCheck(t, policyDoctorSources(), nil)
 	if check.Ok {
@@ -160,33 +113,10 @@ func TestDoctor_InvokePolicyReportsDisabledRealInvoke(t *testing.T) {
 	}
 }
 
-// Conserved: a service outside the allowlist fails the check.
-// Intended: doctor already renders the allowlist in this check's data, so the
-// next step is the tool that writes it, not doctor itself and not
-// sofarpc_target, which never renders the allowlist at all.
-func TestDoctor_InvokePolicyDisallowedServicePointsAtInitProject(t *testing.T) {
-	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
-	t.Setenv(envAllowedTargetHosts, "")
-	check := projectDoctorCheck(t, policyDoctorConfig, target.Config{DirectURL: "bolt://127.0.0.1:1"},
-		map[string]any{"service": "com.foo.BlockedFacade"})
-	if check.Ok {
-		t.Fatalf("invoke-policy should fail for a disallowed service, got %+v", check)
-	}
-	if !strings.Contains(check.Detail, "com.foo.BlockedFacade") {
-		t.Fatalf("detail should name the rejected service, got %q", check.Detail)
-	}
-	requireProjectHint(t, check, "sofarpc_init_project")
-	if check.NextStep.Args["dryRun"] != true {
-		t.Fatalf("init_project hint should be a dry run, got %+v", check.NextStep.Args)
-	}
-}
-
 // Intended: a missing target points at sofarpc_target with the project root when known.
 func TestDoctor_InvokePolicyMissingTargetCarriesProject(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
-	check := projectDoctorCheck(t, policyDoctorConfig, target.Config{}, nil)
+	check := projectDoctorCheck(t, `{}`, target.Config{}, nil)
 	if check.Ok {
 		t.Fatalf("invoke-policy should fail without an executable target, got %+v", check)
 	}
@@ -202,7 +132,6 @@ func TestDoctor_InvokePolicyMissingTargetCarriesProject(t *testing.T) {
 // Intended: the validators' order decides which failure is reported first.
 func TestDoctor_InvokePolicyConfigErrorsPrecedeDisabledInvoke(t *testing.T) {
 	t.Setenv(envAllowInvoke, "false")
-	t.Setenv(envAllowedServices, "")
 	check := projectDoctorCheck(t, `{ not json`, target.Config{DirectURL: "bolt://127.0.0.1:1"}, nil)
 	if check.Ok {
 		t.Fatalf("invoke-policy should fail, got %+v", check)
@@ -216,7 +145,6 @@ func TestDoctor_InvokePolicyConfigErrorsPrecedeDisabledInvoke(t *testing.T) {
 // order a real invoke reaches them (policy first, wire path last).
 func TestDoctor_InvokePolicyHostRulePrecedesTransportRule(t *testing.T) {
 	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
 	t.Setenv(envAllowedTargetHosts, "other.example.internal")
 	sources := policyDoctorSources()
 	sources.Env.Protocol = "tr"
@@ -226,23 +154,6 @@ func TestDoctor_InvokePolicyHostRulePrecedesTransportRule(t *testing.T) {
 	}
 	if !strings.Contains(check.Detail, "host") {
 		t.Fatalf("the host rule should be reported before the transport rule, got %q", check.Detail)
-	}
-}
-
-// Intended: an allowlist configured as empty still counts as configured, so
-// doctor invites a service instead of silently reporting a clean policy.
-func TestDoctor_InvokePolicyInvitesServiceForEmptyConfiguredAllowlist(t *testing.T) {
-	t.Setenv(envAllowInvoke, "true")
-	t.Setenv(envAllowedServices, "")
-	t.Setenv(envAllowedTargetHosts, "")
-	sources := policyDoctorSources()
-	sources.ProjectLocalPolicy = target.PolicyConfig{AllowedServicesSet: true}
-	check := invokePolicyCheck(t, sources, nil)
-	if !check.Ok {
-		t.Fatalf("an empty configured allowlist should still pass without a service, got %+v", check)
-	}
-	if !strings.Contains(check.Detail, "pass service to doctor") {
-		t.Fatalf("detail should invite passing a service, got %q", check.Detail)
 	}
 }
 

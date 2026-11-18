@@ -1,6 +1,9 @@
 package mcp
 
 import (
+	"fmt"
+	"github.com/hex1n/sofarpc-cli/internal/errcode"
+	"github.com/hex1n/sofarpc-cli/internal/sofarpcwire"
 	"testing"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
@@ -155,4 +158,34 @@ func containsString(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestInvokeUsesConfiguredProfileWithoutAuthorizingArchivedProfile(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowTargetOverride, "false")
+	t.Setenv(envAllowedTargetHosts, "127.0.0.1")
+	content, err := sofarpcwire.BuildSuccessResponse("ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	url, stop := fakeDirectServer(t, content)
+	defer stop()
+	project := t.TempDir()
+	writeOpenFile(t, project, ".sofarpc/config.json", fmt.Sprintf(`{
+        "defaultProfile": "default", "profiles": {
+            "default": {"directUrl": "bolt://127.0.0.1:1"}, "selected": {"directUrl": %q}
+        }
+    }`, url))
+	input := map[string]any{
+		"project": project, "profile": "selected",
+		"service": "com.foo.Svc", "method": "ping", "types": []string{}, "args": []any{},
+	}
+	out := callInvoke(t, Options{}, input)
+	if !out.Ok || out.Result != "ok" {
+		t.Fatalf("configured profile invoke: %+v", out)
+	}
+	replay := callReplay(t, Options{}, map[string]any{"project": project, "payload": out.Plan})
+	if replay.Error == nil || replay.Error.Code != errcode.InvocationRejected {
+		t.Fatalf("archived profile unexpectedly authorized target: %+v", replay)
+	}
 }

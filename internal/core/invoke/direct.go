@@ -2,6 +2,7 @@ package invoke
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -68,6 +69,10 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
+	connectTimeout := time.Duration(plan.Target.ConnectTimeoutMS) * time.Millisecond
+	if connectTimeout <= 0 {
+		connectTimeout = time.Second
+	}
 	maxResponseBytes := maxResponseBytesFromEnv()
 	requestID := nextRequestID()
 	// A fresh trace per execution, not per plan: plans are replayable
@@ -102,6 +107,7 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		Addr:             addr,
 		Codec:            boltclient.CodecHessian2,
 		Timeout:          timeout,
+		ConnectTimeout:   connectTimeout,
 		RequestID:        requestID,
 		MaxResponseBytes: maxResponseBytes,
 	})
@@ -183,7 +189,10 @@ func classifyDirectInvokeError(phase, directURL string, err error) *errcode.Erro
 	human := fmt.Sprintf("invoke direct target %s: %v", directURL, err)
 
 	switch {
-	case strings.Contains(msg, "context deadline exceeded"),
+	case errors.Is(err, context.Canceled):
+		return errcode.New(errcode.InvocationCanceled, phase, human)
+	case errors.Is(err, context.DeadlineExceeded),
+		strings.Contains(msg, "context deadline exceeded"),
 		strings.Contains(msg, "timeout"),
 		strings.Contains(msg, "i/o timeout"):
 		return errcode.New(errcode.InvocationTimeout, phase, human).

@@ -101,10 +101,7 @@ func TestExecutePlanWithPolicyReturnsRuntimeBusy(t *testing.T) {
 
 	result := executePlanWithPolicy(context.Background(), plan, "replay", target.Sources{
 		Env: target.Config{DirectURL: plan.Target.DirectURL},
-		ProjectPolicy: target.PolicyConfig{
-			AllowedServices: []string{plan.Service},
-		},
-	}, nil, limiter)
+	}, "", nil, limiter)
 	if result.Err == nil {
 		t.Fatal("expected busy error")
 	}

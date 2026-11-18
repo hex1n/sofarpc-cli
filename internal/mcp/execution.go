@@ -13,8 +13,10 @@ type planExecutionResult struct {
 	Rejected bool
 }
 
-func executePlanWithPolicy(ctx context.Context, plan invoke.Plan, phase string, sources target.Sources, capture *PlanCaptureResult, limiter *InvokeLimiter) planExecutionResult {
-	if err := validateExecutionPolicy(plan, phase, sources); err != nil {
+func executePlanWithPolicy(ctx context.Context, plan invoke.Plan, phase string, sources target.Sources, profile string, capture *PlanCaptureResult, limiter *InvokeLimiter) planExecutionResult {
+	policy := executionPolicyFromEnv(sources)
+	policy.RequestedProfile = profile
+	if err := policy.Validate(plan, phase); err != nil {
 		return planExecutionResult{
 			Err:      err,
 			Rejected: true,
@@ -48,33 +50,13 @@ func planExecutionErrorText(phase string, result planExecutionResult) string {
 	return errorText(prefix, result.Err)
 }
 
-func validateExecutionPolicy(plan invoke.Plan, phase string, sources target.Sources) error {
-	return executionPolicyFromEnv(sources).Validate(plan, phase)
-}
-
-func validateRealInvoke(service string) error {
-	return executionPolicyFromEnv(target.Sources{}).ValidateRealInvoke(service, "invoke")
-}
-
 func executionPolicyFromEnv(sources target.Sources) invoke.ExecutionPolicy {
-	allowedServices, allowedServicesConfigured, allowedServicesSource := allowedServicesForSources(sources)
 	return invoke.ExecutionPolicy{
-		AllowInvoke:               invoke.EnvFlag(envAllowInvoke),
-		AllowedServices:           allowedServices,
-		AllowedServicesConfigured: allowedServicesConfigured,
-		AllowedServicesSource:     allowedServicesSource,
-		AllowTargetOverride:       invoke.EnvFlag(envAllowTargetOverride),
-		AllowedTargetHosts:        invoke.EnvList(envAllowedTargetHosts),
-		Sources:                   sources,
+		AllowInvoke:         invoke.EnvFlag(envAllowInvoke),
+		AllowTargetOverride: invoke.EnvFlag(envAllowTargetOverride),
+		AllowedTargetHosts:  invoke.EnvList(envAllowedTargetHosts),
+		Sources:             sources,
 	}
-}
-
-func allowedServicesForSources(sources target.Sources) ([]string, bool, string) {
-	allowlist := target.ServiceAllowlistForSources(sources)
-	if allowlist.Configured {
-		return allowlist.Services, true, allowlist.Source
-	}
-	return nil, false, ""
 }
 
 func capturePlanForSession(sessions *SessionStore, sessionID string, plan invoke.Plan) *PlanCaptureResult {

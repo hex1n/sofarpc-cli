@@ -69,14 +69,14 @@ func registerReplay(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		// Plans captured before nested type names were fixed carry dot-form
 		// names in both Args (@type) and ParamTypes (methodArgSigs). Rescue
 		// them on a copy right before execution: the reported Plan keeps the
-		// captured spelling, and an unresolvable store leaves everything
-		// exactly as captured.
+		// captured spelling. Erase source generic arguments even without a store.
 		execPlan := *plan
-		if store := toolCtx.Contract.store; store != nil {
+		store := toolCtx.Contract.store
+		if store != nil {
 			execPlan.Args = contract.RewriteWireTypeNames(execPlan.Args, store)
-			execPlan.ParamTypes = contract.WireParamTypes(execPlan.ParamTypes, store)
 		}
-		execution := executePlanWithPolicy(ctx, execPlan, "replay", toolSources, nil, opts.InvokeLimiter)
+		execPlan.ParamTypes = contract.WireParamTypes(execPlan.ParamTypes, store)
+		execution := executePlanWithPolicy(ctx, execPlan, "replay", toolSources, "", nil, opts.InvokeLimiter)
 		if execution.Err != nil {
 			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: execution.Outcome.Diagnostics, Error: asErrcodeError(execution.Err)}
 			return invokeToolResultWithLinks(out, planExecutionErrorText("replay", execution), true, replayResourceLinks(in.SessionID, source)...), nil

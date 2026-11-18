@@ -44,21 +44,6 @@ func TestRunSetup_ProjectProfileWritesWithoutAllowedServices(t *testing.T) {
 	}
 }
 
-func TestRunSetup_ProjectProfileRejectsAllowedServices(t *testing.T) {
-	root := t.TempDir()
-	err := runSetup([]string{
-		"--scope=project",
-		"--project-root", root,
-		"--local",
-		"--profile", "test",
-		"--direct-url", "bolt://test-host:12200",
-		"--allowed-services", "com.foo.Svc",
-	})
-	if err == nil || !strings.Contains(err.Error(), "--allowed-services") {
-		t.Fatalf("profile mode should reject --allowed-services, got %v", err)
-	}
-}
-
 func TestRunSetup_SetDefaultWithoutProfileErrors(t *testing.T) {
 	root := t.TempDir()
 	err := runSetup([]string{
@@ -67,7 +52,6 @@ func TestRunSetup_SetDefaultWithoutProfileErrors(t *testing.T) {
 		"--local",
 		"--set-default",
 		"--direct-url", "bolt://host:12200",
-		"--allowed-services", "com.foo.Svc",
 	})
 	if err == nil || !strings.Contains(err.Error(), "--set-default requires --profile") {
 		t.Fatalf("--set-default without --profile should error, got %v", err)

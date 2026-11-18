@@ -17,7 +17,6 @@ import (
 
 const (
 	envAllowInvoke         = invoke.EnvAllowInvoke
-	envAllowedServices     = invoke.EnvAllowedServices
 	envAllowTargetOverride = invoke.EnvAllowTargetOverride
 	envAllowedTargetHosts  = invoke.EnvAllowedTargetHosts
 	contractModeAuto       = "auto"
@@ -132,7 +131,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		}
 
 		notifyToolProgress(ctx, req, 4, 5, "executing invoke plan")
-		execution := executePlanWithPolicy(ctx, plan, "invoke", toolSources, capture, opts.InvokeLimiter)
+		execution := executePlanWithPolicy(ctx, plan, "invoke", toolSources, profile, capture, opts.InvokeLimiter)
 		if execution.Err != nil {
 			out := InvokeOutput{Plan: &plan, Diagnostics: execution.Outcome.Diagnostics, Error: asErrcodeError(execution.Err)}
 			return invokeToolResultWithLinks(out, planExecutionErrorText("invoke", execution), true, links...), nil
