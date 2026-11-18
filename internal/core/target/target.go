@@ -532,11 +532,11 @@ func FormatConfigErrors(errors []ConfigError) string {
 // SupportsDirectBolt reports whether cfg picks out the single concrete
 // invoke shape the pure-Go runtime can execute today. Empty Protocol /
 // Serialization are treated as "accept defaults"; callers that want to
-// surface a precise reason to the user should read cfg.Protocol /
-// cfg.Serialization directly after calling this.
+// surface a precise reason to the user should inspect the direct URL scheme,
+// protocol, and serialization.
 func SupportsDirectBolt(cfg Config) bool {
 	cfg = Normalize(cfg)
-	if cfg.Mode != ModeDirect || cfg.DirectURL == "" {
+	if cfg.Mode != ModeDirect || cfg.DirectURL == "" || IsTRDirectURL(cfg.DirectURL) {
 		return false
 	}
 	if cfg.Protocol != "" && cfg.Protocol != defaultProtocol {

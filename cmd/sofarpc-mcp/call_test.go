@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/core/invoke"
 	"github.com/hex1n/sofarpc-cli/internal/errcode"
@@ -82,6 +84,84 @@ func TestRunCall_RealInvokeRequiresOptIn(t *testing.T) {
 			}
 			if out.Plan == nil {
 				t.Fatal("rejected call should still print the plan for inspection")
+			}
+		})
+	}
+}
+
+func TestRunCall_RejectsTRURLBeforeDial(t *testing.T) {
+	t.Setenv(invoke.EnvAllowInvoke, "true")
+	t.Setenv(invoke.EnvAllowTargetOverride, "false")
+	t.Setenv(invoke.EnvAllowedTargetHosts, "127.0.0.1")
+
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	for _, tc := range []struct {
+		name     string
+		scheme   string
+		protocol string
+	}{
+		{name: "default-protocol", scheme: "tr"},
+		{name: "explicit-bolt", scheme: "TR", protocol: "bolt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, ".sofarpc")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			config := map[string]string{"directUrl": tc.scheme + "://" + listener.Addr().String()}
+			if tc.protocol != "" {
+				config["protocol"] = tc.protocol
+			}
+			data, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{
+				"-project", root, "-service", "com.foo.UserFacade",
+				"-method", "ping", "-types=", "-args", "[]", "-timeout-ms", "100",
+			}
+
+			var buf bytes.Buffer
+			if err := runCall(&buf, append(args, "-dry-run")); err != nil {
+				t.Fatalf("dry-run should preserve the plan: %v", err)
+			}
+			preview := decodeCallOutput(t, buf.Bytes())
+			if !preview.Ok || preview.Plan == nil || preview.Preflight == nil {
+				t.Fatalf("dry-run should report the plan and preflight: %+v", preview)
+			}
+			check := preview.Preflight
+			if check.Ready || check.PolicyError != nil || check.ExecutionError == nil ||
+				check.ExecutionError.Code != errcode.InvocationRejected ||
+				!strings.Contains(check.ExecutionError.Message, "tr://") {
+				t.Errorf("expected a TR transport rejection in preflight: %s", buf.String())
+			}
+
+			buf.Reset()
+			err = runCall(&buf, args)
+			live := decodeCallOutput(t, buf.Bytes())
+			if err == nil || live.Error == nil || live.Error.Code != errcode.InvocationRejected ||
+				!strings.Contains(live.Error.Message, "tr://") {
+				t.Errorf("expected a TR transport rejection for a live call: %s", buf.String())
+			}
+			if err := listener.SetDeadline(time.Now().Add(25 * time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+			conn, err := listener.AcceptTCP()
+			if err == nil {
+				conn.Close()
+				t.Fatal("the CLI dialed a TR address")
+			}
+			if !os.IsTimeout(err) {
+				t.Fatalf("unexpected accept error: %v", err)
 			}
 		})
 	}

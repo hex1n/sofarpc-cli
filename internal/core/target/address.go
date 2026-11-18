@@ -9,6 +9,12 @@ import (
 
 const DefaultBoltPort = "12200"
 
+// IsTRDirectURL reports whether the address explicitly selects the TR protocol.
+func IsTRDirectURL(raw string) bool {
+	scheme, _, hasScheme := strings.Cut(strings.TrimSpace(raw), "://")
+	return hasScheme && strings.EqualFold(scheme, "tr")
+}
+
 // ParseDirectDialAddress canonicalizes a direct SOFARPC target into host:port.
 // It accepts bolt://host[:port], host[:port], and bracketed IPv6 literals.
 func ParseDirectDialAddress(raw string) (string, error) {

@@ -65,9 +65,12 @@ func Execute(ctx context.Context, plan Plan, phase string) (Outcome, error) {
 }
 
 func unsupportedTargetError(phase string, plan Plan) *errcode.Error {
-	return errcode.New(errcode.InvocationRejected, phase,
-		fmt.Sprintf("pure-Go invoke supports only direct+bolt+hessian2; got mode=%s protocol=%s serialization=%s",
-			plan.Target.Mode, plan.Target.Protocol, plan.Target.Serialization)).
+	message := fmt.Sprintf("pure-Go invoke supports only direct+bolt+hessian2; got mode=%s protocol=%s serialization=%s",
+		plan.Target.Mode, plan.Target.Protocol, plan.Target.Serialization)
+	if target.IsTRDirectURL(plan.Target.DirectURL) {
+		message = "directUrl uses the tr:// scheme. Pure-Go invoke supports only direct+bolt+hessian2."
+	}
+	return errcode.New(errcode.InvocationRejected, phase, message).
 		WithHint("sofarpc_target", map[string]any{"explain": true},
 			"inspect the resolved target protocol and serialization")
 }
