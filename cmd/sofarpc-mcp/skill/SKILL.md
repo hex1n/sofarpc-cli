@@ -1,19 +1,49 @@
 ---
 name: sofarpc-invoke
-description: Guides agents through using the sofarpc-mcp MCP tools and prompts to plan, invoke, replay, and diagnose SOFARPC Java facade calls. Use when the user asks an agent to call, test, debug, replay, inspect, or pass gateway-carried context/request baggage for a Java facade/service through SOFARPC/BOLT, or when target, contract, payload-shape, invocationProperties, replay, or real-invoke guardrail errors occur.
+description: Plan, invoke, replay, and diagnose SOFARPC Java facade calls through MCP or the sofarpc-mcp CLI. Use when the user asks an agent to call, test, debug, replay, inspect, or pass gateway-carried context/request baggage for a Java facade/service through SOFARPC/BOLT, or when target, contract, payload-shape, invocationProperties, replay, or real-invoke guardrail errors occur.
 ---
 
 # sofarpc-invoke
 
-Use the MCP tools for execution and the MCP prompts as workflow shortcuts. If Java sources changed, reopen the project with `refreshContract: true`. Prompts can scaffold bootstrap, dry-run, or diagnosis steps, but they do not execute calls by themselves.
+## Choose MCP Or CLI
 
-## Quick Start
+Follow the user's requested path. Otherwise, choose based on what the task needs and what the agent can access.
+
+- Use **MCP** for workspace discovery, target and contract diagnostics, per-call `invocationProperties`, or work with an existing session or resource link.
+- Use **CLI** when the binary is available in the shell and the project and call details are already known. This fits one-shot calls, local argument files, and saved plans, including when MCP is unavailable.
+
+You can inspect with MCP and use a saved plan with CLI. MCP and the shell can inherit different real-invoke settings and baggage environment variables. Once you choose a path for execution, use it for the preflight and live call.
+
+## Plan Before Executing
+
+1. Start with MCP `dryRun: true` or CLI `-dry-run`. For a preview-only request, use the existing environment.
+2. When the user explicitly authorizes a live CLI call and `SOFARPC_ALLOW_INVOKE` is absent, pass `SOFARPC_ALLOW_INVOKE=true` only in the child process environment for both preflight and execution. Preserve any existing value, including `false` or an empty value. An MCP call uses the server's configured environment.
+3. Check `ok` for plan creation and `preflight.ready` for local readiness. If policy or execution checks fail, report the specific `preflight.policyError` or `preflight.executionError` and stop the attempt. Keep the selected path when a policy rejects the call.
+4. After a successful preflight with live-call authorization, execute using the same project, profile, target, payload or saved plan, and environment. Set MCP `dryRun: false` or omit CLI `-dry-run`. The user's authorization for that call covers this step.
+
+Preflight covers local policy, plan, and target address checks. TCP reachability, baggage env resolution, and wire encoding are checked separately.
+
+## CLI Workflow
+
+Run `sofarpc-mcp call` through the shell. Pass `-project` to select the Java checkout and `-profile` to choose a named target profile for a new call. Pass comma-separated Java type names in `-types` to select the overload. Explicit types and arguments also allow a trusted fallback when the contract cannot be resolved. Use `-args-file` with a JSON array file for complex arguments. For a zero-argument dry run:
+
+```powershell
+sofarpc-mcp call -project . -profile dev -service com.example.DemoFacade -method ping -types= -args '[]' -dry-run
+```
+
+Preview a saved plan with `sofarpc-mcp call -project . -plan plan.json -dry-run`. The plan carries its resolved target and the selected project's current policy still applies. Read plan and execution results as JSON on stdout, including structured failures on an unsuccessful exit.
+
+To pass a child-only variable on a POSIX shell, prefix the invocation with `SOFARPC_ALLOW_INVOKE=true`. In PowerShell, a subprocess launcher can set the variable in `ProcessStartInfo.Environment` and pass flags through `ArgumentList`. Use the same child environment for the dry run and authorized live call.
+
+## MCP Workflow
+
+If Java sources changed, reopen the project with `refreshContract: true`. MCP prompts can scaffold bootstrap, dry-run, or diagnosis steps. Use tools to execute the resulting steps.
 
 1. Run `sofarpc_init_project` when a Java checkout has no `.sofarpc/config*.json`; use `dryRun: true` first if project scope is unclear.
 2. Run `sofarpc_open` and keep the returned `sessionId`.
 3. Run `sofarpc_target` with `explain: true` when target layers or reachability are unclear.
 4. Run `sofarpc_describe` when contract data is available; reuse returned `types` to disambiguate overloads.
-5. Run `sofarpc_invoke` with `dryRun: true` first unless the user explicitly asks for a live call and the payload is low risk.
+5. Run `sofarpc_invoke` using the selected overload and the appropriate dry-run setting.
 6. Inspect resource links such as `sofarpc://session/{sessionId}/plan` when returned.
 7. Run `sofarpc_replay` only after understanding the saved plan and any edits.
 
@@ -24,14 +54,14 @@ Useful prompts:
 
 ## Project And Safety
 
-Most tools accept `sessionId`, `project`, or `cwd`. Prefer `sessionId` after `sofarpc_open`; use `project` or `cwd` to select an ad hoc repository. Inspect `.sofarpc/config.json` and `.sofarpc/config.local.json` when behavior depends on config.
+Most MCP tools accept `sessionId`, `project`, or `cwd`. Prefer `sessionId` after `sofarpc_open`; use `project` or `cwd` to select an ad hoc repository. Inspect `.sofarpc/config.json` and `.sofarpc/config.local.json` when behavior depends on config.
 
 Before a real invoke:
 - Identify the exact service, method, and overload `types`.
 - Use contract-derived argument names, Java types, and overloads.
-- Send explicit `args` as an inline JSON array before executing a parameterized method. Use `types: []` and `args: []` for a zero-argument trusted call.
+- Send an explicit argument array before executing a parameterized method. In MCP, use `types: []` and `args: []` for a zero-argument trusted call.
 - Confirm side effects with the user unless the request already explicitly asks for the call.
-- Treat retries and replay as live calls when `dryRun` is false.
+- Treat retries and replay as live calls whenever dry-run is disabled.
 
 Do not send speculative payloads to production-like targets. Real calls require `SOFARPC_ALLOW_INVOKE=true`; per-call target overrides require `SOFARPC_ALLOW_TARGET_OVERRIDE=true`.
 
@@ -76,9 +106,9 @@ Never put secrets in literal `value` entries. Prefer `env`, run `sofarpc_doctor`
 
 ## Trace Correlation
 
-Every real invoke and replay generates a SOFATracer trace context, sends it as `SofaRequest.requestProps["rpc_trace_context"]`, and returns it as `diagnostics.traceId`. A provider running SOFATracer adopts that id for its server span, so search its digest and business logs by that exact string; calls arrive tagged with caller app `sofarpc-cli`.
+When a real invoke or replay reaches the transport, it creates a SOFATracer trace context and sets `SofaRequest.requestProps["rpc_trace_context"]`. A provider running SOFATracer adopts the ID for its server span. Use the exact `diagnostics.traceId` to search its digest and business logs. Calls arrive tagged with caller app `sofarpc-cli`.
 
-`traceId` is also reported when the invoke fails on the wire, which is when it matters most: on `runtime.timeout` the request most likely did reach the provider, so report the id with the error instead of asking the user to guess a time window. It is reported on `target.connect-failed` and `target.invalid` too, but nothing left the client there, so a provider log search by that id will find nothing — fix the target first. Each execution mints its own trace, so a replay never reuses the original call's id.
+On MCP failure, read the first text block for the error code, phase, available attempt details, and suggested diagnostic. For CLI, use the `error` and `diagnostics` JSON fields. Report the available trace ID with the error. Use `requestState` to decide where to look. For `not-sent`, diagnose the local failure stage first. For `write-uncertain`, `request-written`, or `response-received`, correlate available provider logs by trace ID before considering a retry. `request-written` means the full request was accepted by the local socket. Each execution creates a fresh trace ID.
 
 ## Replay And Resources
 
@@ -93,7 +123,7 @@ Replay supports v2 saved plans. Legacy v1 plans are intentionally rejected. If s
 - `input.args-invalid`, `contract.method-ambiguous`, or `runtime.serialize-failed`: fix payload shape, send `args` as an array, match Java parameter names inside DTO objects, and preserve list/map nesting.
 - Java type mismatch: check primitives, boxed types, enums, arrays, and date/time representations.
 - `invocationProperties` validation or missing env: check key names, remove mixed entry modes, export required env vars, then run `sofarpc_doctor`.
-- Transport errors: verify address, protocol, timeout, and direct-vs-registry target mode. On `runtime.timeout` quote `diagnostics.traceId` so provider logs can be searched for the request; on `target.connect-failed` the request never left the client, so fix the target instead of searching logs.
+- Transport errors require the resolved address, protocol, and timeout settings. Follow the diagnostic hint with its project and profile, then use the attempt state to decide whether provider logs can help.
 - Hessian/BOLT mismatch: inspect target protocol and contract before forcing a wire mode.
 - Replay failure: read the saved plan resource before retrying and confirm whether the call is still safe.
 
@@ -101,6 +131,6 @@ Replay supports v2 saved plans. Legacy v1 plans are intentionally rejected. If s
 
 - Prefer MCP resources over pasted logs when resource links are available.
 - Keep dry-run plans redacted when they include env-backed invocation properties.
-- Do not claim a call succeeded unless the MCP result shows a successful real invoke.
-- Summarize target, method, dry-run status, and session id in user-facing results.
+- Claim call success only when the live MCP or CLI result confirms it. Check the business response when the task expects a specific outcome.
+- Summarize target, method, dry-run status, and session id when available.
 - When blocked, report the exact tool error code, the rejected field, and the next corrective action.

@@ -300,7 +300,42 @@ func TestInvokeCancelsDuringResponseRead(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("want cancellation, got %v", err)
 		}
+		var attempt *AttemptError
+		if !errors.As(err, &attempt) || attempt.Stage != StageRead || attempt.RequestState != RequestWritten {
+			t.Fatalf("canceled read attempt: %#v", attempt)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancellation did not interrupt the response read")
 	}
+}
+
+func TestWriteRequestFrameReportsProgressOnError(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		n     int
+		state string
+	}{
+		{name: "zero bytes", n: 0, state: RequestWriteUnknown},
+		{name: "partial write", n: 1, state: RequestWriteUnknown},
+		{name: "complete write", n: 2, state: RequestWritten},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := writeRequestFrame(context.Background(), failingWriter{n: test.n}, []byte("ok"))
+			var attempt *AttemptError
+			if !errors.As(err, &attempt) || attempt.Stage != StageWrite || attempt.RequestState != test.state {
+				t.Fatalf("write attempt: %#v", attempt)
+			}
+			if !errors.Is(err, io.ErrClosedPipe) {
+				t.Fatalf("write cause: got %v want %v", err, io.ErrClosedPipe)
+			}
+		})
+	}
+}
+
+type failingWriter struct {
+	n int
+}
+
+func (w failingWriter) Write([]byte) (int, error) {
+	return w.n, io.ErrClosedPipe
 }

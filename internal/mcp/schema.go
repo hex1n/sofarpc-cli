@@ -14,7 +14,7 @@ func invokeInputSchema() map[string]any {
 		"profile":              stringSchema("Select a Target Profile for this call. Outranks the session profile and the project's defaultProfile; empty falls back to them. A named-but-undefined profile is a hard error."),
 		"directUrl":            stringSchema("Optional direct BOLT URL, for example bolt://host:12200."),
 		"timeoutMs":            integerSchema("Optional invoke timeout in milliseconds."),
-		"dryRun":               booleanSchema("When true, return the resolved plan without executing the request."),
+		"dryRun":               booleanSchema("When true, return the resolved plan and local execution checks without contacting the target."),
 		"trusted":              booleanSchema("When true, force trusted mode and require service, method, types, and args from the caller."),
 		"contractMode":         stringSchema("Contract behavior: auto (default), strict, or trusted."),
 		"sessionId":            stringSchema("Optional session id used for project/session-scoped contract loading and plan capture."),
@@ -36,6 +36,7 @@ func invokeOutputSchema() map[string]any {
 	return objectSchema(map[string]any{
 		"ok":          booleanSchema("True when the invocation or dry-run plan was produced successfully."),
 		"plan":        objectPropertySchema("Resolved invocation plan, present for dry-runs and real execution attempts that reached planning."),
+		"preflight":   preflightOutputSchema(),
 		"result":      anyPropertySchema("Raw transport result returned by the target service."),
 		"diagnostics": objectPropertySchema("Execution policy, capture, and transport diagnostics."),
 		"error":       objectPropertySchema("Structured error details when invocation planning or execution fails."),
@@ -47,9 +48,18 @@ func replayOutputSchema() map[string]any {
 		"ok":          booleanSchema("True when the replay dry-run or execution completed successfully."),
 		"source":      stringSchema("Where the replay plan came from: session or payload."),
 		"plan":        objectPropertySchema("Replayable invocation plan."),
+		"preflight":   preflightOutputSchema(),
 		"result":      anyPropertySchema("Raw transport result returned by the target service."),
 		"diagnostics": objectPropertySchema("Execution policy and transport diagnostics."),
 		"error":       objectPropertySchema("Structured error details when replay planning or execution fails."),
+	})
+}
+
+func preflightOutputSchema() map[string]any {
+	return objectSchema(map[string]any{
+		"ready":          booleanSchema("The local policy, plan, and target address checks passed. Does not test TCP reachability, resolve baggage env values, or encode the wire request."),
+		"policyError":    objectPropertySchema("Local execution policy rejected the plan."),
+		"executionError": objectPropertySchema("Local plan or direct transport check failed."),
 	})
 }
 

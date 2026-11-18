@@ -54,14 +54,22 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		return DirectExecution{}, nil
 	}
 
+	diagnostics := map[string]any{
+		"transport":    DirectTransportName,
+		"target":       plan.Target.DirectURL,
+		"stage":        "prepare",
+		"requestState": boltclient.RequestNotSent,
+	}
+	execution := DirectExecution{Handled: true, Diagnostics: diagnostics}
+
 	requestBaggage, err := invocationprops.Resolve(plan.InvocationProperties, os.LookupEnv)
 	if err != nil {
-		return DirectExecution{Handled: true}, invocationPropertiesInvalidError(phase, err)
+		return execution, invocationPropertiesInvalidError(phase, err)
 	}
 
 	addr, err := target.ParseDirectDialAddress(plan.Target.DirectURL)
 	if err != nil {
-		return DirectExecution{Handled: true}, targetInvalidError(phase,
+		return execution, targetInvalidError(phase,
 			fmt.Sprintf("invalid directUrl %q: %v", plan.Target.DirectURL, err))
 	}
 
@@ -83,15 +91,11 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 	// These describe the attempt rather than its outcome, so they are
 	// built before the wire call: a timeout is exactly when the caller
 	// needs traceId to find the request in the provider's logs.
-	diagnostics := map[string]any{
-		"transport":        DirectTransportName,
-		"target":           plan.Target.DirectURL,
-		"dialTarget":       addr,
-		"requestId":        requestID,
-		"requestCodec":     boltclient.CodecHessian2,
-		"traceId":          trace.TraceID,
-		"maxResponseBytes": maxResponseBytes,
-	}
+	diagnostics["dialTarget"] = addr
+	diagnostics["requestId"] = requestID
+	diagnostics["requestCodec"] = boltclient.CodecHessian2
+	diagnostics["traceId"] = trace.TraceID
+	diagnostics["maxResponseBytes"] = maxResponseBytes
 
 	result, err := sofarpcwire.InvokeDirect(ctx, sofarpcwire.RequestSpec{
 		Service:        plan.Service,
@@ -112,10 +116,16 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 		MaxResponseBytes: maxResponseBytes,
 	})
 	if err != nil {
-		return DirectExecution{Handled: true, Diagnostics: diagnostics},
-			classifyDirectInvokeError(phase, plan.Target.DirectURL, err)
+		var attempt *boltclient.AttemptError
+		if errors.As(err, &attempt) {
+			diagnostics["stage"] = attempt.Stage
+			diagnostics["requestState"] = attempt.RequestState
+		}
+		return execution, classifyDirectInvokeError(phase, plan.Target.DirectURL, err)
 	}
 
+	diagnostics["stage"] = "decode"
+	diagnostics["requestState"] = "response-received"
 	diagnostics["requestClass"] = result.Request.Class
 	diagnostics["targetServiceUniqueName"] = result.Request.TargetServiceUniqueName
 	diagnostics["responseStatus"] = result.Response.ResponseStatus
@@ -130,40 +140,35 @@ func ExecuteDirectIfPossible(ctx context.Context, plan Plan, phase string) (Dire
 	}
 
 	if result.DecodeErr != nil {
-		return DirectExecution{Handled: true, Diagnostics: diagnostics},
-			errcode.New(errcode.DeserializeFailed, phase,
-				fmt.Sprintf("decode SOFARPC response: %v", result.DecodeErr))
+		return execution, errcode.New(errcode.DeserializeFailed, phase,
+			fmt.Sprintf("decode SOFARPC response: %v", result.DecodeErr))
 	}
 	if result.Decoded == nil {
-		return DirectExecution{Handled: true, Diagnostics: diagnostics},
-			errcode.New(errcode.DeserializeFailed, phase,
-				"direct target returned no decodable payload")
+		return execution, errcode.New(errcode.DeserializeFailed, phase,
+			"direct target returned no decodable payload")
 	}
 	if result.Decoded.IsError {
+		diagnostics["stage"] = "response"
 		msg := strings.TrimSpace(result.Decoded.ErrorMsg)
 		if msg == "" {
 			msg = "remote response flagged isError=true"
 		}
-		return DirectExecution{Handled: true, Diagnostics: diagnostics},
-			errcode.New(errcode.InvocationRejected, phase, msg)
+		return execution, errcode.New(errcode.InvocationRejected, phase, msg)
 	}
 	if msg := strings.TrimSpace(result.Decoded.ErrorMsg); msg != "" {
-		return DirectExecution{Handled: true, Diagnostics: diagnostics},
-			errcode.New(errcode.InvocationRejected, phase, msg)
+		diagnostics["stage"] = "response"
+		return execution, errcode.New(errcode.InvocationRejected, phase, msg)
 	}
 
 	formatted, err := sofarpcwire.FormatValueSafe(result.Decoded.AppResponse)
 	if err != nil {
-		return DirectExecution{Handled: true, Diagnostics: diagnostics},
-			errcode.New(errcode.DeserializeFailed, phase,
-				fmt.Sprintf("format SOFARPC response: %v", err))
+		return execution, errcode.New(errcode.DeserializeFailed, phase,
+			fmt.Sprintf("format SOFARPC response: %v", err))
 	}
 
-	return DirectExecution{
-		Handled:     true,
-		Result:      formatted,
-		Diagnostics: diagnostics,
-	}, nil
+	diagnostics["stage"] = "complete"
+	execution.Result = formatted
+	return execution, nil
 }
 
 func maxResponseBytesFromEnv() int64 {

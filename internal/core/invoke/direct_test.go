@@ -75,6 +75,9 @@ func TestExecuteDirectIfPossible_RoundTrip(t *testing.T) {
 	if !exec.Handled {
 		t.Fatal("direct target should be handled")
 	}
+	if exec.Diagnostics["stage"] != "complete" || exec.Diagnostics["requestState"] != "response-received" {
+		t.Fatalf("round-trip diagnostics: %#v", exec.Diagnostics)
+	}
 	if transport, _ := exec.Diagnostics["transport"].(string); transport != DirectTransportName {
 		t.Fatalf("transport: got %q want %q", transport, DirectTransportName)
 	}
@@ -97,7 +100,7 @@ func TestExecuteDirectIfPossible_RoundTrip(t *testing.T) {
 }
 
 func TestExecuteDirectIfPossible_InvalidTargetReturnsErrcode(t *testing.T) {
-	_, err := ExecuteDirectIfPossible(context.Background(), Plan{
+	exec, err := ExecuteDirectIfPossible(context.Background(), Plan{
 		Service:    "com.foo.Svc",
 		Method:     "doThing",
 		ParamTypes: []string{"java.lang.String"},
@@ -116,6 +119,9 @@ func TestExecuteDirectIfPossible_InvalidTargetReturnsErrcode(t *testing.T) {
 	}
 	if ecerr.Code != errcode.TargetInvalid {
 		t.Fatalf("code: got %q want %q", ecerr.Code, errcode.TargetInvalid)
+	}
+	if exec.Diagnostics["stage"] != "prepare" || exec.Diagnostics["requestState"] != "not-sent" {
+		t.Fatalf("invalid target diagnostics: %#v", exec.Diagnostics)
 	}
 }
 
@@ -296,6 +302,57 @@ func TestExecuteDirectIfPossible_ReportsTraceIdWhenInvokeTimesOut(t *testing.T) 
 	}
 	if got, _ := exec.Diagnostics["requestId"].(uint32); got == 0 {
 		t.Fatal("expected requestId in diagnostics on the timeout path")
+	}
+	if exec.Diagnostics["stage"] != "read" || exec.Diagnostics["requestState"] != "request-written" {
+		t.Fatalf("read timeout diagnostics: %#v", exec.Diagnostics)
+	}
+}
+
+func TestExecuteDirectIfPossible_ReportsFailureStageAndRequestState(t *testing.T) {
+	tests := []struct {
+		name         string
+		code         errcode.Code
+		stage        string
+		requestState string
+	}{
+		{name: "encode", code: errcode.SerializeFailed, stage: "encode", requestState: "not-sent"},
+		{name: "dial", code: errcode.InvocationCanceled, stage: "dial", requestState: "not-sent"},
+		{name: "decode", code: errcode.DeserializeFailed, stage: "decode", requestState: "response-received"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			plan := Plan{
+				Service:    "com.example.demo.ExampleFacade",
+				Method:     "query",
+				ParamTypes: []string{"java.lang.String"},
+				Args:       []any{"hello"},
+				Target: target.Config{
+					Mode:      target.ModeDirect,
+					DirectURL: "bolt://127.0.0.1:1",
+				},
+			}
+			switch test.name {
+			case "encode":
+				plan.Args[0] = make(chan int)
+			case "dial":
+				cancel()
+			case "decode":
+				directURL, stop := fakeDirectServer(t, []byte{0xff})
+				defer stop()
+				plan.Target.DirectURL = directURL
+			}
+
+			exec, err := ExecuteDirectIfPossible(ctx, plan, "invoke")
+			var ecerr *errcode.Error
+			if !errors.As(err, &ecerr) || ecerr.Code != test.code {
+				t.Fatalf("error: got %v want code %s", err, test.code)
+			}
+			if exec.Diagnostics["stage"] != test.stage || exec.Diagnostics["requestState"] != test.requestState {
+				t.Fatalf("failure diagnostics: %#v", exec.Diagnostics)
+			}
+		})
 	}
 }
 

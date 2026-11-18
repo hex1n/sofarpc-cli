@@ -27,7 +27,11 @@ type DirectInvokeResult struct {
 func InvokeDirect(ctx context.Context, spec RequestSpec, opts DirectInvokeOptions) (DirectInvokeResult, error) {
 	encoded, err := BuildGenericRequest(spec)
 	if err != nil {
-		return DirectInvokeResult{}, err
+		return DirectInvokeResult{}, &boltclient.AttemptError{
+			Stage:        boltclient.StageEncode,
+			RequestState: boltclient.RequestNotSent,
+			Cause:        err,
+		}
 	}
 	resp, err := boltclient.Invoke(ctx, opts.Addr, boltclient.Request{
 		RequestID:        opts.RequestID,

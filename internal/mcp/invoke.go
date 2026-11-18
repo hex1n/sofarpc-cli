@@ -28,11 +28,12 @@ const (
 // means the invocation (dry-run or real) produced a usable outcome —
 // either a Plan to inspect or a Result from the direct transport.
 type InvokeOutput struct {
-	Ok          bool           `json:"ok"`
-	Plan        *invoke.Plan   `json:"plan,omitempty"`
-	Result      any            `json:"result,omitempty"`
-	Diagnostics map[string]any `json:"diagnostics,omitempty"`
-	Error       *errcode.Error `json:"error,omitempty"`
+	Ok          bool              `json:"ok"`
+	Plan        *invoke.Plan      `json:"plan,omitempty"`
+	Preflight   *invoke.Preflight `json:"preflight,omitempty"`
+	Result      any               `json:"result,omitempty"`
+	Diagnostics map[string]any    `json:"diagnostics,omitempty"`
+	Error       *errcode.Error    `json:"error,omitempty"`
 }
 
 func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder) {
@@ -41,7 +42,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 	addRawTool(server, &sdkmcp.Tool{
 		Name:         "sofarpc_invoke",
 		Title:        "Invoke SOFARPC Method",
-		Description:  "Plan and execute a SOFARPC generic invocation. args is a JSON array argument vector; single-parameter methods still use a one-item array. dryRun=true returns the plan without executing the request. Real invokes require SOFARPC_ALLOW_INVOKE=true.",
+		Description:  "Plan and execute a SOFARPC generic invocation. args is a JSON array argument vector; single-parameter methods still use a one-item array. dryRun=true returns the plan and local execution checks without contacting the target. Real invokes require SOFARPC_ALLOW_INVOKE=true.",
 		Annotations:  remoteInvokeAnnotations("Invoke SOFARPC Method"),
 		InputSchema:  invokeInputSchema(),
 		OutputSchema: invokeOutputSchema(),
@@ -68,6 +69,7 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		// Effective profile: per-call wins over the session's profile; an
 		// empty result lets target.Resolve fall back to defaultProfile.
 		profile := effectiveProfile(decoded.Profile, toolCtx.SessionProfile)
+		scope := diagnosticScope{project: toolCtx.ProjectRoot, profile: profile, sessionID: decoded.SessionID, service: decoded.Service, method: decoded.Method}
 		notifyToolProgress(ctx, req, 2, 5, "normalizing arguments")
 		args, err = normalizeArgs(decoded.Service, decoded.Method, args, toolSources.ProjectRoot)
 		if err != nil {
@@ -117,24 +119,26 @@ func registerInvoke(server *sdkmcp.Server, opts Options, holder *contractHolder)
 			}, nil, toolSources)
 		}
 		if err != nil {
-			out := InvokeOutput{Error: asErrcodeError(err)}
-			return invokeToolResult(out, errorText("invoke failed", err), true), nil
+			out := InvokeOutput{Error: scope.withHintScope(asErrcodeError(err))}
+			return invokeToolResult(out, errorText("invoke failed", out.Error), true), nil
 		}
 
+		scope.profile = plan.Profile
 		capture := capturePlanForSession(sessions, decoded.SessionID, plan)
 		links := planCaptureResourceLinks(decoded.SessionID, capture)
 
 		if decoded.DryRun {
-			out := InvokeOutput{Ok: true, Plan: &plan, Diagnostics: diagnosticsWithCapture(nil, capture)}
+			check := preflightPlan(plan, "invoke", toolSources, scope)
+			out := InvokeOutput{Ok: true, Plan: &plan, Preflight: &check, Diagnostics: diagnosticsWithCapture(nil, capture)}
 			notifyToolProgress(ctx, req, 5, 5, "invoke dry-run complete")
-			return invokeToolResultWithLinks(out, summarizeInvokePlan(plan, true), false, links...), nil
+			return invokeToolResultWithLinks(out, summarizeInvokePlan(plan, true)+preflightText(check), false, links...), nil
 		}
 
 		notifyToolProgress(ctx, req, 4, 5, "executing invoke plan")
 		execution := executePlanWithPolicy(ctx, plan, "invoke", toolSources, profile, capture, opts.InvokeLimiter)
 		if execution.Err != nil {
-			out := InvokeOutput{Plan: &plan, Diagnostics: execution.Outcome.Diagnostics, Error: asErrcodeError(execution.Err)}
-			return invokeToolResultWithLinks(out, planExecutionErrorText("invoke", execution), true, links...), nil
+			out := InvokeOutput{Plan: &plan, Diagnostics: execution.Outcome.Diagnostics, Error: scope.withHintScope(asErrcodeError(execution.Err))}
+			return invokeToolResultWithLinks(out, planExecutionErrorText("invoke", execution, out.Error), true, links...), nil
 		}
 		out := InvokeOutput{
 			Ok:          true,
@@ -303,7 +307,14 @@ func errorText(prefix string, err error) string {
 	text := prefix
 	var ecerr *errcode.Error
 	if errors.As(err, &ecerr) {
-		return fmt.Sprintf("%s: %s", ecerr.Code, ecerr.Message)
+		text = fmt.Sprintf("%s: %s", ecerr.Code, ecerr.Message)
+		if ecerr.Phase != "" {
+			text += " phase=" + ecerr.Phase
+		}
+		if ecerr.Hint != nil {
+			text += diagnosticHintText(ecerr.Hint.NextTool, ecerr.Hint.NextArgs)
+		}
+		return text
 	}
 	if err != nil {
 		return err.Error()

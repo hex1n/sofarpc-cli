@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -17,6 +18,7 @@ import (
 )
 
 func TestReplay_PayloadDryRunReturnsPlan(t *testing.T) {
+	t.Setenv(envAllowInvoke, "false")
 	plan := samplePlan()
 	out := callReplay(t, Options{}, map[string]any{
 		"payload": plan,
@@ -33,6 +35,9 @@ func TestReplay_PayloadDryRunReturnsPlan(t *testing.T) {
 	}
 	if out.Plan.SchemaVersion != invoke.PlanSchemaVersion {
 		t.Fatalf("schemaVersion: got %q want %q", out.Plan.SchemaVersion, invoke.PlanSchemaVersion)
+	}
+	if out.Preflight == nil || out.Preflight.Ready || out.Preflight.PolicyError == nil || out.Preflight.PolicyError.Code != errcode.InvocationRejected {
+		t.Fatalf("expected separate disabled-invoke check: %+v", out.Preflight)
 	}
 }
 
@@ -653,5 +658,9 @@ func TestReplay_PlanIDConflictsWithPayload(t *testing.T) {
 	}
 	if !strings.Contains(out.Error.Message, "cannot be combined with payload") {
 		t.Fatalf("error should explain the conflict: %+v", out.Error)
+	}
+	text := errorText("replay failed", out.Error)
+	if !strings.Contains(text, fmt.Sprintf(`"planId":%q`, capture.PlanID)) {
+		t.Fatalf("text hint must keep the selected plan: %s", text)
 	}
 }

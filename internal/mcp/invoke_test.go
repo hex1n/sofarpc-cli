@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hex1n/sofarpc-cli/internal/boltclient"
 	"github.com/hex1n/sofarpc-cli/internal/core/contract"
@@ -143,25 +144,118 @@ func TestInvoke_TimeoutStillReportsTraceId(t *testing.T) {
 	)
 	directURL, stop := fakeDeafDirectServer(t)
 	defer stop()
-
-	out := callInvoke(t, Options{
-		Contract: store,
-		TargetSources: target.Sources{
-			Env: target.Config{DirectURL: directURL},
-		},
-	}, map[string]any{
+	project := t.TempDir()
+	t.Setenv(envAllowInvoke, "true")
+	writeInvokeProfile(t, project, directURL, "hessian2")
+	body, err := json.Marshal(map[string]any{
+		"project":   project,
+		"profile":   "test",
 		"service":   "com.foo.Svc",
 		"method":    "doThing",
 		"args":      []any{"hello"},
-		"timeoutMs": 100,
+		"timeoutMs": 1000,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, result := callInvokeResult(t, Options{
+		Contract: store,
+	}, body)
 	if out.Error == nil || out.Error.Code != errcode.InvocationTimeout {
 		t.Fatalf("expected InvocationTimeout, got %+v", out.Error)
 	}
 	// A timed-out request most likely did reach the provider, so the id
 	// has to survive to the tool output on the error path too.
-	if traceID, _ := out.Diagnostics["traceId"].(string); traceID == "" {
+	traceID, _ := out.Diagnostics["traceId"].(string)
+	if traceID == "" {
 		t.Fatalf("expected traceId in diagnostics on the timeout path, got %+v", out.Diagnostics)
+	}
+	first, ok := result.Content[0].(*sdkmcp.TextContent)
+	if !result.IsError || !ok {
+		t.Fatalf("expected plain text MCP error, got %+v", result)
+	}
+	projectJSON, _ := json.Marshal(project)
+	for _, field := range []string{"runtime.timeout", "phase=invoke", "stage=read", "requestState=request-written", "traceId=" + traceID, "nextTool=sofarpc_doctor", `"profile":"test"`, `"project":` + string(projectJSON)} {
+		if !strings.Contains(first.Text, field) {
+			t.Errorf("first text block missing %q: %s", field, first.Text)
+		}
+	}
+}
+
+func TestInvoke_DryRunPreflightSeparatesPlanFromExecution(t *testing.T) {
+	t.Setenv(envAllowInvoke, "true")
+	t.Setenv(envAllowTargetOverride, "false")
+	t.Setenv(envAllowedTargetHosts, "")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	directURL := "bolt://" + listener.Addr().String()
+	for _, tc := range []struct {
+		name, serialization, override   string
+		policyBlocked, executionBlocked bool
+	}{
+		{name: "supported", serialization: "hessian2"},
+		{name: "unsupported serialization", serialization: "json", executionBlocked: true},
+		{name: "target override", serialization: "hessian2", override: "bolt://127.0.0.1:1", policyBlocked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project := t.TempDir()
+			writeInvokeProfile(t, project, directURL, tc.serialization)
+			input := map[string]any{
+				"project": project, "profile": "test", "service": "com.example.UnknownFacade",
+				"method": "ping", "types": []string{}, "args": []any{}, "trusted": true, "dryRun": true,
+			}
+			if tc.override != "" {
+				input["directUrl"] = tc.override
+			}
+			out := callInvoke(t, Options{}, input)
+			if !out.Ok || out.Error != nil || out.Plan == nil || out.Result != nil {
+				t.Fatalf("expected usable plan: %+v", out)
+			}
+			check := out.Preflight
+			if check == nil || check.Ready != (!tc.policyBlocked && !tc.executionBlocked) ||
+				(check.PolicyError != nil) != tc.policyBlocked || (check.ExecutionError != nil) != tc.executionBlocked {
+				t.Fatalf("unexpected preflight: %+v", check)
+			}
+			for _, err := range []*errcode.Error{check.PolicyError, check.ExecutionError} {
+				if err != nil && (err.Code != errcode.InvocationRejected || err.Hint == nil || err.Hint.NextArgs["profile"] != "test" || err.Hint.NextArgs["project"] != project) {
+					t.Errorf("incorrect target diagnostic: %+v", err.Hint)
+				}
+			}
+		})
+	}
+	tcp := listener.(*net.TCPListener)
+	if err := tcp.SetDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := tcp.Accept()
+	if err == nil {
+		conn.Close()
+		t.Fatal("dry-run made a TCP connection")
+	}
+	if e, ok := err.(net.Error); !ok || !e.Timeout() {
+		t.Fatalf("checking dry-run TCP activity: %v", err)
+	}
+}
+
+func writeInvokeProfile(t *testing.T, project, directURL, serialization string) {
+	t.Helper()
+	config := filepath.Join(project, ".sofarpc")
+	if err := os.Mkdir(config, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"profiles": map[string]any{
+			"test": map[string]any{"directUrl": directURL, "serialization": serialization},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config, "config.json"), body, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -882,6 +976,12 @@ func callInvoke(t *testing.T, opts Options, args map[string]any) InvokeOutput {
 
 func callInvokeRaw(t *testing.T, opts Options, raw json.RawMessage) InvokeOutput {
 	t.Helper()
+	out, _ := callInvokeResult(t, opts, raw)
+	return out
+}
+
+func callInvokeResult(t *testing.T, opts Options, raw json.RawMessage) (InvokeOutput, *sdkmcp.CallToolResult) {
+	t.Helper()
 	server := New(opts)
 	ctx := context.Background()
 	client := connect(t, ctx, server)
@@ -904,7 +1004,7 @@ func callInvokeRaw(t *testing.T, opts Options, raw json.RawMessage) InvokeOutput
 	if err := dec.Decode(&out); err != nil {
 		t.Fatalf("unmarshal structured: %v", err)
 	}
-	return out
+	return out, result
 }
 
 // fakeDeafDirectServer accepts a connection and never answers, so the

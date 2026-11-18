@@ -16,12 +16,13 @@ import (
 // means the plan executed (or, in dryRun, was extracted cleanly) and
 // Result / Diagnostics mirror sofarpc_invoke.
 type ReplayOutput struct {
-	Ok          bool           `json:"ok"`
-	Source      string         `json:"source,omitempty"`
-	Plan        *invoke.Plan   `json:"plan,omitempty"`
-	Result      any            `json:"result,omitempty"`
-	Diagnostics map[string]any `json:"diagnostics,omitempty"`
-	Error       *errcode.Error `json:"error,omitempty"`
+	Ok          bool              `json:"ok"`
+	Source      string            `json:"source,omitempty"`
+	Plan        *invoke.Plan      `json:"plan,omitempty"`
+	Preflight   *invoke.Preflight `json:"preflight,omitempty"`
+	Result      any               `json:"result,omitempty"`
+	Diagnostics map[string]any    `json:"diagnostics,omitempty"`
+	Error       *errcode.Error    `json:"error,omitempty"`
 }
 
 func registerReplay(server *sdkmcp.Server, opts Options, holder *contractHolder) {
@@ -52,9 +53,16 @@ func registerReplay(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		}
 
 		if in.DryRun {
-			out := ReplayOutput{Ok: true, Plan: plan, Source: source}
+			previewScope, scopeErr := resolveToolScope(sources, sessions, in.SessionID, in.Cwd, in.Project)
+			scope := diagnosticScope{project: previewScope.ProjectRoot, service: plan.Service, method: plan.Method}
+			check := preflightPlan(*plan, "replay", previewScope.Sources, scope)
+			if scopeErr != nil {
+				check.Ready = false
+				check.PolicyError = errcode.New(errcode.ArgsInvalid, "replay", scopeErr.Error())
+			}
+			out := ReplayOutput{Ok: true, Plan: plan, Source: source, Preflight: &check}
 			notifyToolProgress(ctx, req, 4, 4, "replay dry-run complete")
-			return invokeToolResultWithLinks(out, summarizeReplay(plan, source, true), false, replayResourceLinks(in.SessionID, source)...), nil
+			return invokeToolResultWithLinks(out, summarizeReplay(plan, source, true)+preflightText(check), false, replayResourceLinks(in.SessionID, source)...), nil
 		}
 
 		notifyToolProgress(ctx, req, 2, 4, "resolving replay safety scope")
@@ -78,8 +86,9 @@ func registerReplay(server *sdkmcp.Server, opts Options, holder *contractHolder)
 		execPlan.ParamTypes = contract.WireParamTypes(execPlan.ParamTypes, store)
 		execution := executePlanWithPolicy(ctx, execPlan, "replay", toolSources, "", nil, opts.InvokeLimiter)
 		if execution.Err != nil {
-			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: execution.Outcome.Diagnostics, Error: asErrcodeError(execution.Err)}
-			return invokeToolResultWithLinks(out, planExecutionErrorText("replay", execution), true, replayResourceLinks(in.SessionID, source)...), nil
+			scope := diagnosticScope{project: toolCtx.ProjectRoot, service: plan.Service, method: plan.Method}
+			out := ReplayOutput{Plan: plan, Source: source, Diagnostics: execution.Outcome.Diagnostics, Error: scope.withHintScope(asErrcodeError(execution.Err))}
+			return invokeToolResultWithLinks(out, planExecutionErrorText("replay", execution, out.Error), true, replayResourceLinks(in.SessionID, source)...), nil
 		}
 		out := ReplayOutput{
 			Ok:          true,

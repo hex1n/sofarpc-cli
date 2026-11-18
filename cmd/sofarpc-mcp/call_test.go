@@ -14,6 +14,7 @@ import (
 
 func TestRunCall_DryRunPrintsPlan(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv(invoke.EnvAllowInvoke, "false")
 
 	var buf bytes.Buffer
 	err := runCall(&buf, []string{
@@ -43,6 +44,9 @@ func TestRunCall_DryRunPrintsPlan(t *testing.T) {
 	}
 	if out.Result != nil {
 		t.Fatalf("dry-run must not execute: %+v", out.Result)
+	}
+	if out.Preflight == nil || out.Preflight.Ready || out.Preflight.PolicyError == nil || out.Preflight.PolicyError.Code != errcode.InvocationRejected {
+		t.Fatalf("expected separate disabled-invoke check: %+v", out.Preflight)
 	}
 }
 

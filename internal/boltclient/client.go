@@ -62,6 +62,29 @@ type Response struct {
 	Raw            []byte
 }
 
+const (
+	StageEncode = "encode"
+	StageDial   = "dial"
+	StageWrite  = "write"
+	StageRead   = "read"
+
+	RequestNotSent      = "not-sent"
+	RequestWriteUnknown = "write-uncertain"
+	RequestWritten      = "request-written"
+)
+
+// AttemptError records the failed stage and what the client observed about
+// writing the request. A complete socket write does not establish delivery.
+type AttemptError struct {
+	Stage        string
+	RequestState string
+	Cause        error
+}
+
+func (e *AttemptError) Error() string { return e.Cause.Error() }
+
+func (e *AttemptError) Unwrap() error { return e.Cause }
+
 func Invoke(ctx context.Context, addr string, req Request) (Response, error) {
 	if req.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -70,45 +93,61 @@ func Invoke(ctx context.Context, addr string, req Request) (Response, error) {
 	}
 	frame, err := EncodeRequest(req)
 	if err != nil {
-		return Response{}, err
+		return Response{}, &AttemptError{StageEncode, RequestNotSent, err}
 	}
 
 	dialer := net.Dialer{Timeout: req.ConnectTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return Response{}, fmt.Errorf("dial %s: %w", addr, err)
+		cause := fmt.Errorf("dial %s: %w", addr, err)
+		return Response{}, &AttemptError{StageDial, RequestNotSent, cause}
 	}
 	defer conn.Close()
 
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := conn.SetDeadline(deadline); err != nil {
-			return Response{}, fmt.Errorf("set deadline: %w", err)
+			cause := fmt.Errorf("set deadline: %w", err)
+			return Response{}, &AttemptError{StageWrite, RequestNotSent, cause}
 		}
 	}
 
 	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
 	defer stop()
 	if err := ctx.Err(); err != nil {
-		return Response{}, err
+		return Response{}, &AttemptError{StageWrite, RequestNotSent, err}
 	}
-	if _, err := conn.Write(frame); err != nil {
-		if ctx.Err() != nil {
-			return Response{}, ctx.Err()
-		}
-		return Response{}, fmt.Errorf("write request frame: %w", err)
+	if err := writeRequestFrame(ctx, conn, frame); err != nil {
+		return Response{}, err
 	}
 
 	resp, err := ReadResponseWithLimit(conn, req.MaxResponseBytes)
 	if err != nil {
-		if ctx.Err() != nil {
-			return Response{}, ctx.Err()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
 		}
-		return Response{}, err
+		return Response{}, &AttemptError{StageRead, RequestWritten, err}
 	}
 	if resp.RequestID != req.RequestID {
-		return Response{}, fmt.Errorf("response requestId mismatch: got=%d want=%d", resp.RequestID, req.RequestID)
+		cause := fmt.Errorf("response requestId mismatch: got=%d want=%d", resp.RequestID, req.RequestID)
+		return Response{}, &AttemptError{StageRead, RequestWritten, cause}
 	}
 	return resp, nil
+}
+
+func writeRequestFrame(ctx context.Context, dst io.Writer, frame []byte) error {
+	n, err := dst.Write(frame)
+	if err == nil {
+		return nil
+	}
+	state := RequestWriteUnknown
+	if n == len(frame) {
+		state = RequestWritten
+	}
+	cause := ctx.Err()
+	if cause == nil {
+		cause = fmt.Errorf("write request frame: %w", err)
+	}
+	return &AttemptError{StageWrite, state, cause}
 }
 
 func EncodeRequest(req Request) ([]byte, error) {

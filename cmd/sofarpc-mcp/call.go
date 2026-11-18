@@ -19,11 +19,12 @@ import (
 // callOutput mirrors the sofarpc_invoke MCP output shape so agents, scripts,
 // and humans read the same JSON regardless of the entrypoint.
 type callOutput struct {
-	Ok          bool           `json:"ok"`
-	Plan        *invoke.Plan   `json:"plan,omitempty"`
-	Result      any            `json:"result,omitempty"`
-	Diagnostics map[string]any `json:"diagnostics,omitempty"`
-	Error       *errcode.Error `json:"error,omitempty"`
+	Ok          bool              `json:"ok"`
+	Plan        *invoke.Plan      `json:"plan,omitempty"`
+	Preflight   *invoke.Preflight `json:"preflight,omitempty"`
+	Result      any               `json:"result,omitempty"`
+	Diagnostics map[string]any    `json:"diagnostics,omitempty"`
+	Error       *errcode.Error    `json:"error,omitempty"`
 }
 
 type callFlags struct {
@@ -89,8 +90,13 @@ func runCall(w io.Writer, args []string) error {
 		return writeCallOutput(w, callOutput{Error: asCallError(err)}, err)
 	}
 
+	policy := callExecutionPolicy(sources)
+	if strings.TrimSpace(in.planFile) == "" {
+		policy.RequestedProfile = in.profile
+	}
 	if in.dryRun {
-		return writeCallOutput(w, callOutput{Ok: true, Plan: &plan}, nil)
+		check := policy.Preflight(plan, "call")
+		return writeCallOutput(w, callOutput{Ok: true, Plan: &plan, Preflight: &check}, nil)
 	}
 
 	// A captured plan may predate the nested-class type-name fix and carry
@@ -99,15 +105,12 @@ func runCall(w io.Writer, args []string) error {
 	// plan keeps the captured spelling, the caller's archive file is never
 	// rewritten. Erase source generic arguments even without a store.
 	execPlan := plan
-	policy := callExecutionPolicy(sources)
 	if strings.TrimSpace(in.planFile) != "" {
 		store := callContractStore(projectRoot)
 		if store != nil {
 			execPlan.Args = contract.RewriteWireTypeNames(execPlan.Args, store)
 		}
 		execPlan.ParamTypes = contract.WireParamTypes(execPlan.ParamTypes, store)
-	} else {
-		policy.RequestedProfile = in.profile
 	}
 	if err := policy.Validate(execPlan, "call"); err != nil {
 		return writeCallOutput(w, callOutput{Plan: &plan, Error: asCallError(err)}, err)
