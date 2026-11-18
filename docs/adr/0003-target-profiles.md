@@ -4,6 +4,10 @@ Date: 2026-06-22
 
 Status: accepted
 
+The service allowlist and registry target behavior recorded here have since
+been retired. See the [current execution policy](../architecture.md#83-execution-policy)
+and [target model](../architecture.md#5-configuration-and-target-model).
+
 ## Context
 
 A project's `.sofarpc` config has two files — `config.json` (shared, committed)

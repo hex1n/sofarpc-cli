@@ -96,11 +96,11 @@ agent how to use the tools and resources safely.
 
 | Tool | Purpose |
 | --- | --- |
-| `sofarpc_init_project` | Initialize `.sofarpc/config*.json` for a Java project, including service allowlist discovery. |
+| `sofarpc_init_project` | Initialize `.sofarpc/config*.json` with target settings for a Java project. |
 | `sofarpc_open` | Open a workspace and return project root, resolved target, capabilities, and a session id. |
-| `sofarpc_target` | Resolve the effective target and optionally probe reachability. |
+| `sofarpc_target` | Resolve the effective target and probe TCP reachability when an address is available. |
 | `sofarpc_describe` | Resolve overloads and build a JSON skeleton when contract information is available. Without `method` it lists the service's callable methods; without `service` it lists known services. |
-| `sofarpc_invoke` | Build a plan and execute it. `dryRun=true` returns the plan only. |
+| `sofarpc_invoke` | Build and execute an invocation plan. `dryRun=true` returns the plan and local preflight checks. |
 | `sofarpc_replay` | Re-run a captured plan from `sessionId` (optionally a specific `planId` from the session's history) or a literal `payload`. |
 | `sofarpc_doctor` | Run structured diagnostics across target, workspace state, and invoke prerequisites. |
 
@@ -214,15 +214,9 @@ and source markers inside a git worktree. Discovery includes candidates and
 `scanTruncated` evidence so agents can retry with an explicit `project`, `cwd`,
 or `sessionId`.
 
-The tool may auto-fill `allowedServices` from source-contract data. Discovery
-is conservative by default: it first filters indexed Java FQNs by simple-name
-suffix (`Facade` by default), then parses only those matches to verify they are
-method-bearing interfaces. Agents can pass `serviceNameSuffixes` such as
-`["Facade", "Service"]`, or `["*"]` when they intentionally want to inspect all
-method-bearing interfaces. It never infers `directUrl`; the target must be
-supplied explicitly. The tool refuses to write a config
-without `allowedServices`; callers must pass `services`, rely on successful
-discovery, or set `allowAllServices=true` intentionally.
+The tool requires at least one target setting. Callers supply any `directUrl`
+explicitly. Service discovery from Java sources is available in
+`sofarpc_describe`.
 
 Local config initialization also ensures `.sofarpc/config.local.json` is
 ignored by the project `.gitignore`. Existing config is not overwritten unless
@@ -281,6 +275,7 @@ Sessions are deliberately small and disposable:
 - TTL 24 hours
 - capacity 256
 - LRU eviction
+- 64 MiB aggregate retained plan JSON, evicting the oldest plans first
 
 Each session stores:
 
@@ -380,7 +375,8 @@ Overload resolution is intentionally conservative:
    ambiguous
 
 Assignable matching is only used to pick the overload. The invoke plan still
-uses the selected method's declared `paramTypes` as the wire signature. If the
+uses the declaring method's erased JVM signature on the wire. The source
+contract continues to supply the types used for argument normalization. If the
 caller passes an explicit subtype payload with `@type`, argument normalization
 keeps that subtype payload while sending the declared method signature.
 
@@ -482,6 +478,10 @@ The pure-Go mainline supports one concrete invoke shape:
 If a call does not fit that shape, it is outside the mainline architecture
 described here.
 
+`tr://` selects TR explicitly. Preflight and execution reject that scheme
+before dialing, including when `protocol` is `bolt`. The separate TCP
+reachability probe checks whether the port is reachable.
+
 `Execute` validates the plan schema, service/method identity, target mode,
 argument arity, and supported transport shape before touching the wire layer.
 
@@ -494,12 +494,19 @@ that policy; the guardrail decisions are not implemented in the tool handlers.
 The policy controls:
 
 - real invoke opt-in via `SOFARPC_ALLOW_INVOKE`
-- mandatory service allowlisting via project `.sofarpc/config*.json`
-  `allowedServices`; missing allowlists reject real invoke, and `["*"]` is the
-  explicit wildcard
 - direct target override rules via `SOFARPC_ALLOW_TARGET_OVERRIDE`
 - direct host allowlisting via `SOFARPC_ALLOWED_TARGET_HOSTS`
 - rejection of invalid project target config before execution
+
+Existing top-level `allowedServices` values are accepted for config
+compatibility and ignored by the execution policy. Profile edits preserve
+the legacy field on disk.
+
+For invoke and replay dry runs, `preflight` reports policy and executable-plan
+checks separately as `policyError` and `executionError`. The dry run returns
+the generated or extracted plan even when these checks reject it.
+`preflight.ready` covers local checks. TCP reachability, baggage environment
+resolution, and wire encoding are checked separately.
 
 ### 8.4 Sequence
 
@@ -517,15 +524,20 @@ sequenceDiagram
     A->>M: sofarpc_invoke
     M->>P: build plan
     P-->>M: plan
-    M->>D: execute(plan)
-    D->>B: write BOLT request
-    B->>W: encode SofaRequest
-    W->>S: generic invoke
-    S-->>W: SofaResponse
-    W-->>B: decoded response
-    B-->>D: result + diagnostics
-    D-->>M: outcome
-    M-->>A: ok/result/diagnostics or errcode
+    alt Dry run
+        M->>M: check policy and plan locally
+        M-->>A: plan and preflight
+    else Execute
+        M->>D: execute plan after policy checks
+        D->>W: construct and encode SofaRequest
+        W->>B: send encoded payload
+        B->>S: write BOLT request
+        S-->>B: BOLT response frame
+        B-->>W: correlated response payload
+        W-->>D: decoded result and transport details
+        D-->>M: outcome
+        M-->>A: result with diagnostics or errcode
+    end
 ```
 
 ### 8.5 Transport responsibilities
@@ -564,6 +576,8 @@ Direct-path diagnostics include:
 - `dialTarget`
 - `requestId`
 - `traceId`
+- `stage`
+- `requestState`
 - `requestCodec`
 - `requestClass`
 - `targetServiceUniqueName`
@@ -572,11 +586,11 @@ Direct-path diagnostics include:
 - `responseCodec`
 - `responseContentLength`
 
-`transport`, `target`, `dialTarget`, `requestId`, and `traceId` describe the
-attempt rather than its outcome, so they are also reported when the invoke
-fails on the wire — a timeout is exactly when `traceId` is needed. The trace is
-minted per execution, not stored in the plan, so each replay of a plan is a
-separately traceable call.
+An attempt can report a stage, request state, and trace ID even if invocation
+fails. `request-written` means the local socket accepted the full request.
+Each execution generates a new trace when it reaches the transport. MCP
+invoke and replay errors surface the error code, phase, available transport
+details, and applicable diagnostic hint in the first text block.
 
 This is the core runtime path the project should continue to harden.
 
@@ -601,7 +615,11 @@ Replay validates the captured plan schema, service/method identity, target
 mode, and `paramTypes` / `args` arity before any execution policy or transport
 step runs.
 
-`dryRun=true` makes replay a safe inspection mechanism for captured plans.
+`dryRun=true` lets callers inspect captured plans. Plans with generated
+argument placeholders require explicit arguments before execution. Capture a
+new plan with explicit arguments to replay a template. An older archive
+that recorded a substituted inherited generic signature may also require
+re-planning.
 
 ### 9.2 Error model
 

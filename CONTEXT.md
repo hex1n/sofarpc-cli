@@ -5,7 +5,7 @@ This context describes SOFARPC generic invocation concepts used by the CLI and M
 ## Language
 
 **Target Profile**:
-A named, selectable bundle of target endpoint, wire knobs, and invocation-context settings (for example `local`, `test`, `staging`) that lets a project hold several deployment environments at once and switch between them without overwriting. It never carries the service allowlist.
+A named, selectable bundle of target endpoint, wire knobs, and invocation-context settings (for example `local`, `test`, `staging`) that lets a project hold several deployment environments at once and switch between them without overwriting.
 _Avoid_: Environment, env (reserved for OS environment variables), config (reserved for the on-disk file)
 
 **Base Target Settings**:
@@ -49,7 +49,6 @@ _Avoid_: Implicit environment scan
 ## Relationships
 
 - A **Target Profile** overlays the **Base Target Settings**; a profile-level field beats the same base field.
-- A **Target Profile** never carries the service allowlist; the allowlist stays a project-wide guardrail independent of the **Active Target Profile**.
 - An **Active Target Profile** that is named but undefined is an error, not a fall-through to **Base Target Settings**.
 - A **Gateway-Carried Invocation Context** belongs to one outbound SOFARPC invocation.
 - A **Gateway-Carried Invocation Context** contains zero or more **Invocation Properties**.
