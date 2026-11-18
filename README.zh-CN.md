@@ -10,11 +10,11 @@
 
 | 工具 | 用途 |
 | --- | --- |
-| `sofarpc_init_project` | 为 Java 项目初始化 `.sofarpc/config*.json`，包含自动发现的 `allowedServices`。 |
+| `sofarpc_init_project` | 为 Java 项目初始化 `.sofarpc/config*.json` 中的目标配置。 |
 | `sofarpc_open` | 打开工作区。返回项目根目录、已解析 target、能力标识和 session id。 |
 | `sofarpc_target` | 解析目标并探测可达性。 |
 | `sofarpc_describe` | 当存在 contract information 时，解析重载并生成 JSON skeleton。省略 `method` 列出该服务的可调用方法；连 `service` 也省略则列出已知服务。 |
-| `sofarpc_invoke` | 构建 plan 并执行调用。`dryRun=true` 只返回 plan。 |
+| `sofarpc_invoke` | 构建 plan 并执行调用。`dryRun=true` 返回 plan 和本地预检结果。 |
 | `sofarpc_replay` | 用 `sessionId`（可加 `planId` 选择历史中某个 plan）或完整 `payload` 加 project/session 安全上下文重放 plan。 |
 | `sofarpc_doctor` | 对 target、workspace 状态和 invoke 前提做结构化诊断。 |
 
@@ -38,6 +38,14 @@ Server 也暴露少量用户主动触发的 prompt，用作常见工作流入口
 
 ```sh
 go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@latest
+```
+
+Go 的 `@latest` 选择最新可用的模块版本。要明确安装 `main` 分支的版本，
+使用 `@main`。需要可复现的安装时，固定已发布的标签或提交。
+
+```sh
+go install github.com/hex1n/sofarpc-cli/cmd/sofarpc-mcp@main
+sofarpc-mcp version -json
 ```
 
 仓库内辅助脚本：
@@ -74,7 +82,7 @@ Setup 分成两层：
 - 用户级：把 MCP server 注册进 Claude Code 和 Codex，并给当前用户安装
   `sofarpc-invoke` skill。它只保留全局执行 guardrail，并会清掉旧的项目级
   SOFARPC env。
-- 项目级：把 target 默认值和 service allowlist 写进 Java 项目的 `.sofarpc/` 目录。
+- 项目级：把 target 默认值 写进 Java 项目的 `.sofarpc/` 目录。
 
 用户级是默认 scope。它是幂等的，并且默认会合并已有 sofarpc env；再次执行
 只传一个新参数时，不会把手工加过的 guardrail env 丢掉：
@@ -96,19 +104,16 @@ sofarpc-mcp setup --dry-run --allow-invoke                          # 预览用�
 
 ```sh
 sofarpc-mcp setup --scope=project --project-root . --local \
-  --direct-url=bolt://dev-rpc.example.com:12200 --timeout-ms=3000 \
-  --allowed-services=com.foo.UserFacade
+  --direct-url=bolt://dev-rpc.example.com:12200 --timeout-ms=3000
 
 sofarpc-mcp setup --scope=project --project-root . --shared \
-  --direct-url=bolt://dev-rpc.example.com:12200 --protocol=bolt \
-  --allowed-services=com.foo.UserFacade,com.foo.OrderFacade
+  --direct-url=bolt://dev-rpc.example.com:12200 --protocol=bolt
 ```
 
 `--local` 写 `.sofarpc/config.local.json`，并确保这个路径出现在项目
 `.gitignore` 里。`--shared` 写 `.sofarpc/config.json`。已有项目配置不会被覆盖，
 除非显式传 `--force`。`--allow-invoke`、`--allowed-target-hosts` 这类真实调用
-开关和 host guardrail 属于用户级 env，项目级 setup 会拒绝写入。target 字段和
-`--allowed-services` 属于项目级，用户级 setup 会拒绝写入。
+开关和 host guardrail 属于用户级 env，项目级 setup 会拒绝写入。target 字段属于项目级，用户级 setup 会拒绝写入。
 
 Agent 也可以通过 MCP 完成同样的首次项目初始化：
 
@@ -127,11 +132,8 @@ Agent 也可以通过 MCP 完成同样的首次项目初始化：
 `projectResolution`，说明 `confidence`、`markers`、`scanTruncated` 和
 `candidates`。
 
-如果省略 `services`，tool 会按已解析项目加载 source-contract information，
-并把有方法的 `*Facade` 接口写入 `allowedServices`。它不会猜 target；需要显式传
-`directUrl`，否则只写 allowlist-only config 并返回下一步。
-如果发现不到服务白名单，需要显式传 `services`，或者有意设置
-`allowAllServices: true` 写入 `allowedServices: ["*"]`。
+初始化时至少传一个目标配置字段。要配置 BOLT 地址，请显式传入
+`directUrl`。可通过 `sofarpc_describe` 从 Java 源码发现服务。
 
 Skill 是通过 `//go:embed` 烤进二进制的，所以一个全新的 `go install`
 就自带它 —— 不需要 clone 仓库。canonical 源文件位于
@@ -157,9 +159,9 @@ cd /abs/path/to/project
 ./bin/sofarpc-mcp
 ```
 
-Server 使用 stdio MCP 协议。project root 回退到进程 CWD；
-`SOFARPC_PROTOCOL` / `SOFARPC_SERIALIZATION` 默认是 `bolt` /
-`hessian2`，除非要覆盖默认值，否则都不用设。
+Server 使用 stdio MCP 协议。未指定项目时使用进程的当前目录。
+目标配置的 `protocol` 和 `serialization` 默认分别为 `bolt` 和
+`hessian2`。
 
 项目级 target 配置可以放在 Java 项目目录里。可提交的共享默认值放在
 `.sofarpc/config.json`；个人机器或环境相关的 `directUrl` 建议放在
@@ -172,8 +174,7 @@ Server 使用 stdio MCP 协议。project root 回退到进程 CWD；
   "serialization": "hessian2",
   "timeoutMs": 3000,
   "connectTimeoutMs": 1000,
-  "uniqueId": "dev",
-  "allowedServices": ["com.foo.UserFacade", "com.foo.OrderFacade"]
+  "uniqueId": "dev"
 }
 ```
 
@@ -182,10 +183,15 @@ Server 使用 stdio MCP 协议。project root 回退到进程 CWD；
 `bolt + hessian2` 目标——不接受 `registryAddress`/`registryProtocol`,
 含这两个字段的配置会作为未知字段被拒绝。
 
-target 解析优先级是：
+调用前会拒绝 `tr://` 地址，即使配置了 `protocol=bolt`。
+`sofarpc_target` 的 TCP 探测单独检查端口可达性。
+
+MCP 新调用使用 `profile` 选择目标 Profile，CLI 新调用使用 `-profile`。
+MCP 调用省略时先看会话的 Profile。最后回退到项目的 `defaultProfile`。
+目标字段按以下顺序解析。
 
 ```text
-单次 input > .sofarpc/config.local.json > .sofarpc/config.json > 进程 env 兼容兜底 > defaults
+单次输入 > 本地 Profile > 共享 Profile > 本地基础配置 > 共享基础配置 > 默认值
 ```
 
 `sofarpc-mcp` 启动和注册 tools 时不会扫描 `.java` 源码。source-contract
@@ -222,8 +228,8 @@ MCP 配置里（Claude Code：`~/.claude.json` → `mcpServers`；Codex：
    `sessionId` 作为安全上下文
 7. invoke 无法继续时调用 `sofarpc_doctor`
 
-已安装的 `sofarpc-invoke` skill 把这条链条变成机器可读的 playbook，
-包含 errcode 恢复协议。源文件在 `cmd/sofarpc-mcp/skill/SKILL.md`。
+安装的 [`sofarpc-invoke` 技能](cmd/sofarpc-mcp/skill/SKILL.md) 帮助 Claude Code
+和 Codex 选择 CLI 或 MCP、检查预检结果，并按结构化提示排查错误。
 
 ## 单次 CLI 调用
 
@@ -236,7 +242,7 @@ sofarpc-mcp call -project . -service com.foo.UserFacade -method query \
   -types java.lang.String -args '["id-1"]' \
   -direct-url bolt://127.0.0.1:12200 -dry-run
 
-# 真实调用（与 MCP 工具相同的 opt-in 和 allowlist 规则）
+# 真实调用（与 MCP 工具相同的调用开关和目标限制）
 SOFARPC_ALLOW_INVOKE=true sofarpc-mcp call -project . \
   -service com.foo.UserFacade -method query \
   -types java.lang.String -args '["id-1"]'
@@ -245,9 +251,23 @@ SOFARPC_ALLOW_INVOKE=true sofarpc-mcp call -project . \
 sofarpc-mcp call -plan plan.json
 ```
 
-输出与 `sofarpc_invoke` 相同的 JSON 形状（`ok`、`plan`、`result`、
-`diagnostics`、`error`）。真实调用仍要求 `SOFARPC_ALLOW_INVOKE=true` 加项目
-`allowedServices`；`-dry-run` 永不执行。
+CLI 输出与 `sofarpc_invoke` 共用 JSON 字段，包括 `ok`、`plan`、
+`preflight`、`result`、`diagnostics` 和 `error`，按调用结果返回。
+真实调用要求 `SOFARPC_ALLOW_INVOKE=true`。执行有参方法前需要提供明确的
+参数向量。
+
+计划生成后，CLI 的 `-dry-run` 和 MCP 调用或回放的 `dryRun: true`
+都会返回计划和 `preflight`。输出可同时出现 `ok: true` 和
+`preflight.ready: false`。查看 `preflight.policyError` 和
+`preflight.executionError` 了解拦截原因。预检只检查本地策略、计划、
+协议兼容性和目标地址。TCP 可达性、baggage 环境变量和请求编码另行检查。
+
+## HTTP A/B 对比
+
+在仓库目录运行 [`scripts/http-ab.py`](scripts/http-ab.py)，对比同一条 HTTP
+只读请求在两个部署上的结果。JSON 场景描述两条路由、凭证环境变量、
+响应字段和预期构建标识。`capture` 发送请求并采集结果。`compare` 离线核对
+构建证据，再比较选定的业务数据。详见[配置和命令](scripts/http-ab.md)。
 
 ## `sofarpc_invoke` 形状
 
@@ -278,22 +298,25 @@ sofarpc-mcp call -plan plan.json
   服务在 provider baggage 启用时可用 `RpcInvokeContext.getRequestBaggage(...)`
   读取。`value` 是字面值；`env` 只在真实 invoke/replay 时解析，并在 plan 中保持
   redacted。
-- 每次真实 invoke/replay 都会生成 SOFATracer trace context，编码成
-  `SofaRequest.requestProps["rpc_trace_context"]`，并在 `diagnostics.traceId`
-  返回。provider 侧启用 SOFATracer 时会直接采用这个 traceId 作为 server span
-  的 trace id，因此可以用它检索 provider 的 digest 日志和业务日志；caller app
-  固定上报为 `sofarpc-cli`。trace 标记为已采样，保证 provider 会记录。provider
-  未接入 SOFATracer 时该 map 会被忽略，traceId 在服务端也就没有对应记录。
-- `directUrl` 是单次覆盖。否则先使用项目配置；进程 env
-  只作为旧用法/手工运行兜底。用户级 setup 不再写 target 默认值。
-- `dryRun=true` 返回的 plan 可以直接交给 `sofarpc_replay`；replay 也接受包含
-  `plan` 字段的 dry-run 输出对象。literal payload replay 可以同时传
-  `sessionId`、`project` 或 `cwd`，让执行策略使用目标项目的安全上下文。
-- 真实 `sofarpc_invoke` 和 `sofarpc_replay` 都需要 `SOFARPC_ALLOW_INVOKE=true`；
-  同时项目 `.sofarpc/config*.json` 必须显式配置 `allowedServices`。只有写
-  `["*"]` 时才表示有意允许全部 service。
-- 非 dry-run direct 调用默认只执行项目配置解析出的 direct target；如果要允许
-  单次 `directUrl` 覆盖或 literal replay payload 里的 target，需要显式设置
+- 传输尝试会报告 `diagnostics.stage` 和 `diagnostics.requestState`。
+  `request-written` 表示本机 socket 接受了完整请求。传输层生成的 SOFATracer
+  context 会写入 `SofaRequest.requestProps["rpc_trace_context"]`，对应的
+  `diagnostics.traceId` 可用于关联启用了 SOFATracer 的服务端日志。
+  MCP 调用和回放失败时，首个文本块会给出错误码、阶段、可用的传输信息和
+  适用的诊断工具提示。
+- `directUrl` 指定单次调用的目标地址。省略时由所选 Profile 和项目配置
+  解析目标。MCP 进程的真实调用环境变量用于执行策略判断。
+- 回放接受 v2 计划、包含 `plan` 的干跑结果，或通过 `sessionId` 和可选
+  `planId` 选择会话已捕获的计划。回放字面量 payload 时可传
+  `sessionId`、`project` 或 `cwd` 选择执行策略上下文。
+- 源码变更后可用 `sofarpc_open` 的 `refreshContract: true` 重新索引当前项目。
+- 每个 MCP 进程最多保留 64 MiB 的计划 JSON，超出时优先淘汰最早的计划。
+- 真实调用和 replay 都需要 `SOFARPC_ALLOW_INVOKE=true`。旧配置的顶层
+  `allowedServices` 仍可读取，执行时会忽略。项目初始化会忽略旧的服务选项
+  （CLI 的 `--allowed-services`，以及 MCP 的 `services`、`allowAllServices`
+  和 `serviceNameSuffixes`）。
+- 单次调用和会话可以选择项目已配置的 Profile。要调用所选 Profile 以外的
+  地址，或 replay 的归档地址与当前默认地址不一致时，需要显式设置
   `SOFARPC_ALLOW_TARGET_OVERRIDE=true`。可用 `SOFARPC_ALLOWED_TARGET_HOSTS` 继续限制
   允许访问的 host 或 host:port。项目 target 配置无效时，`sofarpc_target` /
   `sofarpc_doctor` 会报告错误，真实 invoke 会被拒绝直到配置修好。
@@ -370,7 +393,8 @@ go build ./...
 
 SOFARPC/Hessian wire 兼容性由
 `internal/sofarpcwire/testdata/golden` 下提交的 fixture 兜底。默认 Go 测试
-直接消费这些 fixture，不要求本机 Java。发布前需要手动运行 GitHub Actions
+直接消费这些 fixture，不要求本机 Java。协议及合同相关改动会在 PR 上自动
+验证 Java 基线。发布前需要手动运行 GitHub Actions
 里的 `wire-fixtures` workflow；它会重新生成基线 Java fixture，并验证声明的
 SOFARPC 版本矩阵。
 
@@ -395,7 +419,7 @@ internal/
   javamodel/             Java class / field / method value types
   javatype/              Java 类型分类辅助
 .claude/
-  skills/sofarpc-invoke/ 指向 cmd/sofarpc-mcp/skill/ 的 symlink，方便 in-repo 发现
+  skills/sofarpc-invoke/SKILL.md 指向 cmd/sofarpc-mcp/skill/SKILL.md 的 symlink
 docs/
   architecture.md        架构说明
 ```
